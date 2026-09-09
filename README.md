@@ -66,6 +66,24 @@ python -m medical_harness.cli run-episode --episode-dir episodes/dev/thyroid_001
 - 观察到的可测失败模式（Gate 4 候选）：① workflow_state 语义——模型把"当前节点"理解为"动作出发点"而非流程已到达的阶段（t2 报 initial_imaging）；② 假设标签自由文本与 gold 受控词表不匹配；③ 探索性工具调用多（每轮 4–6 次），预算需按后端校准。这些是任务设计/研究问题素材，不是 harness 缺陷。
 - 注意：`glm5.3-flash` 不存在，正确 ID 是 `glm-5.3-flash`（只写在 config，不进代码）。
 
+## 目录
+
+```
+src/medical_harness/
+  schemas.py       # 数据对象 + Action 联合 + workflow/trajectory/episode gold + 配置
+  environment.py   # TimelineEnvironment(question) + EpisodeEnvironment(按轮释放) + 先读后引
+  agent.py         # question 循环（预算/终因/usage 累计/per-call 事件）
+  trajectory.py    # episode folder 加载与校验 + run_episode + 逐轮评分 + 批量编排
+  workflow.py      # 显式 workflow 加载器 + 确定性校验器 + 公开指导摘要
+  model.py         # ModelClient 协议 + ScriptedModel + OpenAI 兼容客户端(question/episode 工具集)
+  runner.py / evaluation.py / profile.py / utils.py / cli.py
+  adapters/medagentbench.py   # 离线审计层 + FHIR 层（可选外部依赖）
+episodes/dev/thyroid_001/     # 三轮合成轨迹 episode（可直接 --interactive 在线逐轮跑）
+data/sim/{inputs,gold,scripts}/                # question 模式校准数据
+data/trajectory_synthetic/scripts/             # episode scripted 动作
+configs/{mock,glm,trajectory_mock}.json
+```
+
 ## 设计不变量（都有测试钉死，84 项）
 
 时间可见性（recorded_time ≤ as_of，episode 为按轮释放）；患者隔离；先读后引；状态版本化与原子提交；冲突不自动裁决；预算终因枚举（completed/budget_exceeded/model_error/tool_error/operator_stopped）；gold/workflow 内部（when-tags、rule ids、期望状态与动作）永不进入模型上下文；scripted 满分只证明仪器工作。
