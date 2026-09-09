@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.2",
+  "episode_id": "thyroid_001",
+  "patient_id": "dev-p001",
+  "mode": "teacher_forced_replay",
+  "workflow_file": "workflow.json",
+  "evidence_file": "evidence.jsonl",
+  "turns": [
+    {
+      "turn_id": "t1",
+      "as_of": "2026-01-01T09:00:00+00:00",
+      "phase": "initial_imaging",
+      "event": "完成甲状腺超声",
+      "world_message": "超声检查完成，新的检查结果已经进入病历。",
+      "release_evidence_ids": ["ev-us-001"]
+    },
+    {
+      "turn_id": "t2",
+      "as_of": "2026-01-03T10:00:00+00:00",
+      "phase": "advanced_imaging",
+      "event": "完成颈部增强CT",
+      "world_message": "增强影像完成，新的报告已经进入病历。",
+      "release_evidence_ids": ["ev-ct-001"]
+    },
+    {
+      "turn_id": "t3",
+      "as_of": "2026-01-06T15:00:00+00:00",
+      "phase": "pathology",
+      "event": "穿刺病理结果回报",
+      "world_message": "病理结果到达，请更新诊断状态并决定下一步。",
+      "release_evidence_ids": ["ev-path-001"]
+    }
+  ]
+}

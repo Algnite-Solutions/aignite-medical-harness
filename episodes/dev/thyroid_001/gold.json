@@ -1,0 +1,24 @@
+{
+  "episode_id": "thyroid_001",
+  "turns": {
+    "t1": {
+      "expected_workflow_state": "initial_imaging",
+      "allowed_actions": ["order_contrast_imaging", "order_mri", "order_biopsy", "order_fna"],
+      "forbidden_actions": ["start_treatment", "start_treatment_planning"],
+      "required_evidence_refs": ["ev-us-001"]
+    },
+    "t2": {
+      "expected_workflow_state": "advanced_imaging",
+      "allowed_actions": ["order_biopsy", "order_fna"],
+      "forbidden_actions": ["start_treatment", "start_treatment_planning"],
+      "required_evidence_refs": ["ev-ct-001"]
+    },
+    "t3": {
+      "expected_workflow_state": "pathology",
+      "expected_hypotheses": {"甲状腺乳头状癌": "confirmed"},
+      "allowed_actions": ["complete_staging_workup", "order_tnm_staging"],
+      "forbidden_actions": ["start_treatment", "start_treatment_planning"],
+      "required_evidence_refs": ["ev-path-001"]
+    }
+  }
+}

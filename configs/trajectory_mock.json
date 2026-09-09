@@ -1,0 +1,13 @@
+{
+  "name": "trajectory_mock",
+  "episodes": ["../episodes/dev/thyroid_001"],
+  "model": {"type": "scripted", "script_dir": "../data/trajectory_synthetic/scripts"},
+  "strategy": {"name": "versioned_state", "state_tools_enabled": true, "inject_prior_state": true},
+  "budget": {"max_steps": 40, "max_model_calls": 30, "per_turn_model_calls": 8, "request_timeout_seconds": 60, "deadline_seconds": 300, "max_retries": 1},
+  "experiment": {
+    "question": "scripted 校准：episode 循环、workflow 校验与逐轮评分是否按设计工作？",
+    "workload": "synthetic_timeline",
+    "primary_metric": "next_action_accuracy",
+    "stop_condition": "全部轮次结束或预算耗尽"
+  }
+}

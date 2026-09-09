@@ -1,103 +1,82 @@
-# medical-harness v0.1（MVP）
+# medical-harness v0.2（multi-turn clinical trajectory）
 
-一个**最小医学 Agent 研究仪器**：Agent 在受控的患者时间线环境里，用 5 个显式工具读取证据、维护状态并提交有引用的结构化答案；每一步被校验、计入预算、全量落盘、规则判分。
+一个**最小医学 Agent 研究仪器**，两层工作负载共用同一套环境与评测内核：
 
-**定位（重要）**：harness 是测量仪器，合成数据只是校准液。延迟记录、修订、冲突这些"挑战"不预设进代码——等真实数据（MIMIC 等）进来后，用 `profile` 从数据里观测出来，再决定研究什么。v0 刻意不接任何外部基准（MedAgentBench）、任何真实模型 API、任何数据库。
+1. **Question 模式**（v0.1）：逐时间点开放证据，Agent 读取证据、维护状态、提交带引用的结构化答案；
+2. **Trajectory 模式**（v0.2）：一位患者一个 episode，真实观察按诊疗时间逐轮到达（world observation），Agent 每轮更新诊断状态并选择下一临床动作，显式 JSON workflow 验证状态迁移与动作。**teacher-forced replay**：动作被评分，但不改变已记录的患者未来——报告一律称 replay/proposed-action correctness，不称闭环模拟。
+
+**定位**：harness 是测量仪器，合成数据只是校准液；挑战从数据里观测而非预设。v0.2 刻意不接数据库/UI/多 Agent/向量库。架构参考 mini-swe-agent 的 Model/Agent/Environment 分离（未复制代码）。
 
 ## 快速开始（完全离线）
 
 ```bash
-# 依赖：Python 3.11+、pydantic>=2.7、pytest。二选一：
-pip install -e ".[dev]"          # 正式安装
-export PYTHONPATH=src           # 或者免安装直接跑
+pip install -e ".[dev]"   # 或 export PYTHONPATH=src
+pytest -q                                          # 84+1 个测试（默认离线，API 测试跳过）
 
-pytest -q                                                        # 47+1 个测试（离线，API 测试自动跳过）
-python -m medical_harness.cli run --config configs/mock.json    # 离线 scripted 运行
-python -m medical_harness.cli evaluate --run-dir runs/<目录>    # 金标准评分
-python -m medical_harness.cli profile --data-dir data/sim/inputs  # 数据结构观测
+# Question 模式
+python -m medical_harness.cli run --config configs/mock.json
+python -m medical_harness.cli evaluate --run-dir runs/<目录>
+python -m medical_harness.cli profile --data-dir data/sim/inputs
+
+# Trajectory 模式（teacher-forced episode）
+python -m medical_harness.cli validate-episode --episode-dir episodes/dev/thyroid_001
+python -m medical_harness.cli run-trajectory --config configs/trajectory_mock.json
+python -m medical_harness.cli evaluate-trajectory --run-dir runs/<目录>
+python -m medical_harness.cli run-episode --episode-dir episodes/dev/thyroid_001 --config configs/glm.json --interactive
 ```
 
-`run --verbose` 会打印逐步轨迹（动作 -> 结果），像 `codex exec` 的观感。
+## Episode Folder（自包含病例目录）
 
-## 接真实模型（OpenAI 兼容 / GLM）
+`episodes/<组>/<病例>/`：`episode.json`（患者+轮次+每轮释放证据）、`evidence.jsonl`（Evidence，含 evaluator tags / 可选 artifact 路径，loader 阻止 `../` 逃逸）、`workflow.json`（显式状态机；`when` 为证据 tag 前置条件）、evaluator-only `gold.json`、可选 `assets/`。研究者复制目录改 JSON 即可出题，`validate-episode` 离线检查 schema/时间单调/ID/引用/路径安全。
 
-客户端是标准库实现的 OpenAI Chat Completions + 显式 function tools，任何兼容端点都能接。GLM 实测（2026-09-08）：端点 `https://open.bigmodel.cn/api/paas/v4`，模型 ID 为 **`glm-5.3-flash`**（注意：`glm5.3-flash` 不存在；模型 ID 只写在 config，不硬编码进代码）。
+Interactive（`run-episode --interactive`）是**操作员监督的在线运行**：每轮 `run` 批准一次、实时看公开 tool calls、`note` 记批注、`quit`/Ctrl-C 落 `operator_stopped` 终因并保留完整 run 目录；operator 等待时间单独计量、不吃 episode deadline。与 batch 走**同一个** `run_episode()`（有测试保证两者决策一致）。
+
+## 逐轮评分（规则判分，分子/分母显式）
+
+`state_field_accuracy`（workflow_state/分期/假设标签）、`state_transition_validity`、`next_action_accuracy`（gold 允许集合，多个正确动作都算对）、`guideline_violation`（禁用动作/非法迁移）、`evidence_grounding`（引用必须来自已成功 read 的证据）、`abstention_accuracy`、`trajectory_completion`、cumulative trajectory success、calls/tokens/latency。失败轮保留在分母；某轮答错不阻断后续真实轮（teacher-forced）。
+
+## Gate 0/1 测量修复（v0.2 已落地）
+
+- 每次 API 调用的 usage 累计（不再只留最后一次）；retry 受 `max_model_calls`/deadline 约束；
+- 引用前置约束：**可见但未 read 的证据不可引用**（提交与状态更新都强制）；
+- 引用指标拆分：`citation_coverage`（无引用答案不逃出分母）/`citation_correctness`/`forbidden_citations`；数值-字符串正规化为显式 scorer policy（版本记录在 metrics）；
+- run manifest：git commit+dirty、依赖版本、全部输入/episode 文件 SHA-256、experiment card（playbook §8）；事件带 run_id/call_id/单次 latency 与 usage；
+- 敏感字段策略：`trace.save_model_context/save_evidence_content` 关闭时以摘要替代全文（真实患者数据前默认应关闭）；
+- `full_history` 更名 `stateless_retrieval`（其真实行为是新会话+全量可检索+无持久状态，旧对照结论作废）。
+
+## MedAgentBench 适配（两层，当前离线层已跑通）
+
+- **离线层**：`profile-medagentbench --patient-limit 5` 审计官方 300 任务/98 患者（按 MRN 聚合、任务数排名、context 时间戳抽取、无 MRN 任务清单）。本机实测输出：开发候选 S2703270/S6534835/S6550627 等。
+- **FHIR 层**（代码就绪，需官方 Docker）：`fhir_patient_snapshot()` 按 patient 聚合资源、按临床时间排序成 turns；服务未启动时如实报告 unreachable，**绝不臆造顺序**；纳入规则 = ≥3 有日期资源 + ≥2 类临床资源类型。
+- 边界：MedAgentBench-derived replay 分数单独报告，**不得**称为原始基准成绩；原始 task ID 与官方 scorer 语义保留在适配层。
+
+启动官方环境后启用 FHIR 层：`docker pull jyxsu6/medagentbench:latest && docker run -p 8080:8080 medagentbench`。
+
+## 接真实模型（GLM）
 
 ```bash
-cp .env.example .env      # 填入你自己的 GLM_API_KEY（.env 已被 gitignore）
-python -m medical_harness.cli run --config configs/glm.json
-python -m medical_harness.cli evaluate --run-dir runs/<glm 目录>
+cp .env.example .env      # 填 GLM_API_KEY（.env 已 gitignore；key 不进代码/日志/产物）
+python -m medical_harness.cli run --config configs/glm.json           # question 模式
+python -m medical_harness.cli run-episode --episode-dir episodes/dev/thyroid_001 --config configs/glm.json
 ```
 
-密钥纪律：key 只从环境变量/`.env` 读取，只出现在请求头；代码、配置、日志、run 产物中均不落盘（有测试和 grep 验证）。真实 API 测试是显式 opt-in，默认 `pytest` 永远不联网：
+实测（2026-09-09，`glm-5.3-flash`，思考型模型，function calling 兼容）：
+- Question 校准（合成 6 题）：两次均 6/6 completed，field_correct 4/5，延迟记录题正确弃答，越界 0；
+- Episode 基线（thyroid_001 三轮）：3/3 轮 completed，**next_action 3/3**，workflow 迁移 0 违规，state_field 2/4；
+- 观察到的可测失败模式（Gate 4 候选）：① workflow_state 语义——模型把"当前节点"理解为"动作出发点"而非流程已到达的阶段（t2 报 initial_imaging）；② 假设标签自由文本与 gold 受控词表不匹配；③ 探索性工具调用多（每轮 4–6 次），预算需按后端校准。这些是任务设计/研究问题素材，不是 harness 缺陷。
+- 注意：`glm5.3-flash` 不存在，正确 ID 是 `glm-5.3-flash`（只写在 config，不进代码）。
 
-```bash
-set -a; source .env; set +a
-RUN_API_TESTS=1 pytest -q tests/test_api_integration.py -m api
-```
+## 设计不变量（都有测试钉死，84 项）
 
-usage（token 数）逐题记录并聚合进 metrics；**费用不计算**（未配置单价，如实记 unknown，不编造）。glm-5.3-flash 是思考型模型（回复含 reasoning_tokens），工具调用兼容良好。
-
-### GLM 校准运行观测（合成数据，样本=6 题，非基准结论）
-
-两次全量运行均为 6/6 completed：field_correct 4/5、correct_abstain 1/1（延迟记录题正确弃答）、violations 0。可复现的错误信号有两类，都属于任务设计层面的观测而非代码缺陷：
-1. **自由文本格式方差**：药物名回答与 gold 字符串不等（如"阿司匹林 100mg 每日一次（aspirin 100mg daily）" vs "aspirin 100mg daily"）——正式任务需在题目侧规定 value 格式或受控词表；
-2. **过度引用**：更正后的问题上，模型倾向同时引用被替代的原始报告与更正件，被 stale_refs 指标稳定捕获——"当前值"类问题的引用语义需要更明确的题目说明。
-
-评分器已做的唯一容差：数值 vs 带单位字符串（"1.2 mg/dL" == 1.2）；除此之外保持严格匹配，不做语义打分。
-
-## 设计不变量（都有测试钉死）
-
-| 不变量 | 机制 |
-|---|---|
-| 时间可见性 | 仅 `recorded_time <= as_of` 的证据可见；`event_time` 再早也不豁免（延迟记录测试） |
-| 患者隔离 | `patient_id`/`as_of` 是环境构造参数，不在任何工具签名里；跨患者读取/引用被拒 |
-| 状态版本化 | `expected_version` 乐观并发；整批校验原子提交；旧版本全保留；版本冲突拒绝 |
-| 冲突不裁决 | runner 永不把"最新即真"写进状态；矛盾 claim 并存，判分交给 gold |
-| 预算终止 | max_steps / max_model_calls / deadline / 有限重试；终因枚举 completed/budget_exceeded/model_error/tool_error |
-| gold 隔离 | gold 只被评测器读取，从不进入模型上下文/工具列表/run 阶段产物 |
-| 可见错误 | 非法动作与工具校验失败回给模型并计入预算；内部错误才算 tool_error；无静默裁剪 |
-
-安全细节：越界访问（未来/他人证据）在事件里打 `violation` 标签供指标统计，但给模型的错误信息是统一的"not found"——不泄露不可见证据的存在。
-
-## 合成校准数据（data/sim/）
-
-| case | 校准目标 |
-|---|---|
-| case_gamma | 无冲突新增、跨时间点状态版本化 |
-| case_alpha | 延迟记录（应弃答）、明确更正（引旧值=过期引用） |
-| case_beta | 跨患者同名字段隔离 |
-
-gold 独立存放于 `data/sim/gold/`（只被 `evaluation.py` 读取）。scripts（`data/sim/scripts/`）是 ScriptedModel 的预写动作序列，含正确路径；测试里另有**故意答错**变体证明评分器有分辨力。
-
-## 目录
-
-```
-src/medical_harness/
-  schemas.py       # 数据对象 + Action 判别联合 + 配置（Pydantic, extra=forbid）
-  environment.py   # 时间线环境：5 工具 + 可见性 + 隔离 + 版本化状态
-  agent.py         # 循环：上下文->动作->校验->执行->记录；预算与终因
-  model.py         # ModelClient 协议 + ScriptedModel（离线默认）
-  runner.py        # run 目录产物：events/state_snapshots/answers/metrics/report
-  evaluation.py    # 规则判分（分子/分母显式，0 分母=N/A，失败任务留在分母）
-  profile.py       # 数据结构观测（滞后分布/重复/模态）——"从数据看挑战"的通路
-  cli.py           # run / evaluate / profile
-data/sim/{inputs,gold,scripts}/   configs/mock.json   tests/
-```
-
-每次 run 生成唯一目录 `runs/<UTC时间戳>-<name>-<rand>/`：`resolved_config.json`（含输入哈希与代码源哈希）、`events.jsonl`（逐步动作/观测/错误/模型上下文/usage）、`state_snapshots.jsonl`、`answers.jsonl`、`metrics.json`、`report.md`。
-
-## 诚实性口径
-
-- **backend 标记**：scripted 满分只证明运行器与评分器工作；真实模型运行标注具体模型名，且合成校准集样本极小，不构成基准结论或临床验证；报告页眉强制标注。
-- `valid_refs` 只验证引用属于 gold 允许集合，不声称语义忠实度。
-- scripted 后端无 token usage，如实记 `unknown`；真实后端记录实际 token 数；费用一律不计算（无单价配置）。
-- 回放=读取已保存产物；相同配置不保证真实模型输出可复现（temperature=0 下思考型模型仍可能有方差）。
+时间可见性（recorded_time ≤ as_of，episode 为按轮释放）；患者隔离；先读后引；状态版本化与原子提交；冲突不自动裁决；预算终因枚举（completed/budget_exceeded/model_error/tool_error/operator_stopped）；gold/workflow 内部（when-tags、rule ids、期望状态与动作）永不进入模型上下文；scripted 满分只证明仪器工作。
 
 ## 边界与下一步
 
-已实现：离线 scripted 全链路 + OpenAI 兼容客户端（GLM 实测）。未实现（刻意推迟）：MedAgentBench 适配器、MIMIC 数据适配、语义检索/摘要记忆、费用计算、compare 命令。
+已实现：question + trajectory 双模式、workflow 校验器、episode folder、interactive、GLM 客户端、MedAgentBench 离线审计。未实现（刻意推迟）：MedAgentBench 3–5 患者 FHIR trajectory 生成（等 Docker 环境）、规则引擎/动作安全等干预（等 baseline failure review）、MIMIC 纵向队列、compare 命令、多模态 artifact 评分。
 
-路线：真实数据一进来 → `profile` 观测实际现象（滞后/冲突/重复分布）→ 数据驱地决定任务与金标准 → 再比较 full_history vs versioned_state 两策略。
+## 诚实性口径
 
-架构参考了 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 的 Model/Agent/Environment 分离与极简循环（未复制代码；commit 记录因本机网络受限待实现阶段补上，不阻塞离线开发）。
+- backend 强制标注；scripted 满分 ≠ 真实模型效果；合成小样本 ≠ 基准结论；replay ≠ 闭环模拟。
+- `citation_correctness` 只验证引用属于 gold 允许集合，不声称语义忠实度。
+- usage 如实记录（scripted 记 unknown）；费用不计算（无单价配置）。
+- 相同配置不保证真实模型输出可复现；区分"回放已保存产物"与"重新调用模型"。

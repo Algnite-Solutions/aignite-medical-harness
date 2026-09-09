@@ -89,6 +89,8 @@ def test_other_patient_evidence_invisible_everywhere(inputs):
 
 def test_versioning_old_versions_kept_conflict_rejected_atomic(inputs):
     env = TimelineEnvironment(inputs["case_alpha"], as_of=dt("2024-03-01T12:00:00+00:00"))
+    env.execute(ReadEvidenceAction(evidence_id="e-med-1"))
+    env.execute(ReadEvidenceAction(evidence_id="e-adm-1"))
 
     ok = env.execute(ProposeStateUpdateAction(
         claims=[ProposedClaim(key="medication", value="aspirin 100mg daily", evidence_refs=["e-med-1"])],
@@ -116,6 +118,7 @@ def test_versioning_old_versions_kept_conflict_rejected_atomic(inputs):
 
 def test_supersedes_marks_old_claim_and_keeps_history(inputs):
     env = TimelineEnvironment(inputs["case_alpha"], as_of=dt("2024-03-01T12:00:00+00:00"))
+    env.execute(ReadEvidenceAction(evidence_id="e-med-1"))
     env.execute(ProposeStateUpdateAction(
         claims=[ProposedClaim(key="medication", value="aspirin 100mg daily", evidence_refs=["e-med-1"])],
         expected_version=0,
@@ -135,6 +138,8 @@ def test_supersedes_marks_old_claim_and_keeps_history(inputs):
 
 def test_supersedes_wrong_key_rejected(inputs):
     env = TimelineEnvironment(inputs["case_alpha"], as_of=dt("2024-03-01T12:00:00+00:00"))
+    env.execute(ReadEvidenceAction(evidence_id="e-med-1"))
+    env.execute(ReadEvidenceAction(evidence_id="e-adm-1"))
     env.execute(ProposeStateUpdateAction(
         claims=[ProposedClaim(key="medication", value="aspirin", evidence_refs=["e-med-1"])],
         expected_version=0,
@@ -147,10 +152,37 @@ def test_supersedes_wrong_key_rejected(inputs):
     assert not res.ok
 
 
+# ------------------------------------------------- 3b. read-before-cite (Gate 1)
+
+def test_visible_but_unread_evidence_cannot_be_cited(inputs):
+    env = TimelineEnvironment(inputs["case_alpha"], as_of=dt("2024-03-05T12:00:00+00:00"))
+    env.execute(ReadEvidenceAction(evidence_id="e-lab-2"))  # only this one is read
+    # e-lab-1 is VISIBLE at t2 but never read -> citation rejected
+    submit = env.execute(SubmitAnswerAction(answer=Answer(
+        question_id="q3",
+        claims=[AnswerClaim(key="creatinine", value=1.8, evidence_refs=["e-lab-1"])],
+    )))
+    assert not submit.ok and "not been read" in submit.error
+    propose = env.execute(ProposeStateUpdateAction(
+        claims=[ProposedClaim(key="creatinine", value=1.8, evidence_refs=["e-lab-1"])],
+        expected_version=0,
+    ))
+    assert not propose.ok and "not been read" in propose.error
+    # after reading, the same citation is accepted
+    env.execute(ReadEvidenceAction(evidence_id="e-lab-1"))
+    ok = env.execute(ProposeStateUpdateAction(
+        claims=[ProposedClaim(key="creatinine", value=1.8, evidence_refs=["e-lab-1"])],
+        expected_version=0,
+    ))
+    assert ok.ok
+
+
 # ------------------------------------------------- 4. conflicts are not auto-resolved
 
 def test_contradictory_claims_both_stay_active(inputs):
     env = TimelineEnvironment(inputs["case_alpha"], as_of=dt("2024-03-05T12:00:00+00:00"))
+    env.execute(ReadEvidenceAction(evidence_id="e-lab-1"))
+    env.execute(ReadEvidenceAction(evidence_id="e-lab-2"))
     env.execute(ProposeStateUpdateAction(
         claims=[ProposedClaim(key="creatinine", value=1.8, evidence_refs=["e-lab-1"])],
         expected_version=0,

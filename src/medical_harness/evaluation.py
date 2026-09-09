@@ -13,6 +13,8 @@ from typing import Any
 
 from .runner import load_gold, operational_metrics
 
+SCORER_POLICY_VERSION = "0.2"
+
 _NUM_RE = re.compile(r"^\s*[-+]?\d+(?:\.\d+)?")
 
 
@@ -65,7 +67,9 @@ def score_run(run_dir: Path) -> dict[str, Any]:
         "field_correct": {"num": 0, "den": 0, "value": None},
         "correct_abstain": {"num": 0, "den": 0, "value": None},
         "coverage_answered": {"num": 0, "den": 0, "value": None},
-        "valid_refs": {"num": 0, "den": 0, "value": None},
+        "citation_coverage": {"num": 0, "den": 0, "value": None},
+        "citation_correctness": {"num": 0, "den": 0, "value": None},
+        "forbidden_citations": {"num": 0, "den": 0, "value": None},
         "stale_refs": {"num": 0, "den": 0, "value": None},
     }
     failures: list[dict[str, str]] = []
@@ -79,7 +83,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
         scored["n_questions"] += 1
         c = per_case.setdefault(case_id, {
             "n": 0, "answerable": 0, "should_abstain": 0, "correct": 0, "abstain_ok": 0,
-            "answered": 0, "refs_valid": 0, "refs_den": 0, "stale": 0, "stale_den": 0,
+            "answered": 0, "cited": 0, "cite_den": 0, "cite_ok": 0, "forbidden": 0, "stale": 0, "stale_den": 0,
         })
         c["n"] += 1
 
@@ -104,6 +108,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
             scored["n_answerable"] += 1
             scored["field_correct"]["den"] += 1
             scored["coverage_answered"]["den"] += 1
+            scored["citation_coverage"]["den"] += 1  # uncited answers stay in this denominator
             c["answerable"] += 1
             claim = None
             if g.expected.key is not None:
@@ -120,13 +125,20 @@ def score_run(run_dir: Path) -> dict[str, Any]:
             if completed and not abstained:
                 scored["coverage_answered"]["num"] += 1
                 c["answered"] += 1
+            if completed and refs:
+                scored["citation_coverage"]["num"] += 1
+                c["cited"] += 1
 
         if completed and refs:
-            scored["valid_refs"]["den"] += 1
-            c["refs_den"] += 1
+            scored["citation_correctness"]["den"] += 1
+            c["cite_den"] += 1
+            scored["forbidden_citations"]["den"] += 1
             if all(r in g.allowed_refs for r in refs):
-                scored["valid_refs"]["num"] += 1
-                c["refs_valid"] += 1
+                scored["citation_correctness"]["num"] += 1
+                c["cite_ok"] += 1
+            if any(r in g.forbidden_refs for r in refs):
+                scored["forbidden_citations"]["num"] += 1
+                c["forbidden"] += 1
             if g.stale_refs:
                 scored["stale_refs"]["den"] += 1
                 c["stale_den"] += 1
@@ -134,13 +146,22 @@ def score_run(run_dir: Path) -> dict[str, Any]:
                     scored["stale_refs"]["num"] += 1
                     c["stale"] += 1
 
-    for key in ("field_correct", "correct_abstain", "coverage_answered", "valid_refs", "stale_refs"):
+    for key in ("field_correct", "correct_abstain", "coverage_answered",
+                "citation_coverage", "citation_correctness", "forbidden_citations", "stale_refs"):
         r = scored[key]
         r["value"] = (r["num"] / r["den"]) if r["den"] else None
 
+    import hashlib
+
+    gold_digest = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()[:12]
+        for p in sorted(gold_dir.glob("*.json"))
+    } if gold_dir.exists() else {}
     result = {
         "backend": resolved["model"]["type"],
         "gold_dir": str(gold_dir),
+        "gold_sha256": gold_digest,
+        "scorer_policy_version": SCORER_POLICY_VERSION,
         "operational": operational_metrics(rows),
         "scored": scored,
         "violations": violations,
@@ -188,19 +209,21 @@ def write_scored_report(run_dir: Path, result: dict[str, Any]) -> None:
         f"| 字段正确率 field_correct | {_fmt(s['field_correct'])} | {s['field_correct']['value'] if s['field_correct']['value'] is not None else 'N/A'} |",
         f"| 应弃答正确率 correct_abstain | {_fmt(s['correct_abstain'])} | {s['correct_abstain']['value'] if s['correct_abstain']['value'] is not None else 'N/A'} |",
         f"| 可回答覆盖率 coverage_answered | {_fmt(s['coverage_answered'])} | {s['coverage_answered']['value'] if s['coverage_answered']['value'] is not None else 'N/A'} |",
-        f"| 有效引用率 valid_refs | {_fmt(s['valid_refs'])} | {s['valid_refs']['value'] if s['valid_refs']['value'] is not None else 'N/A'} |",
+        f"| 引用覆盖率 citation_coverage | {_fmt(s['citation_coverage'])} | {s['citation_coverage']['value'] if s['citation_coverage']['value'] is not None else 'N/A'} |",
+        f"| 引用正确率 citation_correctness | {_fmt(s['citation_correctness'])} | {s['citation_correctness']['value'] if s['citation_correctness']['value'] is not None else 'N/A'} |",
+        f"| 禁引命中率 forbidden_citations | {_fmt(s['forbidden_citations'])} | {s['forbidden_citations']['value'] if s['forbidden_citations']['value'] is not None else 'N/A'} |",
         f"| 过期引用率 stale_refs | {_fmt(s['stale_refs'])} | {s['stale_refs']['value'] if s['stale_refs']['value'] is not None else 'N/A'} |",
         f"| 患者/时间越界次数 violations | future={result['violations'].get('future', 0)}, other_patient={result['violations'].get('other_patient', 0)} | |",
         "",
         "### 按病例",
         "",
-        "| case | 题数 | 答对/可答 | 弃答正确/应弃答 | 有效引用 | 过期引用 |",
-        "|---|---|---|---|---|---|",
+        "| case | 题数 | 答对/可答 | 弃答正确/应弃答 | 引用覆盖 | 引用正确 | 过期引用 |",
+        "|---|---|---|---|---|---|---|",
     ]
     for c in result["per_case"]:
         lines.append(
             f"| {c['case_id']} | {c['n']} | {c['correct']}/{c['answerable']} | {c['abstain_ok']}/{c['should_abstain']} | "
-            f"{c['refs_valid']}/{c['refs_den']} | {c['stale']}/{c['stale_den']} |"
+            f"{c['cited']}/{c['answerable']} | {c['cite_ok']}/{c['cite_den']} | {c['stale']}/{c['stale_den']} |"
         )
     if result["failures"]:
         lines += ["", "### 失败/未完成任务（保留在分母中）", ""]

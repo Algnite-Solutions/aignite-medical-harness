@@ -15,7 +15,7 @@ def _cfg(name, state_tools, tmp_path):
         "name": name,
         "data_dir": str(DATA / "inputs"),
         "model": {"type": "scripted", "script_dir": str(DATA / "scripts")},
-        "strategy": {"name": "versioned_state" if state_tools else "full_history",
+        "strategy": {"name": "versioned_state" if state_tools else "stateless_retrieval",
                      "state_tools_enabled": state_tools, "inject_prior_state": state_tools},
         "budget": {"max_steps": 10, "max_model_calls": 10, "deadline_seconds": 60},
         "cases": ["case_gamma", "case_alpha", "case_beta"],
@@ -50,14 +50,14 @@ def test_same_visible_evidence_across_strategies(both_runs):
     assert a == b  # identical visible evidence sets for every (case, question)
 
 
-def test_full_history_state_tools_report_disabled(both_runs):
+def test_stateless_retrieval_state_tools_report_disabled(both_runs):
     _, full = both_runs
     steps = []
     for line in (full / "events.jsonl").read_text(encoding="utf-8").splitlines():
         ev = json.loads(line)
         if ev.get("type") == "step" and ev.get("action", {}).get("type") in ("get_state", "propose_state_update"):
             steps.append(ev)
-    assert steps, "scripts do use state tools; full_history must have hit them"
+    assert steps, "scripts do use state tools; stateless_retrieval must have hit them"
     assert all("disabled" in (s["observation"].get("error") or "") for s in steps)
 
 

@@ -32,11 +32,28 @@ LogFn = Callable[..., None]
 AnnounceFn = Callable[[str], None]
 
 
+class BudgetExceededError(Exception):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+def _merge_usage(total: dict[str, Any] | None, usage: Any) -> dict[str, Any] | None:
+    """Accumulate per-call usage (Gate 0): every API call counts, not just the last."""
+    if not isinstance(usage, dict):
+        return total
+    base = total or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        base[key] = base.get(key, 0) + (usage.get(key) or 0)
+    return base
+
+
 @dataclass
 class Budget:
     cfg: BudgetConfig
     steps: int = 0
     model_calls: int = 0
+    call_seq: int = 0
     started: float = field(default_factory=time.monotonic)
 
     def exceeded(self) -> str | None:
@@ -120,6 +137,7 @@ def run_question(
     termination: tuple[str, str] | None = None
     answer: Answer | None = None
     step = 0
+    usage_total: dict[str, Any] | None = None
 
     while termination is None:
         why = budget.exceeded()
@@ -128,9 +146,13 @@ def run_question(
             break
         try:
             action_item = _call_model(model, messages, budget, log)
+        except BudgetExceededError as exc:
+            termination = ("budget_exceeded", exc.detail)
+            break
         except ModelError as exc:
             termination = ("model_error", f"{exc.kind}: {exc}")
             break
+        usage_total = _merge_usage(usage_total, getattr(model, "last_usage", None))
 
         parsed, parse_error = _to_action(action_item)
         if parsed is None:
@@ -198,7 +220,7 @@ def run_question(
             break
 
     duration_ms = int((time.monotonic() - t0) * 1000)
-    usage = getattr(model, "last_usage", None) or "unknown"
+    usage = usage_total if isinstance(usage_total, dict) else "unknown"
     log(
         "question_end",
         termination=termination[0],
@@ -234,11 +256,36 @@ def _tool_call(call_id: str, action: Any) -> dict[str, Any]:
 def _call_model(model: ModelClient, messages: list[Message], budget: Budget, log: LogFn) -> Any:
     last: ModelError | None = None
     for attempt in range(budget.cfg.max_retries + 1):
+        why = budget.exceeded()  # Gate 0: retries also honor max_model_calls and deadline
+        if why:
+            raise BudgetExceededError(why)
         budget.model_calls += 1
+        call_id = f"{budget.call_seq + 1}"
+        budget.call_seq += 1
+        t0 = time.monotonic()
         try:
-            return model.next(messages)
+            out = model.next(messages)
+            log(
+                "model_call",
+                call_id=call_id,
+                model=getattr(model, "name", type(model).__name__),
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                usage=getattr(model, "last_usage", None),
+                attempt=attempt,
+                status="ok",
+            )
+            return out
         except ModelError as exc:
             last = exc
+            log(
+                "model_call",
+                call_id=call_id,
+                model=getattr(model, "name", type(model).__name__),
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                usage=None,
+                attempt=attempt,
+                status=f"error:{exc.kind}",
+            )
             if attempt < budget.cfg.max_retries:
                 log("model_retry", attempt=attempt + 1, error=f"{exc.kind}: {exc}")
     raise last  # type: ignore[misc]

@@ -30,6 +30,11 @@ class Evidence(Strict):
     content: str
     source_locator: str
     data_version: str = "v1"
+    # trajectory/episode extensions (v0.2); deterministic workflow validators read
+    # explicit tags only — the model under test never assigns evaluator tags
+    tags: list[str] = Field(default_factory=list)
+    artifact_path: str | None = None
+    mime_type: str | None = None
 
 
 ClaimStatus = Literal["active", "superseded", "contradicted", "uncertain"]
@@ -112,6 +117,105 @@ class CaseGold(Strict):
     answers: list[GoldAnswer] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------- trajectory (v0.2)
+
+class TrajectoryTurn(Strict):
+    turn_id: str
+    as_of: datetime
+    phase: str | None = None
+    event: str = ""
+    world_message: str = ""
+    release_evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Episode(Strict):
+    schema_version: str = "0.2"
+    episode_id: str
+    patient_id: str
+    mode: str = "teacher_forced_replay"
+    workflow_id: str = ""
+    workflow_file: str = "workflow.json"
+    evidence_file: str = "evidence.jsonl"
+    turns: list[TrajectoryTurn] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)  # assembled by the loader
+
+
+class DiagnosticHypothesis(Strict):
+    label: str
+    status: Literal["possible", "supported", "confirmed", "ruled_out"]
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class ClinicalState(Strict):
+    hypotheses: list[DiagnosticHypothesis] = Field(default_factory=list)
+    clinical_stage: str | None = None  # disease stage (e.g. TNM); NOT the workflow node
+    unresolved_questions: list[str] = Field(default_factory=list)
+
+
+class ClinicalAction(Strict):
+    action_type: str
+    target: str | None = None
+    reason: str = ""
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class TurnDecision(Strict):
+    turn_id: str
+    workflow_state: str  # workflow node (e.g. "pathology"); distinct from clinical_stage
+    state: ClinicalState = Field(default_factory=ClinicalState)
+    next_action: ClinicalAction | None = None
+    report: str | None = None
+    abstain: bool = False
+
+
+# ---------------------------------------------------------------- workflow (evaluator-side policy)
+
+class TransitionRule(Strict):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    from_state: str = Field(alias="from")
+    to_state: str = Field(alias="to")
+    when: list[str] = Field(default_factory=list)  # evidence tags required for this transition
+    allowed_actions: list[str] = Field(default_factory=list)
+
+    @property
+    def rule_id(self) -> str:
+        return f"{self.from_state}->{self.to_state}"
+
+
+class WorkflowConfig(Strict):
+    workflow_id: str
+    version: str = "0.1"
+    states: list[str]
+    initial_state: str | None = None  # defaults to states[0]
+    transitions: list[TransitionRule] = Field(default_factory=list)
+
+    def start_state(self) -> str:
+        return self.initial_state or self.states[0]
+
+
+class TransitionResult(Strict):
+    state_valid: bool
+    action_valid: bool
+    transition_valid: bool
+    violations: list[str] = Field(default_factory=list)
+    matched_rule_ids: list[str] = Field(default_factory=list)
+
+
+class TurnGold(Strict):
+    expected_workflow_state: str | None = None
+    expected_hypotheses: dict[str, str] | None = None  # label -> status
+    expected_stage: str | None = None
+    allowed_actions: list[str] = Field(default_factory=list)
+    forbidden_actions: list[str] = Field(default_factory=list)
+    required_evidence_refs: list[str] = Field(default_factory=list)
+    expect_abstain: bool = False
+
+
+class EpisodeGold(Strict):
+    episode_id: str
+    turns: dict[str, TurnGold] = Field(default_factory=dict)
+
+
 # ---------------------------------------------------------------- actions
 
 class ListEvidenceAction(Strict):
@@ -147,6 +251,11 @@ class SubmitAnswerAction(Strict):
     answer: Answer
 
 
+class SubmitTurnDecisionAction(Strict):
+    type: Literal["submit_turn_decision"] = "submit_turn_decision"
+    decision: TurnDecision
+
+
 Action = Annotated[
     Union[
         ListEvidenceAction,
@@ -154,6 +263,7 @@ Action = Annotated[
         GetStateAction,
         ProposeStateUpdateAction,
         SubmitAnswerAction,
+        SubmitTurnDecisionAction,
     ],
     Field(discriminator="type"),
 ]
@@ -184,14 +294,18 @@ class ToolResult(Strict):
 class BudgetConfig(Strict):
     max_steps: int = 12
     max_model_calls: int = 12
-    request_timeout_seconds: float = 30.0  # enforced by real API client (later phase)
+    per_turn_model_calls: int | None = None  # episode turns only; None = no per-turn cap
+    request_timeout_seconds: float = 30.0  # enforced by real API client
     deadline_seconds: float = 300.0
     max_retries: int = 1
 
 
 class StrategyConfig(Strict):
+    # v0.2 rename: the old "full_history" never injected full history into context;
+    # its actual behavior (fresh session per question + full visible-evidence
+    # retrieval + no persistent state) is now called stateless_retrieval.
     name: str = "versioned_state"
-    state_tools_enabled: bool = True  # False => full_history: state tools explicitly disabled
+    state_tools_enabled: bool = True  # False => stateless_retrieval: state tools explicitly disabled
     inject_prior_state: bool = True
 
 
@@ -204,6 +318,13 @@ class ModelConfig(Strict):
     temperature: float = 0.0
 
 
+class TraceConfig(Strict):
+    # sensitive-content policy (Gate 0): before real patient data, full evidence
+    # content and full model context must not be persisted by default.
+    save_model_context: bool = True
+    save_evidence_content: bool = True
+
+
 class RunConfig(Strict):
     name: str = "mock"
     data_dir: str
@@ -211,3 +332,5 @@ class RunConfig(Strict):
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     cases: list[str] | None = None  # None => all
+    trace: TraceConfig = Field(default_factory=TraceConfig)
+    experiment: dict[str, Any] | None = None  # experiment card (playbook §8), stored verbatim in the manifest

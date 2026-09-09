@@ -9,6 +9,6 @@
     "temperature": 0.0
   },
   "strategy": {"name": "versioned_state", "state_tools_enabled": true, "inject_prior_state": true},
-  "budget": {"max_steps": 12, "max_model_calls": 12, "request_timeout_seconds": 60, "deadline_seconds": 180, "max_retries": 1},
+  "budget": {"max_steps": 40, "max_model_calls": 40, "per_turn_model_calls": 12, "request_timeout_seconds": 60, "deadline_seconds": 600, "max_retries": 1},
   "cases": ["case_beta", "case_gamma", "case_alpha"]
 }

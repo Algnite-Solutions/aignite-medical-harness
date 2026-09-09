@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import secrets
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
+
+import pydantic
 
 from .agent import QuestionResult, run_question
 from .environment import TimelineEnvironment, summarize_state
@@ -46,26 +50,42 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def code_version() -> dict[str, str]:
-    """Source hash (repo is not git-managed; see README)."""
-    h = hashlib.sha256()
-    for path in sorted(SRC_ROOT.rglob("*.py")):
-        h.update(path.name.encode())
-        h.update(path.read_bytes())
-    return {"source_sha256": h.hexdigest()[:16], "vcs": "not-a-git-repo"}
+def code_version() -> dict[str, Any]:
+    """Git commit + dirty flag when available; source hash fallback for non-git."""
+    repo = SRC_ROOT.parent
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        dirty_out = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        return {"vcs": "git", "git_commit": commit[:12], "git_dirty": bool(dirty_out)}
+    except Exception:
+        h = hashlib.sha256()
+        for path in sorted(SRC_ROOT.rglob("*.py")):
+            h.update(path.name.encode())
+            h.update(path.read_bytes())
+        return {"vcs": "not-a-git-repo", "source_sha256": h.hexdigest()[:16]}
+
+
+def dependency_versions() -> dict[str, str]:
+    return {"python": platform.python_version(), "pydantic": pydantic.__version__}
 
 
 # ---------------------------------------------------------------- run dir
 
 class EventLog:
-    def __init__(self, fh: TextIO) -> None:
+    def __init__(self, fh: TextIO, run_id: str = "") -> None:
         self._fh = fh
+        self.run_id = run_id
         self.seq = 0
 
     def __call__(self, type_: str, **fields: Any) -> None:
         self.seq += 1
         row = {
             "seq": self.seq,
+            "run_id": self.run_id,
             "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             "type": type_,
             **fields,
@@ -184,8 +204,11 @@ def run(config_path: Path, runs_root: Path, verbose: bool = False) -> Path:
         "model": cfg.model.model_dump(),
         "strategy": cfg.strategy.model_dump(mode="json"),
         "budget": cfg.budget.model_dump(mode="json"),
+        "trace": cfg.trace.model_dump(),
+        "experiment": cfg.experiment,
         "cases": [c.case_id for c in cases],
         "code_version": code_version(),
+        "dependencies": dependency_versions(),
         "input_hashes": {p.name: _sha256(p) for p in input_files},
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -196,7 +219,7 @@ def run(config_path: Path, runs_root: Path, verbose: bool = False) -> Path:
     with open(run_dir / "events.jsonl", "w", encoding="utf-8") as ev_fh, \
             open(run_dir / "state_snapshots.jsonl", "w", encoding="utf-8") as snap_fh, \
             open(run_dir / "answers.jsonl", "w", encoding="utf-8") as ans_fh:
-        log = EventLog(ev_fh)
+        log = EventLog(ev_fh, run_id=run_dir.name)
         write_snapshot = _jsonl_writer(snap_fh)
         write_answer = _jsonl_writer(ans_fh)
 

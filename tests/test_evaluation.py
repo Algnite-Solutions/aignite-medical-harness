@@ -65,24 +65,29 @@ def test_correct_scripted_run_scores_perfectly(correct_run):
     assert s["n_questions"] == 6
     assert s["field_correct"] == {"num": 5, "den": 5, "value": 1.0}
     assert s["correct_abstain"] == {"num": 1, "den": 1, "value": 1.0}
-    assert s["valid_refs"] == {"num": 5, "den": 5, "value": 1.0}
+    assert s["citation_coverage"] == {"num": 5, "den": 5, "value": 1.0}
+    assert s["citation_correctness"] == {"num": 5, "den": 5, "value": 1.0}
+    assert s["forbidden_citations"]["num"] == 0 and s["forbidden_citations"]["den"] == 5
     assert s["stale_refs"]["num"] == 0 and s["stale_refs"]["den"] == 2
     assert result["violations"] == {"future": 0, "other_patient": 0}
     assert result["failures"] == []
+    assert result["scorer_policy_version"] == "0.2"
+    assert "case_alpha.json" in result["gold_sha256"]  # gold digest recorded
 
 
 def test_deliberately_wrong_run_scores_differently(wrong_run):
     result = score_run(wrong_run)
     s = result["scored"]
-    assert s["field_correct"]["num"] == 4 and s["field_correct"]["den"] == 5  # alpha q3 wrong
-    assert s["correct_abstain"]["num"] == 0 and s["correct_abstain"]["den"] == 1  # alpha q2 wrong
-    # alpha q2 tried to cite e-lab-1 (invisible at t1): the environment rejected the
-    # submission itself, so the question ended model_error — the refusal is the point.
-    failed = [f for f in result["failures"] if f["question_id"] == "q2" and f["case_id"] == "case_alpha"]
-    assert failed and failed[0]["termination"] == "model_error"
-    # stale den counts only completed answers whose gold defines stale_refs: gamma q2 + alpha q3
-    assert s["stale_refs"]["num"] == 1 and s["stale_refs"]["den"] == 2  # alpha q3 cited e-lab-1
-    assert s["valid_refs"]["num"] == 4 and s["valid_refs"]["den"] == 5  # alpha q3 cites non-allowed ref
+    # alpha q2 cited the (invisible) delayed lab -> submission rejected -> model_error;
+    # alpha q3 cited e-lab-1 WITHOUT reading it -> read-before-cite rejection -> model_error
+    assert result["operational"]["terminations"] == {"completed": 4, "model_error": 2}
+    assert len(result["failures"]) == 2
+    assert s["field_correct"]["num"] == 4 and s["field_correct"]["den"] == 5  # alpha q3 never completed
+    assert s["correct_abstain"]["num"] == 0 and s["correct_abstain"]["den"] == 1
+    # completed answers (gamma q1/q2, alpha q1, beta q1) all cite allowed refs
+    assert s["citation_correctness"] == {"num": 4, "den": 4, "value": 1.0}
+    # stale denominator now only gamma q2 (alpha q3 never got submitted)
+    assert s["stale_refs"]["num"] == 0 and s["stale_refs"]["den"] == 1
 
 
 def test_wrong_run_scores_differ_from_correct(correct_run, wrong_run):

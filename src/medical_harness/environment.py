@@ -12,15 +12,20 @@ from typing import Any
 from .schemas import (
     Answer,
     CaseInput,
+    CaseTask,
     Claim,
     Evidence,
+    Episode,
     GetStateAction,
     ListEvidenceAction,
     ProposeStateUpdateAction,
     ReadEvidenceAction,
     StateSnapshot,
     SubmitAnswerAction,
+    SubmitTurnDecisionAction,
     ToolResult,
+    TrajectoryTurn,
+    TurnDecision,
 )
 
 _NOT_FOUND = "evidence_id not found among visible evidence (unknown, not yet recorded, or another patient)"
@@ -43,6 +48,7 @@ class TimelineEnvironment:
         self.snapshots: list[StateSnapshot] = [base]
         self._claim_counter = len(base.claims)
         self.violations: dict[str, int] = {"future": 0, "other_patient": 0}
+        self.read_ids: set[str] = set()  # Gate 1: citations must come from successfully read evidence
 
     # ------------------------------------------------------------ visibility
 
@@ -110,7 +116,22 @@ class TimelineEnvironment:
         if violation:
             self.violations[violation] += 1
             return ToolResult(ok=False, error=_NOT_FOUND, error_kind="validation", violation=violation)
+        self.read_ids.add(evidence_id)
         return ToolResult(ok=True, data=e.model_dump(mode="json"))
+
+    def _cite_error(self, ref: str) -> ToolResult:
+        """Visible-but-unread citation: rejected (Gate 1 read-set policy)."""
+        violation = self._check_ref(ref)
+        if violation:
+            self.violations[violation] += 1
+        e = self._by_id.get(ref)
+        if e is not None and e.patient_id == self.patient_id and e.recorded_time <= self.as_of and ref not in self.read_ids:
+            return ToolResult(
+                ok=False,
+                error=f"evidence '{ref}' is visible but has not been read; call read_evidence before citing it",
+                error_kind="validation",
+            )
+        return ToolResult(ok=False, error="references evidence not visible at current as_of", error_kind="validation")
 
     def _get_state(self) -> ToolResult:
         if not self.allow_state_tools:
@@ -139,15 +160,8 @@ class TimelineEnvironment:
         # validate the whole batch first; any failure rejects everything (atomic)
         for p in action.claims:
             for ref in p.evidence_refs:
-                violation = self._check_ref(ref)
-                if self._by_id.get(ref) is None or violation:
-                    if violation:
-                        self.violations[violation] += 1
-                    return ToolResult(
-                        ok=False,
-                        error=f"claim key '{p.key}' references evidence not visible at current as_of",
-                        error_kind="validation",
-                    )
+                if ref not in self._visible_ids() or ref not in self.read_ids:
+                    return self._cite_error(ref)
             if p.supersedes:
                 target = next((c for c in current.claims if c.claim_id == p.supersedes), None)
                 if target is None:
@@ -194,15 +208,8 @@ class TimelineEnvironment:
             return ToolResult(ok=False, error="abstain answer must not contain claims or evidence refs", error_kind="validation")
         refs = list(answer.evidence_refs) + [r for c in answer.claims for r in c.evidence_refs]
         for ref in refs:
-            violation = self._check_ref(ref)
-            if self._by_id.get(ref) is None or violation:
-                if violation:
-                    self.violations[violation] += 1
-                return ToolResult(
-                    ok=False,
-                    error="answer references evidence not visible at current as_of",
-                    error_kind="validation",
-                )
+            if ref not in self._visible_ids() or ref not in self.read_ids:
+                return self._cite_error(ref)
         return ToolResult(ok=True, data={"accepted": True})
 
 
@@ -215,3 +222,72 @@ def summarize_state(snapshot: StateSnapshot) -> str:
         note = f" (supersedes {c.supersedes})" if c.supersedes else ""
         lines.append(f"- [{c.status}] {c.key} = {c.value!r}{note} refs={c.evidence_refs}")
     return "\n".join(lines)
+
+
+class EpisodeEnvironment(TimelineEnvironment):
+    """Teacher-forced trajectory environment: evidence becomes visible only when
+    its turn releases it (released-so-far ∪ history stays visible); conversation
+    and versioned state persist across turns for the bound patient."""
+
+    def __init__(self, episode: Episode, allow_state_tools: bool = True) -> None:
+        case = CaseInput(
+            case_id=episode.episode_id,
+            task=CaseTask(patient_id=episode.patient_id),
+            evidence=episode.evidence,
+        )
+        super().__init__(case, as_of=episode.turns[0].as_of, allow_state_tools=allow_state_tools)
+        self.episode = episode
+        self.current_turn: TrajectoryTurn = episode.turns[0]
+        self._released: set[str] = set(episode.turns[0].release_evidence_ids)
+        self.completed_decisions: list[TurnDecision] = []
+
+    def advance_turn(self, turn: TrajectoryTurn) -> None:
+        self.current_turn = turn
+        self.as_of = turn.as_of
+        self._released.update(turn.release_evidence_ids)
+
+    def _visible(self) -> list[Evidence]:
+        rows = [
+            e for e in self._by_id.values()
+            if e.patient_id == self.patient_id and e.evidence_id in self._released
+        ]
+        return sorted(rows, key=lambda e: (e.recorded_time, e.evidence_id))
+
+    def _check_ref(self, evidence_id: str) -> str | None:
+        e = self._by_id.get(evidence_id)
+        if e is None:
+            return None
+        if e.patient_id != self.patient_id:
+            return "other_patient"
+        if evidence_id not in self._released:
+            return "future"  # not yet released at the current turn
+        return None
+
+    def execute(self, action: Any) -> ToolResult:
+        if isinstance(action, SubmitTurnDecisionAction):
+            try:
+                return self._submit_turn_decision(action.decision)
+            except Exception as exc:
+                return ToolResult(ok=False, error=f"internal error: {exc!r}", error_kind="internal")
+        return super().execute(action)
+
+    def _submit_turn_decision(self, decision: TurnDecision) -> ToolResult:
+        if decision.turn_id != self.current_turn.turn_id:
+            return ToolResult(
+                ok=False,
+                error=f"decision.turn_id '{decision.turn_id}' does not match current turn '{self.current_turn.turn_id}'",
+                error_kind="validation",
+            )
+        if decision.abstain and (decision.next_action is not None or decision.state.hypotheses):
+            return ToolResult(
+                ok=False,
+                error="abstain decision must not include next_action or hypotheses",
+                error_kind="validation",
+            )
+        refs = list(decision.next_action.evidence_refs if decision.next_action else [])
+        refs += [r for h in decision.state.hypotheses for r in h.evidence_refs]
+        for ref in refs:
+            if ref not in self._visible_ids() or ref not in self.read_ids:
+                return self._cite_error(ref)
+        self.completed_decisions.append(decision)
+        return ToolResult(ok=True, data={"accepted": True, "turn_id": decision.turn_id})

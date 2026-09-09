@@ -55,3 +55,40 @@ def test_verbose_run_prints_step_trace(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "step 1 list_evidence -> OK" in r.stdout
     assert "TERMINATION completed" in r.stdout
+
+
+def test_validate_episode_ok_and_broken(tmp_path):
+    ok = cli("validate-episode", "--episode-dir", "episodes/dev/thyroid_001")
+    assert ok.returncode == 0 and ok.stdout.startswith("OK")
+
+    import json as _json
+    d = tmp_path / "broken_ep"
+    d.mkdir()
+    ep = json.loads((REPO / "episodes/dev/thyroid_001/episode.json").read_text(encoding="utf-8"))
+    ep["turns"][0]["release_evidence_ids"] = ["ev-missing"]
+    (d / "episode.json").write_text(json.dumps(ep), encoding="utf-8")
+    for name in ("evidence.jsonl", "workflow.json", "gold.json"):
+        (d / name).write_text((REPO / "episodes/dev/thyroid_001" / name).read_text(encoding="utf-8"))
+    bad = cli("validate-episode", "--episode-dir", str(d))
+    assert bad.returncode == 1 and "ev-missing" in bad.stdout
+
+
+def test_run_trajectory_and_evaluate(tmp_path):
+    r = cli("run-trajectory", "--config", "configs/trajectory_mock.json", "--runs-root", str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    run_dir = next(tmp_path.iterdir())
+    e = cli("evaluate-trajectory", "--run-dir", str(run_dir))
+    assert e.returncode == 0, e.stderr
+    assert "next_action=3/3" in e.stdout
+    assert "cumulative=3/3" in e.stdout
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    assert "teacher_forced_replay" in report and "逐轮评分" in report
+
+
+def test_profile_medagentbench_offline(tmp_path):
+    r = cli("profile-medagentbench", "--patient-limit", "3", "--out", str(tmp_path / "audit.json"))
+    assert r.returncode == 0, r.stderr
+    prof = json.loads((tmp_path / "audit.json").read_text())
+    assert prof["source"]["n_tasks"] == 300
+    assert prof["fhir"]["reachable"] is False  # server not started; honestly reported
+    assert any(p["trajectory_candidate"]["included"] is False for p in prof["patients"])
