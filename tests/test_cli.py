@@ -86,9 +86,11 @@ def test_run_trajectory_and_evaluate(tmp_path):
 
 
 def test_profile_medagentbench_offline(tmp_path):
-    r = cli("profile-medagentbench", "--patient-limit", "3", "--out", str(tmp_path / "audit.json"))
+    # dead port keeps the test hermetic even when the real FHIR server is up
+    r = cli("profile-medagentbench", "--patient-limit", "3",
+            "--fhir-base", "http://127.0.0.1:9/fhir", "--out", str(tmp_path / "audit.json"))
     assert r.returncode == 0, r.stderr
     prof = json.loads((tmp_path / "audit.json").read_text())
     assert prof["source"]["n_tasks"] == 300
-    assert prof["fhir"]["reachable"] is False  # server not started; honestly reported
+    assert prof["fhir"]["reachable"] is False
     assert any(p["trajectory_candidate"]["included"] is False for p in prof["patients"])
