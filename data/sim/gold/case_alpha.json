@@ -1,0 +1,29 @@
+{
+  "case_id": "case_alpha",
+  "answers": [
+    {
+      "question_id": "q1",
+      "expected": {"abstain": false, "value": "aspirin 100mg daily", "key": "medication"},
+      "allowed_refs": ["e-med-1"],
+      "stale_refs": [],
+      "forbidden_refs": [],
+      "note": "无冲突新增"
+    },
+    {
+      "question_id": "q2",
+      "expected": {"abstain": true},
+      "allowed_refs": [],
+      "stale_refs": [],
+      "forbidden_refs": ["e-lab-1", "e-lab-2"],
+      "note": "延迟到达：标本已采集（event 03-02）但 recorded 03-04/03-05，as_of 03-03 时不可见，应弃答"
+    },
+    {
+      "question_id": "q3",
+      "expected": {"abstain": false, "value": 2.1, "key": "creatinine"},
+      "allowed_refs": ["e-lab-2"],
+      "stale_refs": ["e-lab-1"],
+      "forbidden_refs": [],
+      "note": "明确更正：引用 e-lab-1（1.8）为过期值"
+    }
+  ]
+}

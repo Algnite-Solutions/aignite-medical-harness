@@ -1,0 +1,64 @@
+{
+  "case_id": "case_alpha",
+  "task": {
+    "patient_id": "p-01",
+    "timepoints": [
+      {
+        "as_of": "2024-03-01T12:00:00+00:00",
+        "questions": [
+          {"question_id": "q1", "text": "患者目前服用哪些药物？", "key": "medication"}
+        ]
+      },
+      {
+        "as_of": "2024-03-03T12:00:00+00:00",
+        "questions": [
+          {"question_id": "q2", "text": "患者当前的血肌酐值是多少？", "key": "creatinine"}
+        ]
+      },
+      {
+        "as_of": "2024-03-05T12:00:00+00:00",
+        "questions": [
+          {"question_id": "q3", "text": "患者当前的血肌酐值是多少？", "key": "creatinine"}
+        ]
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "evidence_id": "e-adm-1",
+      "patient_id": "p-01",
+      "event_time": "2024-03-01T09:00:00+00:00",
+      "recorded_time": "2024-03-01T09:30:00+00:00",
+      "modality": "note",
+      "content": "入院记录：患者男，68岁，因胸闷入院。",
+      "source_locator": "note,admission,1"
+    },
+    {
+      "evidence_id": "e-med-1",
+      "patient_id": "p-01",
+      "event_time": "2024-03-01T10:00:00+00:00",
+      "recorded_time": "2024-03-01T11:00:00+00:00",
+      "modality": "order",
+      "content": "医嘱：阿司匹林 100mg 每日一次（aspirin 100mg daily）。",
+      "source_locator": "order,rows,12"
+    },
+    {
+      "evidence_id": "e-lab-1",
+      "patient_id": "p-01",
+      "event_time": "2024-03-02T08:00:00+00:00",
+      "recorded_time": "2024-03-04T09:00:00+00:00",
+      "modality": "lab",
+      "content": "检验：血肌酐 1.8 mg/dL（标本 2024-03-02 08:00 采集）。",
+      "source_locator": "lab,rows,8812"
+    },
+    {
+      "evidence_id": "e-lab-2",
+      "patient_id": "p-01",
+      "event_time": "2024-03-02T08:00:00+00:00",
+      "recorded_time": "2024-03-05T10:00:00+00:00",
+      "modality": "lab",
+      "content": "检验更正：血肌酐复测确认 2.1 mg/dL，替代此前报告的 1.8 mg/dL。",
+      "source_locator": "lab,rows,8812,rev1"
+    }
+  ]
+}

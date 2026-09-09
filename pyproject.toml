@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medical-harness"
+version = "0.1.0"
+description = "Minimal research harness for agents over longitudinal patient timelines (instrument + calibration data; no external benchmarks in v0)"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+medical-harness = "medical_harness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "api: real-API integration test (opt-in: RUN_API_TESTS=1 plus provider key env; never run by default)",
+]

@@ -1,0 +1,40 @@
+{
+  "case_id": "case_gamma",
+  "task": {
+    "patient_id": "p-04",
+    "timepoints": [
+      {
+        "as_of": "2024-03-01T12:00:00+00:00",
+        "questions": [
+          {"question_id": "q1", "text": "患者当前的血红蛋白是多少？", "key": "hemoglobin"}
+        ]
+      },
+      {
+        "as_of": "2024-03-03T12:00:00+00:00",
+        "questions": [
+          {"question_id": "q2", "text": "患者当前的血红蛋白是多少？", "key": "hemoglobin"}
+        ]
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "evidence_id": "e-g1",
+      "patient_id": "p-04",
+      "event_time": "2024-03-01T08:00:00+00:00",
+      "recorded_time": "2024-03-01T09:00:00+00:00",
+      "modality": "lab",
+      "content": "检验：血红蛋白 13.5 g/dL。",
+      "source_locator": "lab,rows,7001"
+    },
+    {
+      "evidence_id": "e-g2",
+      "patient_id": "p-04",
+      "event_time": "2024-03-03T07:00:00+00:00",
+      "recorded_time": "2024-03-03T08:30:00+00:00",
+      "modality": "lab",
+      "content": "检验：血红蛋白 12.8 g/dL。",
+      "source_locator": "lab,rows,7044"
+    }
+  ]
+}

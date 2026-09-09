@@ -1,0 +1,13 @@
+{
+  "case_id": "case_beta",
+  "answers": [
+    {
+      "question_id": "q1",
+      "expected": {"abstain": false, "value": 1.2, "key": "creatinine"},
+      "allowed_refs": ["e-p02-lab"],
+      "stale_refs": [],
+      "forbidden_refs": ["e-p03-lab"],
+      "note": "跨患者同名字段：p-03 的 9.9 属于其他患者，不可见不可引用（由环境隔离保证，评分器只认 p-02 的引用）"
+    }
+  ]
+}

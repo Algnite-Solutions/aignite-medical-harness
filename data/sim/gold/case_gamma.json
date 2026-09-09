@@ -1,0 +1,21 @@
+{
+  "case_id": "case_gamma",
+  "answers": [
+    {
+      "question_id": "q1",
+      "expected": {"abstain": false, "value": 13.5, "key": "hemoglobin"},
+      "allowed_refs": ["e-g1"],
+      "stale_refs": [],
+      "forbidden_refs": [],
+      "note": "基线可答"
+    },
+    {
+      "question_id": "q2",
+      "expected": {"abstain": false, "value": 12.8, "key": "hemoglobin"},
+      "allowed_refs": ["e-g2"],
+      "stale_refs": ["e-g1"],
+      "forbidden_refs": [],
+      "note": "新测量替代旧值作为'当前值'，引用 e-g1 视为过期"
+    }
+  ]
+}
