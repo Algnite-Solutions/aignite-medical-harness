@@ -44,13 +44,12 @@ Interactive（`run-episode --interactive`）是**操作员监督的在线运行*
 - 敏感字段策略：`trace.save_model_context/save_evidence_content` 关闭时以摘要替代全文（真实患者数据前默认应关闭）；
 - `full_history` 更名 `stateless_retrieval`（其真实行为是新会话+全量可检索+无持久状态，旧对照结论作废）。
 
-## MedAgentBench 适配（两层，当前离线层已跑通）
+## MedAgentBench 适配（两层，均已实跑）
 
-- **离线层**：`profile-medagentbench --patient-limit 5` 审计官方 300 任务/98 患者（按 MRN 聚合、任务数排名、context 时间戳抽取、无 MRN 任务清单）。本机实测输出：开发候选 S2703270/S6534835/S6550627 等。
-- **FHIR 层**（代码就绪，需官方 Docker）：`fhir_patient_snapshot()` 按 patient 聚合资源、按临床时间排序成 turns；服务未启动时如实报告 unreachable，**绝不臆造顺序**；纳入规则 = ≥3 有日期资源 + ≥2 类临床资源类型。
-- 边界：MedAgentBench-derived replay 分数单独报告，**不得**称为原始基准成绩；原始 task ID 与官方 scorer 语义保留在适配层。
-
-启动官方环境后启用 FHIR 层：`docker pull jyxsu6/medagentbench:latest && docker run -p 8080:8080 medagentbench`。
+- **离线层**：`profile-medagentbench --patient-limit 5` 审计官方 300 任务/98 患者（按 MRN 聚合、任务数排名、context 时间戳抽取、无 MRN 任务清单）。
+- **FHIR 层**（2026-09-09 实跑，官方 Docker `jyxsu6/medagentbench` @ localhost:8080）：`fhir_patient_snapshot()` 聚合真实资源；纳入规则 = ≥3 有日期资源 + ≥2 类临床资源。**实测结果：98 名患者均为 Patient+Condition 单一临床类型（每人均 19 条 Condition）**——按规则全部如实排除出正式 dev set，不强行拼接。
+- **管线演示 episode**（exploratory，不进正式比较）：`build_episode_folder()` 将 S2703270（真实肺癌 Condition 时间线，2023-10-10→11-13）生成 4 轮 episode（`episodes/medagentbench/S2703270/`，无 gold、宽松占位 workflow）。GLM 端到端 4/4 轮 completed：从 ICD-10 确认肺癌诊断、跨轮维护假设、随新 Condition 增量更新鉴别诊断，引用全部来自已读证据；evaluate 如实报"未评分（no gold.json）"。
+- 边界：官方 agentbench 调度框架与官方 scorer 未接入；MedAgentBench-derived replay 一律单独报告，**不得**称为原始基准成绩。启动官方环境：`docker run -d -p 8080:8080 jyxsu6/medagentbench`。
 
 ## 接真实模型（GLM）
 

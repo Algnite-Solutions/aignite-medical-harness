@@ -48,6 +48,27 @@ def _fhir_reachable(fhir_base: str, timeout: float = 3.0) -> bool:
         return False
 
 
+def _resource_summary(res: dict) -> str:
+    """Compact clinical payload of a FHIR resource (code text/coding, values, statuses)."""
+    parts: list[str] = []
+    code = res.get("code") or {}
+    if isinstance(code, dict):
+        text = code.get("text")
+        if not text:
+            codings = code.get("coding") or []
+            if codings:
+                text = codings[0].get("display") or codings[0].get("code")
+        if text:
+            parts.append(str(text))
+    for key in ("clinicalStatus", "verificationStatus", "valueString", "valueQuantity", "status", "category"):
+        v = res.get(key)
+        if isinstance(v, dict):
+            v = v.get("text") or v.get("value") or (v.get("coding") or [{}])[0].get("display")
+        if v:
+            parts.append(f"{key}={v}")
+    return "; ".join(parts[:5])
+
+
 def fhir_patient_snapshot(fhir_base: str, mrn: str, timeout: float = 10.0) -> dict[str, Any]:
     """Fetch a patient's resources via Patient/$everything (official docker tier).
 
@@ -76,7 +97,8 @@ def fhir_patient_snapshot(fhir_base: str, mrn: str, timeout: float = 10.0) -> di
                 date = res[key] if isinstance(res[key], str) else (res[key].get("start") if isinstance(res[key], dict) else None)
                 break
         if rtype != "Patient":
-            resources.append({"resourceType": rtype, "id": res.get("id"), "date": date})
+            summary = _resource_summary(res)
+            resources.append({"resourceType": rtype, "id": res.get("id"), "date": date, "summary": summary})
     dated = [r for r in resources if r["date"]]
     resources.sort(key=lambda r: r["date"] or "")
     return {
@@ -85,6 +107,101 @@ def fhir_patient_snapshot(fhir_base: str, mrn: str, timeout: float = 10.0) -> di
         "n_dated": len(dated),
         "resource_types": dict(types),
         "date_range": [min(r["date"] for r in dated), max(r["date"] for r in dated)] if dated else None,
+    }
+
+
+def build_episode_folder(
+    fhir_base: str,
+    mrn: str,
+    out_dir: Path,
+    max_turns: int = 4,
+    per_turn_evidence: int = 6,
+) -> dict[str, Any]:
+    """Build an Episode Folder from a real MedAgentBench FHIR patient.
+
+    Honest boundaries (by design):
+    - Resources are bucketed into turns by DISTINCT DATE; undated resources are
+      dropped and reported, never guessed into a timeline.
+    - No gold.json is generated (we have no ground-truth actions); scoring such
+      an episode reports unscored — results are exploratory plumbing demos,
+      never original-benchmark scores.
+    - Uses a minimal permissive workflow (single node) — MedAgentBench patients
+      are not oncology trajectories and must not be forced into one.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    snap = fhir_patient_snapshot(fhir_base, mrn)
+    dated = [r for r in snap["resources"] if r["date"]]
+    dropped_undated = len(snap["resources"]) - len(dated)
+    dated.sort(key=lambda r: r["date"])
+    # bucket by distinct day, cap turns and per-turn evidence
+    days: dict[str, list] = {}
+    for r in dated:
+        days.setdefault(r["date"][:10], []).append(r)
+    day_keys = sorted(days)[-max_turns:]
+    evidence_lines = []
+    turns = []
+    released_so_far = []
+    for i, day in enumerate(day_keys, 1):
+        res = days[day][:per_turn_evidence]
+        release = []
+        for r in res:
+            eid = f"fhir-{r['resourceType'].lower()}-{r['id']}"
+            evidence_lines.append({
+                "evidence_id": eid,
+                "patient_id": mrn,
+                "event_time": f"{r['date'][:19]}+00:00" if "T" in r["date"] else f"{day}T00:00:00+00:00",
+                "recorded_time": f"{r['date'][:19]}+00:00" if "T" in r["date"] else f"{day}T00:00:00+00:00",
+                "modality": f"fhir_{r['resourceType'].lower()}",
+                "content": f"[FHIR {r['resourceType']} id={r['id']}] date={r['date']}" + (f" | {r['summary']}" if r.get("summary") else ""),
+                "source_locator": f"fhir,{r['resourceType']},{r['id']}",
+                "tags": [f"fhir_{r['resourceType'].lower()}"],
+            })
+            release.append(eid)
+        released_so_far += release
+        turns.append({
+            "turn_id": f"t{i}",
+            "as_of": f"{day}T23:59:59+00:00",
+            "phase": "encounter",
+            "event": f"{day} 的诊疗记录（{len(release)} 条）",
+            "world_message": f"截至 {day} 的真实病历资源已进入环境（本批 {len(release)} 条，累计可见 {len(released_so_far)} 条）。",
+            "release_evidence_ids": release,
+        })
+    if not turns:
+        return {"episode_dir": None, "reason": "no dated resources; refusing to fabricate a timeline", "snapshot": {"n_dated": snap.get("n_dated", 0), "resource_types": snap.get("resource_types", {})}}
+    episode = {
+        "schema_version": "0.2",
+        "episode_id": out_dir.name,
+        "patient_id": mrn,
+        "mode": "teacher_forced_replay",
+        "workflow_file": "workflow.json",
+        "evidence_file": "evidence.jsonl",
+        "turns": turns,
+    }
+    workflow = {
+        "workflow_id": "generic_encounter_v0",
+        "version": "0.1",
+        "initial_state": "encounter",
+        "states": ["encounter"],
+        "transitions": [],
+    }
+    (out_dir / "episode.json").write_text(json.dumps(episode, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "workflow.json").write_text(json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "evidence.jsonl").write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in evidence_lines) + "\n", encoding="utf-8")
+    (out_dir / "README.md").write_text(
+        f"# {out_dir.name}\n\nMedAgentBench-derived replay episode（患者 {mrn}，FHIR 真实资源按日期分轮）。\n"
+        f"- 无 gold.json：本目录只用于管线演示，结果**不得**报告为 MedAgentBench 原始成绩。\n"
+        f"- 丢弃无日期资源 {dropped_undated} 条（不臆造时间顺序）。\n"
+        f"- 使用宽松占位 workflow（单节点），未强行套用肿瘤轨迹。\n", encoding="utf-8")
+    return {
+        "episode_dir": str(out_dir),
+        "mrn": mrn,
+        "fhir_patient_id": snap.get("patient_id"),
+        "n_turns": len(turns),
+        "n_evidence": len(evidence_lines),
+        "dropped_undated": dropped_undated,
+        "resource_types": snap.get("resource_types", {}),
     }
 
 
