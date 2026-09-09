@@ -1,0 +1,52 @@
+{
+  "generated_at": "2026-09-09T07:18:01+00:00",
+  "source_file": "/Users/leahai/Documents/Projects/lab_harness/data/medagentbench/MedAgentBench-main/data/medagentbench/test_data_v2.json",
+  "source_sha256": "b6e89b2ef82f1bef27c5778a644a8a66c7b25738bbd6a48d03ab3e5182df6ca8",
+  "n_tasks": 300,
+  "n_imported": 298,
+  "n_targets": 298,
+  "excluded_no_mrn": [
+    "task1_29",
+    "task1_30"
+  ],
+  "time_proxy": {
+    "single_turn_without_timestamp": 28,
+    "rule": "turn time = timestamp parsed from task context; else null (documented, not guessed)"
+  },
+  "fhir": {
+    "enabled": true,
+    "patients": [
+      {
+        "mrn": "S2703270",
+        "fhir_patient_id": "S2703270",
+        "pages": 1,
+        "truncated": false,
+        "n_dated": 19,
+        "dropped_undated": 0,
+        "n_turns": 4,
+        "n_evidence": 10
+      },
+      {
+        "mrn": "S6534835",
+        "fhir_patient_id": "S6534835",
+        "pages": 1,
+        "truncated": false,
+        "n_dated": 19,
+        "dropped_undated": 0,
+        "n_turns": 4,
+        "n_evidence": 10
+      },
+      {
+        "mrn": "S6550627",
+        "fhir_patient_id": "S6550627",
+        "pages": 1,
+        "truncated": false,
+        "n_dated": 19,
+        "dropped_undated": 0,
+        "n_turns": 4,
+        "n_evidence": 5
+      }
+    ]
+  },
+  "note": "derived replay scores must not be reported as original MedAgentBench benchmark scores"
+}

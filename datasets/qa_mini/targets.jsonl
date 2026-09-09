@@ -1,0 +1,2 @@
+{"episode_id": "qa_001", "turns": {"t1": {"answers": [1.2, "1.2"], "required_evidence": ["lab-1"]}}}
+{"episode_id": "qa_002", "turns": {"t1": {"expect_abstain": true}}}

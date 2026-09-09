@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "medical-harness"
+name = "ama"
 version = "0.1.0"
-description = "Minimal research harness for agents over longitudinal patient timelines (instrument + calibration data; no external benchmarks in v0)"
+description = "ama — aigne-medical-agent: minimal research runner (Episode → Turn → Evidence → Decision)"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7"]
 
@@ -13,10 +13,11 @@ dependencies = ["pydantic>=2.7"]
 dev = ["pytest>=8"]
 
 [project.scripts]
-medical-harness = "medical_harness.cli:main"
+ama = "ama.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["ama*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

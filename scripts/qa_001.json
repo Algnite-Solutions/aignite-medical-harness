@@ -1,0 +1,5 @@
+{"episode_id": "qa_001", "actions": [
+  {"type": "list_evidence"},
+  {"type": "read_evidence", "evidence_id": "lab-1"},
+  {"type": "submit_decision", "decision": {"turn_id": "t1", "state": {"answer": 1.2}, "action": null, "citations": ["lab-1"], "abstain": false, "note": "检验证据 lab-1。"}}
+]}

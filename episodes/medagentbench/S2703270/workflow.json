@@ -1,9 +1,0 @@
-{
-  "workflow_id": "generic_encounter_v0",
-  "version": "0.1",
-  "initial_state": "encounter",
-  "states": [
-    "encounter"
-  ],
-  "transitions": []
-}

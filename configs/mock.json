@@ -1,8 +1,0 @@
-{
-  "name": "mock",
-  "data_dir": "../data/sim/inputs",
-  "model": {"type": "scripted", "script_dir": "../data/sim/scripts"},
-  "strategy": {"name": "versioned_state", "state_tools_enabled": true, "inject_prior_state": true},
-  "budget": {"max_steps": 10, "max_model_calls": 10, "request_timeout_seconds": 30, "deadline_seconds": 120, "max_retries": 1},
-  "cases": ["case_gamma", "case_alpha", "case_beta"]
-}
