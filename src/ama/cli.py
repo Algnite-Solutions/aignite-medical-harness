@@ -96,10 +96,11 @@ class ShellInteraction:
 def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_id: str | None,
                  runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any]) -> Path:
     from .agent import Interaction, run_episode
-    from .data import load_dataset
+    from .data import load_dataset, resolve_dataset_dir
     from .model import make_model_factory
     from .recorder import Budget, Recorder, TraceConfig
 
+    dataset_dir = resolve_dataset_dir(dataset_dir)
     dataset = load_dataset(dataset_dir, with_targets=False)  # run NEVER opens targets.jsonl
     episodes = dataset.select(split=split, episode_id=episode_id)
     factory = make_model_factory(model_name, request_timeout=budget_args.get("request_timeout", 60.0))
@@ -242,8 +243,9 @@ def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[s
 
 
 def _inspect(dataset_dir: Path, episode_id: str | None) -> int:
-    from .data import load_dataset
+    from .data import load_dataset, resolve_dataset_dir
 
+    dataset_dir = resolve_dataset_dir(dataset_dir)
     ds = load_dataset(dataset_dir, with_targets=False)
     print(json.dumps({k: v for k, v in ds.info.model_dump().items()}, ensure_ascii=False, indent=2))
     print(f"episodes: {len(ds.episodes)}  splits: {list(ds.info.splits)}  "
@@ -303,26 +305,39 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if args.cmd == "validate":
-        from .data import validate_dataset
-        errors = validate_dataset(Path(args.dataset_dir))
+        from .data import resolve_dataset_dir, validate_dataset
+        try:
+            dataset_dir = resolve_dataset_dir(args.dataset_dir)
+        except FileNotFoundError as exc:
+            print(f"INVALID: {exc}")
+            return 1
+        errors = validate_dataset(dataset_dir)
         if errors:
             print(f"INVALID: {args.dataset_dir}")
             for err in errors:
                 print(f"  - {err}")
             return 1
-        print(f"OK: {args.dataset_dir}")
+        print(f"OK: {dataset_dir}")
         return 0
 
     if args.cmd == "inspect":
-        return _inspect(Path(args.dataset_dir), args.episode)
+        try:
+            return _inspect(Path(args.dataset_dir), args.episode)
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}")
+            return 1
 
     if args.cmd == "run":
-        _run_dataset(Path(args.dataset_dir), args.model, args.split, args.episode,
-                     Path(args.runs_root), args.interactive, args.verbose,
-                     {"max_model_calls": args.max_model_calls,
-                      "per_turn_model_calls": args.per_turn_model_calls,
-                      "deadline_seconds": args.deadline_seconds,
-                      "max_retries": args.max_retries})
+        try:
+            _run_dataset(Path(args.dataset_dir), args.model, args.split, args.episode,
+                         Path(args.runs_root), args.interactive, args.verbose,
+                         {"max_model_calls": args.max_model_calls,
+                          "per_turn_model_calls": args.per_turn_model_calls,
+                          "deadline_seconds": args.deadline_seconds,
+                          "max_retries": args.max_retries})
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}")
+            return 1
         return 0
 
     if args.cmd == "eval":

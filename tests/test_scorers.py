@@ -22,10 +22,10 @@ def make_ds(tmp_path, episodes, targets, policy=None, scorer="workflow_v0"):
 EP = {"episode_id": "ep", "subject_id": "s", "metadata": {}, "turns": [
     {"turn_id": "t1", "time": "2026-01-01T00:00:00+00:00", "message": "m1",
      "evidence": [{"evidence_id": "us", "kind": "us", "text": "TI-RADS 4c", "artifact": None,
-                   "source": "s", "metadata": {"tags": ["suspicious_lesion"]}}]},
+                   "source": "s", "metadata": {}}]},
     {"turn_id": "t2", "time": "2026-01-03T00:00:00+00:00", "message": "m2",
      "evidence": [{"evidence_id": "ct", "kind": "ct", "text": "恶性可能", "artifact": None,
-                   "source": "s", "metadata": {"tags": ["imaging_confirmed_suspicious"]}}]},
+                   "source": "s", "metadata": {}}]},
 ]}
 
 TARGETS = [{"episode_id": "ep", "turns": {
@@ -41,7 +41,10 @@ TARGETS = [{"episode_id": "ep", "turns": {
 }}]
 
 POLICY = {"public": {"guidance": "流程：initial_imaging → advanced_imaging → pathology。"},
-          "hidden": {"initial_state": "initial_imaging", "transitions": [
+          "hidden": {"initial_state": "initial_imaging",
+                     "evidence_tags": {"us": ["suspicious_lesion"],
+                                       "ct": ["imaging_confirmed_suspicious"]},
+                     "transitions": [
               {"from": "initial_imaging", "to": "advanced_imaging", "when": ["suspicious_lesion"],
                "allowed_actions": ["order_contrast_imaging", "order_biopsy"]},
               {"from": "advanced_imaging", "to": "pathology", "when": ["imaging_confirmed_suspicious"],

@@ -2,11 +2,31 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+def resolve_dataset_dir(value: str | Path) -> Path:
+    """Resolve an existing path, or a dataset name below AMA_DATA_ROOT."""
+    direct = Path(value).expanduser()
+    if direct.exists():
+        return direct.resolve()
+    root = os.environ.get("AMA_DATA_ROOT")
+    if root and not direct.is_absolute():
+        root_path = Path(root).expanduser().resolve()
+        candidate = (root_path / direct).resolve()
+        if root_path in candidate.parents and candidate.exists():
+            return candidate
+    detail = f"dataset not found: {value}"
+    if root:
+        detail += f" (also checked below {Path(root).expanduser()})"
+    else:
+        detail += " (set AMA_DATA_ROOT to use a dataset name)"
+    raise FileNotFoundError(detail)
 
 
 class _Model(BaseModel):

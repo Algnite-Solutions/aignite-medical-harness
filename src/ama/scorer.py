@@ -122,10 +122,10 @@ def score_exact(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) ->
 
 # ---------------------------------------------------------------- workflow_v0
 
-def _visible_tags(ep: Episode, upto_turn: str) -> set[str]:
+def _visible_tags(ep: Episode, upto_turn: str, evidence_tags: dict[str, list[str]]) -> set[str]:
     tags: set[str] = set()
     for t in ep.turns:
-        tags |= {tag for e in t.evidence for tag in (e.metadata.get("tags") or [])}
+        tags |= {tag for e in t.evidence for tag in evidence_tags.get(e.evidence_id, [])}
         if t.turn_id == upto_turn:
             break
     return tags
@@ -174,8 +174,11 @@ def _validate_transition(rules: list[dict], current: str, proposed: str, action_
 def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     """Target turn keys: state (subset: workflow_state/hypotheses/...), allowed_actions,
     forbidden_actions, required_evidence, expect_abstain. Policy hidden.transitions
-    supplies from/to/when(证据 metadata.tags)/allowed_actions."""
-    rules = (dataset.policy.hidden or {}).get("transitions", [])
+    supplies from/to/when/allowed_actions; hidden.evidence_tags maps evidence ids
+    to evaluator-only transition tags."""
+    hidden = dataset.policy.hidden or {}
+    rules = hidden.get("transitions", [])
+    evidence_tags = hidden.get("evidence_tags", {})
     per_episode: dict[str, Any] = {}
     agg = {"state_field": [0, 0], "transition_valid": [0, 0], "action_correct": [0, 0],
            "abstain_correct": [0, 0], "refs_covered": [0, 0]}
@@ -215,7 +218,7 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
 
             action_name = (d.get("action") or {}).get("name")
             v = _validate_transition(rules, current or "", d.get("state", {}).get("workflow_state") or "",
-                                     action_name, _visible_tags(ep, row["turn_id"]))
+                                     action_name, _visible_tags(ep, row["turn_id"], evidence_tags))
             entry["transition_valid"] = bool(v["transition_valid"])
             agg["transition_valid"][0] += int(v["transition_valid"])
             agg["transition_valid"][1] += 1

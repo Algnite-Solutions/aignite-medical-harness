@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..dataset_card import write_dataset_cards
+
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?")
 DEFAULT_TASK_FILE = Path(
     "~/Documents/Projects/lab_harness/data/MedAgentBench/data/medagentbench/test_data_v2.json"
@@ -216,4 +218,21 @@ def import_medagentbench(source: Path, out: Path, fhir_base: str | None = None,
         "note": "derived replay scores must not be reported as original MedAgentBench benchmark scores",
     }
     (out / "import_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_dataset_cards(
+        out,
+        name=out.name,
+        source=str(source),
+        license_name="MedAgentBench (see upstream)",
+        purpose_en="Single-turn EHR task evaluation, with optional unscored longitudinal FHIR replay Episodes.",
+        purpose_zh="用于单轮 EHR 任务评测，并可选生成不评分的纵向 FHIR 回放 Episode。",
+        construction_en="Each source task becomes one Turn. When FHIR is enabled, dated resources are grouped by day into separate patient Episodes.",
+        construction_zh="每个源 task 转换为一个 Turn；启用 FHIR 时，将带时间的资源按日期分组为独立患者 Episode。",
+        episodes=len(episodes),
+        turns=sum(len(e["turns"]) for e in episodes),
+        evidence=sum(len(t["evidence"]) for e in episodes for t in e["turns"]),
+        scorer="exact_v0",
+        targets=len(targets),
+        limitations_en="FHIR replays have no turn-level gold targets. Derived replay results must not be reported as original MedAgentBench scores.",
+        limitations_zh="FHIR 回放没有逐轮 gold target。派生回放结果不得作为原始 MedAgentBench 成绩报告。",
+    )
     return report

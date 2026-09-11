@@ -9,8 +9,9 @@ from pathlib import Path
 from conftest import REPO
 
 
-def ama(*args, stdin_text=None, cwd=REPO):
+def ama(*args, stdin_text=None, cwd=REPO, env_extra=None):
     env = dict(os.environ, PYTHONPATH=str(REPO / "src"))
+    env.update(env_extra or {})
     return subprocess.run([sys.executable, "-m", "ama.cli", *args],
                           capture_output=True, text=True, env=env, cwd=cwd,
                           timeout=120, input=stdin_text)
@@ -21,8 +22,41 @@ def decisions_of(run_dir: Path):
             for l in (run_dir / "decisions.jsonl").read_text().splitlines() if l.strip()]
 
 
+def make_single_turn_fixture(tmp_path: Path) -> Path:
+    ds = tmp_path / "single_turn"
+    scripts = tmp_path / "scripts"
+    ds.mkdir()
+    scripts.mkdir()
+    (tmp_path / "ama.json").write_text(json.dumps({
+        "models": {"scripted": {"type": "scripted", "script_dir": str(scripts)}}
+    }), encoding="utf-8")
+    (ds / "dataset.json").write_text(json.dumps({
+        "schema": "ama-dataset-v0", "name": "single_turn", "version": "0.1",
+        "splits": {"all": ["qa_001"]}, "scorer": "exact_v0",
+    }), encoding="utf-8")
+    (ds / "episodes.jsonl").write_text(json.dumps({
+        "episode_id": "qa_001", "subject_id": "p1", "metadata": {},
+        "turns": [{"turn_id": "t1", "time": None, "message": "What is the value?",
+                   "evidence": [{"evidence_id": "lab", "kind": "lab", "text": "1.2",
+                                 "artifact": None, "source": "test", "metadata": {}}]}],
+    }) + "\n", encoding="utf-8")
+    (ds / "targets.jsonl").write_text(json.dumps({
+        "episode_id": "qa_001", "turns": {"t1": {"answers": ["1.2"],
+                                                      "required_evidence": ["lab"]}},
+    }) + "\n", encoding="utf-8")
+    (scripts / "qa_001.json").write_text(json.dumps({
+        "episode_id": "qa_001", "actions": [
+            {"type": "read_evidence", "evidence_id": "lab"},
+            {"type": "submit_decision", "decision": {
+                "turn_id": "t1", "state": {"answer": "1.2"}, "action": None,
+                "citations": ["lab"], "abstain": False, "note": ""}},
+        ],
+    }), encoding="utf-8")
+    return ds
+
+
 def test_validate_ok_and_invalid(tmp_path):
-    ok = ama("validate", "datasets/qa_mini")
+    ok = ama("validate", "datasets/thyroid_demo")
     assert ok.returncode == 0 and ok.stdout.startswith("OK")
     bad = tmp_path / "bad"
     bad.mkdir()
@@ -33,7 +67,8 @@ def test_validate_ok_and_invalid(tmp_path):
 
 
 def test_inspect_shows_no_targets(tmp_path):
-    r = ama("inspect", "datasets/qa_mini", "--episode", "qa_001")
+    ds = make_single_turn_fixture(tmp_path)
+    r = ama("inspect", str(ds), "--episode", "qa_001")
     assert r.returncode == 0
     assert "SECRET" not in r.stdout
     assert "targets" in r.stdout  # presence mentioned, contents never shown
@@ -41,35 +76,43 @@ def test_inspect_shows_no_targets(tmp_path):
 
 
 def test_run_single_and_multi_turn_share_loop(tmp_path):
-    r1 = ama("run", "datasets/qa_mini", "--model", "scripted", "--runs-root", str(tmp_path))
-    r2 = ama("run", "datasets/thyroid_demo", "--model", "scripted", "--runs-root", str(tmp_path))
+    fixture_root = tmp_path / "fixture"
+    fixture_root.mkdir()
+    ds = make_single_turn_fixture(fixture_root)
+    runs_root = tmp_path / "runs"
+    r1 = ama("run", str(ds), "--model", "scripted", "--runs-root", str(runs_root),
+             cwd=fixture_root)
+    r2 = ama("run", str(REPO / "datasets/thyroid_demo"), "--model", "scripted",
+             "--runs-root", str(runs_root))
     assert r1.returncode == 0 and r2.returncode == 0
-    runs = sorted(tmp_path.iterdir())
-    qa_run = next(p for p in runs if "qa_mini" in p.name)
+    runs = sorted(runs_root.iterdir())
+    qa_run = next(p for p in runs if "single_turn" in p.name)
     th_run = next(p for p in runs if "thyroid_demo" in p.name)
-    assert len(decisions_of(qa_run)) == 2   # 2 single-turn episodes
+    assert len(decisions_of(qa_run)) == 1
     assert len(decisions_of(th_run)) == 3   # 1 three-turn episode
     e1 = ama("eval", str(qa_run))
     e2 = ama("eval", str(th_run))
-    assert e1.returncode == 0 and "answer_correct=2/2" in e1.stdout
+    assert e1.returncode == 0 and "answer_correct=1/1" in e1.stdout
     assert e2.returncode == 0 and "action_correct=3/3" in e2.stdout
 
 
 def test_run_never_opens_targets(tmp_path):
     # make targets literally unreadable-by-absence: rename it away, run must be identical
-    import shutil
-
-    ds = tmp_path / "qa_copy"
-    shutil.copytree(REPO / "datasets/qa_mini", ds)
-    baseline = ama("run", str(ds), "--model", "scripted", "--runs-root", str(tmp_path / "a"))
+    fixture_root = tmp_path / "fixture"
+    fixture_root.mkdir()
+    ds = make_single_turn_fixture(fixture_root)
+    baseline = ama("run", str(ds), "--model", "scripted", "--runs-root", str(tmp_path / "a"),
+                   cwd=fixture_root)
     (ds / "targets.jsonl").rename(ds / "targets.jsonl.bak")
-    r = ama("run", str(ds), "--model", "scripted", "--runs-root", str(tmp_path / "b"))
+    r = ama("run", str(ds), "--model", "scripted", "--runs-root", str(tmp_path / "b"),
+            cwd=fixture_root)
     assert r.returncode == 0
     a = decisions_of(sorted((tmp_path / "a").iterdir())[0])
     b = decisions_of(sorted((tmp_path / "b").iterdir())[0])
     assert a == b
     manifest = json.loads((sorted((tmp_path / "b").iterdir())[0] / "manifest.json").read_text())
     assert "targets.jsonl" not in manifest["dataset_hashes"]
+    assert Path(manifest["dataset_dir"]).is_absolute()
 
 
 def test_interactive_matches_batch_and_quit(tmp_path):
@@ -102,6 +145,45 @@ def test_help_has_no_dual_concepts():
     assert "validate" in text and "inspect" in text and "run" in text and "eval" in text and "import" in text
     for legacy in ("question", "trajectory", "medagentbench profile", "evaluate-trajectory"):
         assert legacy not in text, legacy
+
+
+def test_dataset_name_resolves_from_data_root(tmp_path):
+    import shutil
+
+    root = tmp_path / "nas"
+    root.mkdir()
+    shutil.copytree(REPO / "datasets/thyroid_demo", root / "thyroid")
+    env = {"AMA_DATA_ROOT": str(root)}
+    by_name = ama("validate", "thyroid", cwd=tmp_path, env_extra=env)
+    assert by_name.returncode == 0 and str((root / "thyroid").resolve()) in by_name.stdout
+
+    explicit = ama("validate", str(REPO / "datasets/thyroid_demo"), cwd=tmp_path, env_extra=env)
+    assert explicit.returncode == 0 and str((REPO / "datasets/thyroid_demo").resolve()) in explicit.stdout
+
+    missing = ama("validate", "missing", cwd=tmp_path, env_extra=env)
+    assert missing.returncode == 1 and "dataset not found" in missing.stdout
+    missing_run = ama("run", "missing", "--model", "scripted", cwd=tmp_path, env_extra=env)
+    assert missing_run.returncode == 1 and "dataset not found" in missing_run.stdout
+
+
+def test_checked_in_datasets_are_multi_turn_and_medagentbench_is_unscored():
+    from ama.data import load_dataset, validate_dataset
+    from ama.scorer import REGISTRY
+
+    for name in ("thyroid_demo", "medagentbench"):
+        folder = REPO / "datasets" / name
+        assert validate_dataset(folder) == []
+        ds = load_dataset(folder, with_targets=True)
+        assert ds.episodes and all(len(ep.turns) > 1 for ep in ds.episodes)
+        assert (folder / "DATASET_CARD.md").exists()
+        assert (folder / "DATASET_CARD.zh-CN.md").exists()
+
+    med = load_dataset(REPO / "datasets/medagentbench", with_targets=True)
+    assert len(med.episodes) == 3
+    assert [len(ep.turns) for ep in med.episodes] == [4, 4, 4]
+    assert med.info.scorer == "unscored" and med.targets == {}
+    result = REGISTRY[med.info.scorer](med, {})
+    assert result["scorer"] == "unscored"
 
 
 def test_import_episode_folder(tmp_path):
@@ -144,9 +226,12 @@ def test_import_episode_folder_legacy_fixture(tmp_path):
     assert "guidance" in policy["public"] and policy["hidden"]["transitions"]
     target = json.loads((out / "targets.jsonl").read_text().splitlines()[0])
     assert target["turns"]["t1"]["state"]["workflow_state"] == "a"
-    # evidence tags survived into metadata for the workflow scorer
+    # evaluator-only evidence tags stay hidden from the model
     ep = json.loads((out / "episodes.jsonl").read_text().splitlines()[0])
-    assert ep["turns"][0]["evidence"][0]["metadata"]["tags"] == ["suspicious_lesion"]
+    assert "tags" not in ep["turns"][0]["evidence"][0]["metadata"]
+    assert policy["hidden"]["evidence_tags"]["us"] == ["suspicious_lesion"]
+    assert (out / "DATASET_CARD.md").exists()
+    assert (out / "DATASET_CARD.zh-CN.md").exists()
 
 
 def test_import_medagentbench_offline(tmp_path):
@@ -169,6 +254,8 @@ def test_import_medagentbench_offline(tmp_path):
     assert target["turns"]["t1"]["answers"] == ["50"]
     report = json.loads((out / "import_report.json").read_text())
     assert report["n_tasks"] == 2 and report["excluded_no_mrn"] == ["task1_2"]
+    assert (out / "DATASET_CARD.md").exists()
+    assert (out / "DATASET_CARD.zh-CN.md").exists()
 
 
 def test_fhir_everything_pagination_follows_next_links(monkeypatch):

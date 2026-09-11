@@ -4,6 +4,11 @@
   },
   "hidden": {
     "initial_state": "initial_imaging",
+    "evidence_tags": {
+      "ev-us-001": ["ultrasound", "suspicious_lesion"],
+      "ev-ct-001": ["contrast_imaging", "imaging_confirmed_suspicious"],
+      "ev-path-001": ["pathology", "malignancy_confirmed"]
+    },
     "transitions": [
       {
         "from": "initial_imaging",

@@ -1,9 +1,0 @@
-{
-  "schema": "ama-dataset-v0",
-  "name": "qa_mini",
-  "version": "0.1",
-  "description": "two single-turn QA fixtures: one answerable with citation, one abstain-only",
-  "splits": {"all": ["qa_001", "qa_002"]},
-  "scorer": "exact_v0",
-  "license": "synthetic"
-}

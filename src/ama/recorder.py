@@ -121,7 +121,7 @@ class Recorder:
         self.trace = trace
         self.budget = budget
         self.model_name = model_name
-        self.dataset_dir = Path(dataset_dir)
+        self.dataset_dir = Path(dataset_dir).expanduser().resolve()
         # hash only model-visible dataset files — NEVER targets.jsonl
         self.manifest = {
             "run_id": self.run_id,
