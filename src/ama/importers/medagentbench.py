@@ -18,7 +18,7 @@ from typing import Any
 
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?")
 DEFAULT_TASK_FILE = Path(
-    "~/Documents/Projects/lab_harness/data/medagentbench/MedAgentBench-main/data/medagentbench/test_data_v2.json"
+    "~/Documents/Projects/lab_harness/data/MedAgentBench/data/medagentbench/test_data_v2.json"
 ).expanduser()
 FHIR_PAGE_LIMIT = 20  # hard cap; hitting it is reported as truncation
 
