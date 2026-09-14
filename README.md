@@ -107,6 +107,7 @@ New data sources are added with offline importers. An importer converts source r
 ```bash
 ama import medagentbench --source test_data_v2.json --out datasets/medagentbench
 ama import episode-folder --source path/to/episodes --out datasets/my_dataset
+ama import rocov2 --source /Volumes/Shared/Work/Data/RocoV2 --out datasets/rocov2 --split test --limit 100
 ```
 
 Original MedAgentBench tasks become single-turn Episodes. Optional FHIR patient timelines become separate multi-turn replay Episodes and currently have no turn-level gold targets. Scores from derived replays must not be reported as original MedAgentBench benchmark scores.
@@ -117,6 +118,7 @@ Built-in scorers are registered in `src/ama/scorer.py`:
 
 - `exact_v0`: exact state or answer matching, allowed actions, required Evidence, and abstention.
 - `workflow_v0`: state fields, transition rules, action constraints, required Evidence, and cumulative success.
+- `rocov2_v0`: normalized caption token precision/recall/F1 and unordered UMLS CUI precision/recall/F1.
 - `unscored`: completion and operational measurements only.
 
 Failed or missing decisions remain in the denominator. A zero denominator is reported as N/A.
@@ -139,9 +141,10 @@ docs/                  dataset contract
 
 ## Supported datasets
 
-The checked-in examples are multi-turn only. The schema, runner, tests, and importers continue to support single-turn studies.
+The checked-in examples cover both single-turn trustworthy reasoning and multi-turn longitudinal memory studies.
 
 | Dataset | Source | Episodes | Turns | Targets | Scorer | Data card |
 |---|---|---:|---:|---|---|---|
 | `thyroid_demo` | Synthetic oncology workflow | 1 | 3 | Yes | `workflow_v0` | [English](datasets/thyroid_demo/DATASET_CARD.md) · [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) |
 | `medagentbench` | Derived MedAgentBench FHIR replay subset | 3 | 12 | No | `unscored` | [English](datasets/medagentbench/DATASET_CARD.md) · [中文](datasets/medagentbench/DATASET_CARD.zh-CN.md) |
+| `rocov2_demo` | ROCOv2 radiology image subset | 3 | 3 | Yes | `rocov2_v0` | [English](datasets/rocov2_demo/DATASET_CARD.md) · [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) |

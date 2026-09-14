@@ -1,0 +1,15 @@
+{
+  "schema": "ama-dataset-v0",
+  "name": "rocov2_demo",
+  "version": "0.1",
+  "description": "ROCOv2 single-turn radiology image caption and concept prediction.",
+  "splits": {
+    "test": [
+      "ROCOv2_2023_test_000001",
+      "ROCOv2_2023_test_000009",
+      "ROCOv2_2023_test_000015"
+    ]
+  },
+  "scorer": "rocov2_v0",
+  "license": "CC BY-NC-SA 4.0"
+}
