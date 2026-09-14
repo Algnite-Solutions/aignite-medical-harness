@@ -204,14 +204,17 @@ class OpenAICompatModel:
             raise ModelError(f"malformed response: {json.dumps(data, ensure_ascii=False)[:300]}", kind="bad_response") from None
         tool_calls = choice.get("tool_calls")
         if tool_calls:
-            fn = tool_calls[0]["function"]
-            args = fn.get("arguments") or "{}"
             try:
+                fn = tool_calls[0]["function"]
+                args = fn.get("arguments") or "{}"
                 payload_args = json.loads(args)
                 payload_args["type"] = fn["name"]
                 return parse_action(payload_args)
-            except (json.JSONDecodeError, ValidationError):
-                return args  # raw string -> visible 'invalid action' in the loop
+            except (json.JSONDecodeError, ValidationError, ValueError, KeyError, TypeError, IndexError):
+                # malformed or schema-invalid tool payload: hand back the raw string so the
+                # loop turns it into a VISIBLE invalid-action error the model can correct —
+                # never a crash of the run (spec §5)
+                return str(tool_calls[0].get("function", {}).get("arguments", tool_calls[0]))
         return choice.get("content") or ""
 
 

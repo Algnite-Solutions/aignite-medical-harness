@@ -43,7 +43,7 @@ class ShellInteraction:
             self.operator_wait_ms += int((time.monotonic() - t0) * 1000)
 
     def on_turn_start(self, index, total, turn, visible_meta) -> None:
-        self._label = f"(ama) {self.episode_id} t{index + 1}/{total} > "
+        self._label = f"(ama) {self.episode_id} t{index + 1}/{total} "
         print(f"\n[{self.episode_id} 第{index + 1}/{total}轮 {turn.turn_id}] {turn.message}")
         for m in visible_meta:
             print(f"  新增证据: {m['evidence_id']} ({m['kind']})")
@@ -51,10 +51,18 @@ class ShellInteraction:
         self._decision = None
 
     def _menu(self, allowed: str) -> bool:
+        hint = "run" if allowed == "run" else "next"
+        other = "next" if allowed == "run" else "run"
         while True:
-            cmd = self._input(self._label)
-            if cmd in ("", allowed, "run", "next"):
+            cmd = self._input(f"{self._label}{hint} > ")
+            if cmd in ("", allowed):
                 return True
+            if cmd == other:
+                if allowed == "run":
+                    print("  本轮尚未执行：先输入 run 让模型完成当前轮。")
+                else:
+                    print("  本轮已完成：输入 next 进入下一轮（或 quit 结束）。")
+                continue
             if cmd == "quit":
                 return False
             if cmd == "show":

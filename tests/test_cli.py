@@ -139,6 +139,20 @@ def test_interactive_matches_batch_and_quit(tmp_path):
     assert len(decisions_of(stop_dir)) == 1
 
 
+def test_interactive_phase_gating(tmp_path):
+    # run and next are phase-bound: wrong-phase commands are rejected with a hint
+    inter = ama("run", "datasets/thyroid_demo", "--model", "scripted",
+                "--runs-root", str(tmp_path), "--interactive",
+                stdin_text="next\nrun\nrun\nnext\nrun\nnext\nrun\nnext\n")
+    assert inter.returncode == 0, inter.stderr
+    assert "本轮尚未执行：先输入 run" in inter.stdout   # 'next' at the run gate
+    assert "本轮已完成：输入 next" in inter.stdout      # 'run' at the next gate
+    run_dir = sorted(tmp_path.iterdir())[0]
+    assert len(decisions_of(run_dir)) == 3              # episode still completed
+    assert "(ama) thyroid_001 t1/3 run >" in inter.stdout
+    assert "(ama) thyroid_001 t1/3 next >" in inter.stdout
+
+
 def test_help_has_no_dual_concepts():
     r = ama("--help")
     text = r.stdout + r.stderr
