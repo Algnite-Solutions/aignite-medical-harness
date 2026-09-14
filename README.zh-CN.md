@@ -1,4 +1,4 @@
-# AMA — aigne-medical-agent
+# AMA — aignite-medical-agent
 
 中文 | [English](README.md)
 
