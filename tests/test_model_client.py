@@ -34,9 +34,10 @@ def _msgs():
     return [Message(role="system", content="s"), Message(role="user", content="q")]
 
 
-def test_extra_field_tool_payload_returns_raw_string_not_crash(monkeypatch):
+def test_extra_field_tool_payload_feedback_names_the_field(monkeypatch):
     # regression: GLM sent submit_decision with an extra key inside `decision`;
-    # extra_forbidden must surface as raw-string feedback, never kill the process
+    # the feedback must name the offending field so the model repairs in one retry,
+    # and must never kill the process
     patch_urlopen(monkeypatch, {"choices": [{"message": {"tool_calls": [{
         "id": "c1", "type": "function",
         "function": {"name": "submit_decision", "arguments": json.dumps({
@@ -45,7 +46,24 @@ def test_extra_field_tool_payload_returns_raw_string_not_crash(monkeypatch):
         })},
     }]}}], "usage": {"total_tokens": 5}})
     out = client().next(_msgs())
-    assert isinstance(out, str) and "turn_id" in out  # loop will show INVALID ACTION; model can retry
+    assert isinstance(out, str)
+    from ama.agent import _to_action
+    action, err = _to_action(out)
+    assert action is None
+    assert "Extra inputs" in err and "next_target" in err  # precise, field-level feedback
+
+
+def test_missing_required_key_feedback_names_the_key(monkeypatch):
+    patch_urlopen(monkeypatch, {"choices": [{"message": {"tool_calls": [{
+        "id": "c1", "type": "function",
+        "function": {"name": "submit_decision", "arguments": json.dumps({
+            "decision": {"state": {}, "abstain": False},  # turn_id missing
+        })},
+    }]}}], "usage": None})
+    out = client().next(_msgs())
+    from ama.agent import _to_action
+    action, err = _to_action(out)
+    assert action is None and "turn_id" in err and "required" in err.lower()
 
 
 def test_malformed_tool_call_shape_returns_raw(monkeypatch):
