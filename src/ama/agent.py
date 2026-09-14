@@ -40,6 +40,7 @@ def system_prompt(episode: Episode, public_policy: dict | None) -> str:
         f"主体：{episode.subject_id}。共 {len(episode.turns)} 轮。",
         "每轮流程：可用 list_evidence / read_evidence 查看证据，然后恰好调用一次 submit_decision 提交本轮决策。",
         "可见性：第 N 轮可见 = 前N轮释放的全部证据；尚未释放的证据不可见（读取会失败）。",
+        "decision.turn_id 必须逐字符等于本轮 world observation 标注的 turn_id（如 t1、t2）。",
         "引用约束：decision.citations 必须来自此前已成功 read_evidence 的证据；证据不足时 abstain=true（不得有 action/citations/state 内容）。",
     ]
     if public_policy:
@@ -52,7 +53,7 @@ def system_prompt(episode: Episode, public_policy: dict | None) -> str:
 def world_message(index: int, total: int, turn: Turn, new_ids: list[str]) -> str:
     ids = ", ".join(new_ids) or "（无新增）"
     when = turn.time.isoformat() if turn.time else "时间未记录"
-    return (f"[第 {index + 1}/{total} 轮 world observation @ {when}]\n"
+    return (f"[turn_id={turn.turn_id} | 第 {index + 1}/{total} 轮 world observation @ {when}]\n"
             f"{turn.message}\n本轮新增证据（已可读取）：{ids}")
 
 

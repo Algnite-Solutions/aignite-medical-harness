@@ -50,6 +50,12 @@ def run(actions, budget=None, trace=None, interaction=None):
     return result, events, decisions
 
 
+def test_world_message_discloses_turn_id():
+    from ama.agent import world_message
+    msg = world_message(0, 3, EP.turns[0], ["a1"])
+    assert "turn_id=t1" in msg  # the model must be told the exact string it must echo
+
+
 def test_progressive_visibility_and_read_before_cite():
     result, events, _ = run([
         ListEvidence(),  # t1: only a1
