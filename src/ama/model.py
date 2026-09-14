@@ -68,7 +68,7 @@ class ModelTimeoutError(ModelError):
 class Message(BaseModel):
     model_config = ConfigDict(extra="allow")
     role: str
-    content: str
+    content: str | list[dict[str, Any]]
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
 

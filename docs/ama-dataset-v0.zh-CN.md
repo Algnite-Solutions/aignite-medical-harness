@@ -91,7 +91,7 @@ Evidence 是实验中需要独立展示、读取和引用的最小信息单元�
 
 模型调用 `read_evidence` 后可以看到 Evidence 的全部字段。不要在 `metadata` 中放入标准答案、派生临床结论、评分标签或未来信息；这些内容应放在 `targets.jsonl` 或 `policy.hidden`。
 
-`artifact` 用于标识图片、PDF、波形或文本文件等原始或派生材料。AMA v0 只验证路径位于数据集内并且文件存在，不负责解析或渲染。如果被测模型需要文本输入，importer 应同时提供忠实的 `text` 表示。未来的多模态 backend 可以使用同一个 artifact 引用，而不需要改变 Episode 模型。
+`artifact` 用于标识图片、PDF、波形或文本文件等原始或派生材料。AMA v0 会验证路径位于数据集内并且文件存在。调用 `read_evidence` 后，JPEG、PNG、GIF 和 WebP 文件会作为 `image_url` content part 发送给 OpenAI-compatible 视觉模型；所配置的模型必须支持这种 Chat Completions 表示。其他文件类型仍作为路径引用，如果被测模型需要其内容，importer 应同时提供忠实的 `text` 表示。内联图像字节不会写入 trace，也不会由交互 shell 输出。
 
 | 源数据 | 建议的 Evidence 单元 |
 |---|---|

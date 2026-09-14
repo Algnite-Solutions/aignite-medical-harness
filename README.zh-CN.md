@@ -94,7 +94,9 @@ datasets/<name>/
 - **Evidence：** 在当前研究中需要独立展示、读取和引用的最小信息单元。
 - **Decision：** 模型在一轮中提交的结构化结果。
 
-Evidence 可以是一份病历、影像或病理报告、一组检验、一个 FHIR Resource、一条登记记录、一张图片或一个 PDF。每条 Evidence 必须至少包含 `text` 或 `artifact`。`artifact` 是数据集目录内的安全相对路径。v0 runner 只返回这个路径，不解析或渲染文件；如果模型需要理解其内容，importer 应同时提供有用的文本表示。
+Evidence 可以是一份病历、影像或病理报告、一组检验、一个 FHIR Resource、一条登记记录、一张图片或一个 PDF。每条 Evidence 必须至少包含 `text` 或 `artifact`。`artifact` 是数据集目录内的安全相对路径。调用 `read_evidence` 后，JPEG、PNG、GIF 和 WebP artifact 会作为 `image_url` content part 发送给 OpenAI-compatible 视觉模型。其他 artifact 仍作为路径引用；如果模型需要理解其内容，importer 应同时提供有用的文本表示。
+
+交互运行默认保留简短进度输出。输入 `show` 可以查看截至当前的完整模型对话，包括 system、human、assistant 工具调用和 tool observation。内联图像在终端和运行记录中始终显示为简短 artifact 描述，不会输出 base64。
 
 `episodes.jsonl` 中的全部字段，包括 `Evidence.metadata`，都对模型可见。标准答案、派生标签和仅供评分器使用的 tag 必须放进 `targets.jsonl` 或 `policy.hidden`。
 

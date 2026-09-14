@@ -3,13 +3,23 @@ runs through run_episode(). Budget, usage, retries, trace and interactive hooks 
 cross-cutting concerns of this single function — there is no second runner."""
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from .data import Decision, Episode, Turn
 from .model import Message, ModelClient, ModelError, parse_action
-from .recorder import Budget, Recorder, merge_usage, redact_content, redact_messages
+from .recorder import (Budget, Recorder, merge_usage, redact_content, redact_messages,
+                       sanitize_multimodal_content)
+
+
+_IMAGE_MIMES = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp",
+}
 
 
 class OperatorStopped(Exception):
@@ -27,6 +37,8 @@ class Interaction:
         return True
 
     def on_step(self, line: str) -> None: ...
+
+    def on_message(self, message: Message) -> None: ...
 
     def on_turn_end(self, decision: Decision | None, note: str) -> None: ...
 
@@ -70,6 +82,35 @@ def _to_action(item: Any) -> tuple[Any | None, str | None]:
         return parse_action(item), None
     except (ValueError, json.JSONDecodeError) as exc:
         return None, f"invalid action: {exc}"
+
+
+def _image_message(evidence_id: str, evidence: dict[str, Any], dataset_dir: Path) -> Message | None:
+    artifact = evidence.get("artifact")
+    if not artifact:
+        return None
+    mime = _IMAGE_MIMES.get(Path(artifact).suffix.lower())
+    if mime is None:
+        return None
+    root = Path(dataset_dir).resolve()
+    path = (root / artifact).resolve()
+    if path != root and root not in path.parents:
+        raise ValueError(f"unsafe artifact path '{artifact}'")
+    if not path.is_file():
+        raise ValueError(f"image artifact missing '{artifact}'")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"image artifact unreadable '{artifact}': {exc}") from exc
+    guessed, _ = mimetypes.guess_type(path.name)
+    if guessed and guessed != mime:
+        raise ValueError(f"image artifact MIME mismatch '{artifact}'")
+    descriptor = (f"[image evidence: evidence_id={evidence_id}; artifact={artifact}; "
+                  f"mime={mime}; bytes={len(raw)}]")
+    url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return Message(role="user", content=[
+        {"type": "text", "text": descriptor},
+        {"type": "image_url", "image_url": {"url": url, "detail": "auto"}},
+    ])
 
 
 def _call_model(model, messages, budget: Budget, turn_calls: int, log, episode_id: str, turn_id: str):
@@ -118,6 +159,7 @@ def run_episode(
     interaction = interaction or Interaction()
     budget = recorder.budget
     messages: list[Message] = [Message(role="system", content=system_prompt(episode, public_policy))]
+    interaction.on_message(messages[0])
     released: dict[str, Any] = {}   # evidence_id -> evidence dict (cumulative visibility)
     read_ids: set[str] = set()
     usage_total: dict | None = None
@@ -141,9 +183,13 @@ def run_episode(
             interaction.on_turn_start(idx, len(episode.turns), turn, new_meta)
 
             if prev_missed:
-                messages.append(Message(role="user", content="（系统提示：上一轮未收到合法 submit_decision，已按真实轨迹推进到本轮。）"))
-            messages.append(Message(role="user", content=world_message(idx, len(episode.turns), turn,
-                                                                       [e.evidence_id for e in turn.evidence])))
+                missed = Message(role="user", content="（系统提示：上一轮未收到合法 submit_decision，已按真实轨迹推进到本轮。）")
+                messages.append(missed)
+                interaction.on_message(missed)
+            world = Message(role="user", content=world_message(idx, len(episode.turns), turn,
+                                                                [e.evidence_id for e in turn.evidence]))
+            messages.append(world)
+            interaction.on_message(world)
             t0 = time.monotonic()
             turn_calls = 0
             step = 0
@@ -173,9 +219,12 @@ def run_episode(
                 action, err = _to_action(item)
                 if action is None:
                     step += 1
-                    messages.append(Message(role="assistant", content=str(item)[:500]))
-                    messages.append(Message(role="user",
-                                            content=f"INVALID ACTION: {err}\n请重新发出一个合法工具调用（function call）。"))
+                    invalid = Message(role="assistant", content=str(item)[:500])
+                    repair = Message(role="user",
+                                     content=f"INVALID ACTION: {err}\n请重新发出一个合法工具调用（function call）。")
+                    messages.extend([invalid, repair])
+                    interaction.on_message(invalid)
+                    interaction.on_message(repair)
                     recorder.log("step", episode_id=episode.episode_id, turn_id=turn.turn_id, step=step,
                                  action=None, raw=str(item)[:200], observation={"ok": False, "error": err})
                     line = f"step {step} INVALID -> {err}"
@@ -186,6 +235,13 @@ def run_episode(
 
                 call_id = f"call_{step + 1}"
                 obs = _execute(action, released, read_ids, turn)
+                image_message = None
+                if action.type == "read_evidence" and obs.get("ok"):
+                    try:
+                        image_message = _image_message(action.evidence_id, obs["data"], recorder.dataset_dir)
+                    except ValueError as exc:
+                        read_ids.discard(action.evidence_id)
+                        obs = {"ok": False, "error": str(exc), "error_kind": "validation"}
                 step += 1
                 action_pub = {"type": action.type, "params": action.model_dump(exclude={"type"}, mode="json")}
                 recorder.log("step", episode_id=episode.episode_id, turn_id=turn.turn_id, step=step,
@@ -193,11 +249,18 @@ def run_episode(
                              observation=redact_content({k: v for k, v in obs.items() if k != "violation"},
                                                         recorder.trace.save_evidence_text),
                              violation=obs.get("violation"))
-                messages.append(Message(role="assistant", content=json.dumps(action_pub, ensure_ascii=False),
-                                        tool_calls=[_tool_call(call_id, action)]))
+                assistant_message = Message(role="assistant", content=json.dumps(action_pub, ensure_ascii=False),
+                                            tool_calls=[_tool_call(call_id, action)])
+                messages.append(assistant_message)
+                interaction.on_message(assistant_message)
                 obs_public = {k: v for k, v in obs.items() if k != "violation"}
-                messages.append(Message(role="tool", tool_call_id=call_id,
-                                        content=json.dumps(obs_public, ensure_ascii=False, default=str)))
+                tool_message = Message(role="tool", tool_call_id=call_id,
+                                       content=json.dumps(obs_public, ensure_ascii=False, default=str))
+                messages.append(tool_message)
+                interaction.on_message(tool_message)
+                if image_message is not None:
+                    messages.append(image_message)
+                    interaction.on_message(image_message)
                 line = f"step {step} {action.type} -> " + ("OK" if obs.get("ok") else f"ERR {obs.get('error')}")
                 interaction.on_step(line)
                 if announce:
@@ -256,7 +319,8 @@ def run_episode(
                  termination_detail=term[1], total_model_calls=budget.total_calls,
                  usage=usage_total if isinstance(usage_total, dict) else "unknown",
                  operator_wait_ms=interaction.operator_wait_ms,
-                 messages=redact_messages([m.model_dump(exclude_none=True) for m in messages],
+                 messages=redact_messages(sanitize_multimodal_content(
+                     [m.model_dump(exclude_none=True) for m in messages]),
                                           recorder.trace.save_model_context))
     return {
         "episode_id": episode.episode_id,

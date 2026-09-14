@@ -153,6 +153,17 @@ def test_interactive_phase_gating(tmp_path):
     assert "(ama) thyroid_001 t1/3 next >" in inter.stdout
 
 
+def test_interactive_show_prints_readable_role_transcript(tmp_path):
+    inter = ama("run", "datasets/thyroid_demo", "--model", "scripted",
+                "--runs-root", str(tmp_path), "--interactive",
+                stdin_text="show\nrun\nshow\nnext\nrun\nnext\nrun\nnext\n")
+    assert inter.returncode == 0, inter.stderr
+    for role in ("[system]", "[human]", "[assistant]", "[tool]"):
+        assert role in inter.stdout
+    assert "tool_call" in inter.stdout
+    assert "data:image" not in inter.stdout
+
+
 def test_help_has_no_dual_concepts():
     r = ama("--help")
     text = r.stdout + r.stderr

@@ -82,6 +82,15 @@ def test_text_only_reply_is_raw_string(monkeypatch):
     assert out == "我认为是 t1" and c.last_usage["total_tokens"] == 3
 
 
+def test_multimodal_user_content_is_preserved_on_wire():
+    content = [
+        {"type": "text", "text": "image evidence e1"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,YQ=="}},
+    ]
+    wire = OpenAICompatModel._to_wire([Message(role="user", content=content)])
+    assert wire == [{"role": "user", "content": content}]
+
+
 def test_http_error_and_timeout_map_to_model_error(monkeypatch):
     def boom_http(req, timeout=None):
         raise urllib.error.HTTPError("u", 400, "Bad", {}, io.BytesIO(b'{"e":1}'))

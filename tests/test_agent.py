@@ -223,3 +223,59 @@ def test_trace_redaction():
     assert reads[0]["observation"]["data"]["text"].startswith("<redacted")
     end = [e for e in events if e["type"] == "episode_end"][0]
     assert isinstance(end["messages"], str) and end["messages"].startswith("<redacted")
+
+
+def test_image_evidence_reaches_model_but_base64_is_not_persisted(tmp_path):
+    dataset = tmp_path / "dataset"
+    (dataset / "assets").mkdir(parents=True)
+    (dataset / "assets" / "scan.jpg").write_bytes(b"small-jpeg-fixture")
+    episode = Episode.model_validate({
+        "episode_id": "image", "subject_id": "s", "metadata": {},
+        "turns": [{"turn_id": "t1", "time": None, "message": "read image", "evidence": [{
+            "evidence_id": "scan", "kind": "image", "text": "",
+            "artifact": "assets/scan.jpg", "source": "fixture", "metadata": {},
+        }]}],
+    })
+
+    class InspectingModel(Scripted):
+        def next(self, messages):
+            out = super().next(messages)
+            if isinstance(out, SubmitDecision):
+                image_messages = [m for m in messages if isinstance(m.content, list)]
+                assert len(image_messages) == 1
+                assert image_messages[0].content[1]["image_url"]["url"].startswith(
+                    "data:image/jpeg;base64,")
+                assert "evidence_id=scan" in image_messages[0].content[0]["text"]
+            return out
+
+    recorder = Recorder(tmp_path / "runs", "image", "inspect", dataset, ["image"],
+                        TraceConfig(save_model_context=True),
+                        Budget(10, 10, 60, 0))
+    result = run_episode(episode, InspectingModel([
+        ReadEvidence(evidence_id="scan"), submit("t1", citations=["scan"]),
+    ]), recorder)
+    assert result["turns_decided"] == 1
+    events = (recorder.run_dir / "events.jsonl").read_text()
+    assert "data:image" not in events
+    assert "inline image/jpeg omitted" in events
+
+
+def test_missing_image_is_not_read_or_citable(tmp_path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    episode = Episode.model_validate({
+        "episode_id": "missing", "subject_id": "s", "metadata": {},
+        "turns": [{"turn_id": "t1", "time": None, "message": "read image", "evidence": [{
+            "evidence_id": "scan", "kind": "image", "text": "",
+            "artifact": "assets/missing.png", "source": "fixture", "metadata": {},
+        }]}],
+    })
+    recorder = Recorder(tmp_path / "runs", "missing", "scripted", dataset, ["missing"],
+                        TraceConfig(), Budget(10, 10, 60, 0))
+    result = run_episode(episode, Scripted([
+        ReadEvidence(evidence_id="scan"), submit("t1", citations=["scan"]), submit("t1", abstain=True),
+    ]), recorder)
+    assert result["turns_decided"] == 1
+    read = next(e for e in map(json.loads, (recorder.run_dir / "events.jsonl").read_text().splitlines())
+                if e["type"] == "step")
+    assert read["observation"]["ok"] is False and "missing" in read["observation"]["error"]
