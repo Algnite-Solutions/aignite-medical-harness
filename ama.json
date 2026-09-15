@@ -1,6 +1,22 @@
 {
   "models": {
-    "scripted": {"type": "scripted", "script_dir": "scripts"},
-    "glm": {"type": "openai_compatible", "base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-5.3-flash", "api_key_env": "GLM_API_KEY", "temperature": 0.0}
+    "scripted": {
+      "type": "scripted",
+      "script_dir": "scripts"
+    },
+    "glm": {
+      "type": "openai_compatible",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "api_key_env": "GLM_API_KEY",
+      "temperature": 0.0
+    },
+    "glm-vision": {
+      "type": "openai_compatible",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4v-flash",
+      "api_key_env": "GLM_API_KEY",
+      "temperature": 0.0
+    }
   }
 }

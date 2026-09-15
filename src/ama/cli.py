@@ -141,7 +141,7 @@ class ShellInteraction:
 
 # ---------------------------------------------------------------- run / eval orchestration
 
-def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_id: str | None,
+def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_ids: list[str] | None,
                  runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any]) -> Path:
     from .agent import Interaction, run_episode
     from .data import load_dataset, resolve_dataset_dir
@@ -150,7 +150,15 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
 
     dataset_dir = resolve_dataset_dir(dataset_dir)
     dataset = load_dataset(dataset_dir, with_targets=False)  # run NEVER opens targets.jsonl
-    episodes = dataset.select(split=split, episode_id=episode_id)
+    if episode_ids:
+        wanted = list(dict.fromkeys(episode_ids))
+        known = {e.episode_id: e for e in dataset.episodes}
+        missing = [eid for eid in wanted if eid not in known]
+        if missing:
+            raise KeyError(f"episodes not found: {missing}")
+        episodes = [known[eid] for eid in wanted]
+    else:
+        episodes = dataset.select(split=split, episode_id=None)
     factory = make_model_factory(model_name, request_timeout=budget_args.get("request_timeout", 60.0))
 
     budget = Budget(max_model_calls=budget_args.get("max_model_calls", 60),
@@ -331,12 +339,15 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("dataset_dir")
     r.add_argument("--model", required=True)
     r.add_argument("--split")
-    r.add_argument("--episode")
+    r.add_argument("--episode", action="append", dest="episodes",
+                   help="run only this episode (repeatable)")
     r.add_argument("--interactive", action="store_true")
     r.add_argument("--runs-root", default="runs")
     r.add_argument("--verbose", action="store_true")
     r.add_argument("--max-model-calls", type=int, default=60)
     r.add_argument("--per-turn-model-calls", type=int, default=15)
+    r.add_argument("--request-timeout", type=float, default=60.0,
+                   help="per-request timeout in seconds (thinking/vision models may need more)")
     r.add_argument("--deadline-seconds", type=float, default=900.0)
     r.add_argument("--max-retries", type=int, default=1)
 
@@ -382,12 +393,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "run":
         try:
-            _run_dataset(Path(args.dataset_dir), args.model, args.split, args.episode,
+            _run_dataset(Path(args.dataset_dir), args.model, args.split, args.episodes,
                          Path(args.runs_root), args.interactive, args.verbose,
                          {"max_model_calls": args.max_model_calls,
                           "per_turn_model_calls": args.per_turn_model_calls,
                           "deadline_seconds": args.deadline_seconds,
-                          "max_retries": args.max_retries})
+                          "max_retries": args.max_retries,
+                          "request_timeout": args.request_timeout})
         except FileNotFoundError as exc:
             print(f"ERROR: {exc}")
             return 1
