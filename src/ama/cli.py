@@ -218,7 +218,9 @@ def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[s
             continue
         scored = [t for t in ep["turns"] if t.get("scored")]
         keys = [k for k in ("state_correct", "answer_correct", "action_correct", "refs_covered",
-                            "state_field_accuracy", "transition_valid", "abstain_correct")
+                            "state_field_accuracy", "transition_valid", "abstain_correct",
+                            "caption_token_precision", "caption_token_recall", "caption_token_f1",
+                            "cui_precision", "cui_recall", "cui_f1")
                 if any(k in t for t in scored)]
         if keys:
             lines.append("| turn | " + " | ".join(keys) + " | violations |")
@@ -303,12 +305,15 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--scorer")
 
     imp = sub.add_parser("import", help="offline dataset conversion")
-    imp.add_argument("kind", choices=["medagentbench", "episode-folder"])
+    imp.add_argument("kind", choices=["medagentbench", "episode-folder", "rocov2"])
     imp.add_argument("--source", required=True)
     imp.add_argument("--out", required=True)
     imp.add_argument("--fhir-base", default=None, help="medagentbench: also build FHIR patient episodes")
     imp.add_argument("--fhir-patients", type=int, default=5)
     imp.add_argument("--name", default=None, help="episode-folder: dataset name")
+    imp.add_argument("--split", default="test", help="rocov2: source split (default: test)")
+    imp.add_argument("--limit", type=int, default=None, help="rocov2: maximum records after sorting")
+    imp.add_argument("--id", action="append", dest="ids", help="rocov2: exact image ID (repeatable)")
 
     args = p.parse_args(argv)
 
@@ -356,9 +361,13 @@ def main(argv: list[str] | None = None) -> int:
             from .importers.medagentbench import import_medagentbench
             report = import_medagentbench(Path(args.source), Path(args.out),
                                           fhir_base=args.fhir_base, fhir_patients=args.fhir_patients)
-        else:
+        elif args.kind == "episode-folder":
             from .importers.episode_folder import import_episode_folders
             report = import_episode_folders(Path(args.source), Path(args.out), dataset_name=args.name)
+        else:
+            from .importers.rocov2 import import_rocov2
+            report = import_rocov2(Path(args.source), Path(args.out), split=args.split,
+                                   limit=args.limit, ids=args.ids)
         print(json.dumps(report, ensure_ascii=False, indent=2)[:4000])
         print(f"\nimported -> {args.out}  next: ama validate {args.out}")
         return 0

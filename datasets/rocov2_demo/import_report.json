@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-09-14T08:31:27+00:00",
+  "source_dir": "/Volumes/Shared/Work/Data/RocoV2",
+  "split": "test",
+  "selected_ids": [
+    "ROCOv2_2023_test_000001",
+    "ROCOv2_2023_test_000009",
+    "ROCOv2_2023_test_000015"
+  ],
+  "n_complete_source_records": 9927,
+  "n_imported": 3,
+  "excluded": {
+    "missing_caption": 0,
+    "missing_concepts": 0,
+    "missing_license": 0
+  },
+  "source_sha256": {
+    "captions": "df265c671de60f17825fc10a382f772da4a79e3fe8109b8ea5c9f66a90a38669",
+    "concepts": "e2e3b2ce4909607e212c8c472a249ad4a50875828babb25724520b20573dcb24",
+    "licenses": "f56f9c6959b2d4152743c001cda7c126052961b9e10c03b7486cf8d7f50559e3",
+    "mapping": "63cf714611563e3bc3e564cc0b47ef32f267cb13cb90f7465a1ed293976ab502"
+  },
+  "provenance": [
+    {
+      "image_id": "ROCOv2_2023_test_000001",
+      "PMCID": "PMC8762516",
+      "Attribution": "CC BY-NC Al Mulhim et al. (2022)",
+      "Link": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8762516"
+    },
+    {
+      "image_id": "ROCOv2_2023_test_000009",
+      "PMCID": "PMC9198419",
+      "Attribution": "CC BY-NC Trowbridge et al. (2022)",
+      "Link": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9198419"
+    },
+    {
+      "image_id": "ROCOv2_2023_test_000015",
+      "PMCID": "PMC8931810",
+      "Attribution": "CC BY Hishikawa et al. (2022)",
+      "Link": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8931810"
+    }
+  ]
+}

@@ -107,6 +107,7 @@ Evidence 可以是一份病历、影像或病理报告、一组检验、一个 F
 ```bash
 ama import medagentbench --source test_data_v2.json --out datasets/medagentbench
 ama import episode-folder --source path/to/episodes --out datasets/my_dataset
+ama import rocov2 --source /Volumes/Shared/Work/Data/RocoV2 --out datasets/rocov2 --split test --limit 100
 ```
 
 原始 MedAgentBench task 会成为单轮 Episode。可选的 FHIR 患者时间线会成为独立的多轮回放 Episode，目前没有逐轮 gold target。此类派生回放的分数不能作为原始 MedAgentBench benchmark 成绩报告。
@@ -117,6 +118,7 @@ ama import episode-folder --source path/to/episodes --out datasets/my_dataset
 
 - `exact_v0`：精确状态或答案、允许动作、必需 Evidence 和拒答。
 - `workflow_v0`：状态字段、迁移规则、动作约束、必需 Evidence 和累计成功率。
+- `rocov2_v0`：规范化 caption token 与无序 UMLS CUI 的 precision、recall 和 F1。
 - `unscored`：只报告完成情况和运行指标。
 
 失败或未提交的轮次仍保留在分母中；分母为零时记为 N/A。
@@ -139,9 +141,10 @@ docs/                  数据集约定
 
 ## 已支持数据集
 
-仓库内置样例目前只保留多轮数据。Schema、runner、测试和 importer 仍然支持单轮研究。
+仓库内置样例同时覆盖单轮可信推理与多轮长效记忆研究。
 
 | 数据集 | 来源 | Episode | Turn | Targets | Scorer | 数据卡 |
 |---|---|---:|---:|---|---|---|
 | `thyroid_demo` | 合成肿瘤工作流 | 1 | 3 | 有 | `workflow_v0` | [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) · [English](datasets/thyroid_demo/DATASET_CARD.md) |
 | `medagentbench` | MedAgentBench FHIR 派生回放子集 | 3 | 12 | 无 | `unscored` | [中文](datasets/medagentbench/DATASET_CARD.zh-CN.md) · [English](datasets/medagentbench/DATASET_CARD.md) |
+| `rocov2_demo` | ROCOv2 放射影像子集 | 3 | 3 | 有 | `rocov2_v0` | [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) · [English](datasets/rocov2_demo/DATASET_CARD.md) |

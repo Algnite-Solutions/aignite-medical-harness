@@ -21,10 +21,12 @@ def write_dataset_cards(
     targets: int,
     limitations_en: str,
     limitations_zh: str,
+    artifacts_en: str | None = None,
+    artifacts_zh: str | None = None,
 ) -> None:
-    artifacts_en = ("Artifacts are optional paths relative to this dataset directory. "
-                    "This import contains no copied artifacts unless stated above.")
-    artifacts_zh = "Artifact 是相对本数据集目录的可选路径；除非上文另有说明，本次导入没有复制 artifact。"
+    artifacts_en = artifacts_en or ("Artifacts are optional paths relative to this dataset directory. "
+                                    "This import contains no copied artifacts unless stated above.")
+    artifacts_zh = artifacts_zh or "Artifact 是相对本数据集目录的可选路径；除非上文另有说明，本次导入没有复制 artifact。"
     en = f"""# {name} — Dataset Card
 
 ## Source and license

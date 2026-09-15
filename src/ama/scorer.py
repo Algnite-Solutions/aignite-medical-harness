@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
+from collections import Counter
 from typing import Any, Protocol
 
 from .data import Dataset, Decision, Episode
@@ -281,8 +283,101 @@ def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
     return {"scorer": "unscored", "per_episode": per, "aggregate": None}
 
 
+# ---------------------------------------------------------------- rocov2_v0
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _caption_tokens(value: Any) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    return _WORD_RE.findall(unicodedata.normalize("NFKC", value).lower())
+
+
+def _cui_set(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {v.strip().upper() for v in value if isinstance(v, str) and v.strip()}
+
+
+def _prf(overlap: int, predicted: int, gold: int) -> dict[str, dict[str, Any]]:
+    return {
+        "precision": _rate(overlap, predicted),
+        "recall": _rate(overlap, gold),
+        "f1": _rate(2 * overlap, predicted + gold),
+    }
+
+
+def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Score normalized caption token overlap and unordered UMLS CUI overlap."""
+    per_episode: dict[str, Any] = {}
+    totals = {"caption_overlap": 0, "caption_predicted": 0, "caption_gold": 0,
+              "cui_overlap": 0, "cui_predicted": 0, "cui_gold": 0,
+              "refs_covered": 0, "refs_total": 0}
+    for ep in dataset.episodes:
+        rows = decisions.get(ep.episode_id, [])
+        target = dataset.targets.get(ep.episode_id)
+        turns_out: list[dict[str, Any]] = []
+        for row in rows:
+            entry = _base_turn_entry(row)
+            t = target.turns.get(row["turn_id"]) if target else None
+            if t is None:
+                entry["scored"] = False
+                turns_out.append(entry)
+                continue
+            decision = row.get("decision") or {}
+            state = decision.get("state") if isinstance(decision.get("state"), dict) else {}
+            want = t.get("state") if isinstance(t.get("state"), dict) else {}
+            predicted_tokens = Counter(_caption_tokens(state.get("caption")))
+            gold_tokens = Counter(_caption_tokens(want.get("caption")))
+            caption_overlap = sum((predicted_tokens & gold_tokens).values())
+            predicted_cuis = _cui_set(state.get("cuis"))
+            gold_cuis = _cui_set(want.get("cuis"))
+            cui_overlap = len(predicted_cuis & gold_cuis)
+            caption = _prf(caption_overlap, sum(predicted_tokens.values()), sum(gold_tokens.values()))
+            cui = _prf(cui_overlap, len(predicted_cuis), len(gold_cuis))
+            entry.update({
+                "caption_token_precision": caption["precision"],
+                "caption_token_recall": caption["recall"],
+                "caption_token_f1": caption["f1"],
+                "cui_precision": cui["precision"],
+                "cui_recall": cui["recall"],
+                "cui_f1": cui["f1"],
+            })
+            required = set(t.get("required_evidence") or [])
+            if required:
+                entry["refs_covered"] = required <= set(decision.get("citations") or [])
+                totals["refs_covered"] += int(entry["refs_covered"])
+                totals["refs_total"] += 1
+            totals["caption_overlap"] += caption_overlap
+            totals["caption_predicted"] += sum(predicted_tokens.values())
+            totals["caption_gold"] += sum(gold_tokens.values())
+            totals["cui_overlap"] += cui_overlap
+            totals["cui_predicted"] += len(predicted_cuis)
+            totals["cui_gold"] += len(gold_cuis)
+            entry["scored"] = True
+            turns_out.append(entry)
+        per_episode[ep.episode_id] = {
+            "turns": turns_out,
+            "target_present": target is not None,
+            "completion": _rate(sum(1 for r in rows if r.get("decision")), len(rows)),
+        }
+    caption = _prf(totals["caption_overlap"], totals["caption_predicted"], totals["caption_gold"])
+    cui = _prf(totals["cui_overlap"], totals["cui_predicted"], totals["cui_gold"])
+    return {"scorer": "rocov2_v0", "per_episode": per_episode, "aggregate": {
+        "caption_token_precision": caption["precision"],
+        "caption_token_recall": caption["recall"],
+        "caption_token_f1": caption["f1"],
+        "cui_precision": cui["precision"],
+        "cui_recall": cui["recall"],
+        "cui_f1": cui["f1"],
+        "refs_covered": _rate(totals["refs_covered"], totals["refs_total"]),
+    }}
+
+
 REGISTRY: dict[str, Any] = {
     "exact_v0": score_exact,
     "workflow_v0": score_workflow,
     "unscored": score_unscored,
+    "rocov2_v0": score_rocov2,
 }
