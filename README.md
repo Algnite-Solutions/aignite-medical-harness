@@ -94,7 +94,9 @@ The four core objects are deliberately small:
 - **Evidence:** the smallest item that should be independently visible, readable, and citable in the study.
 - **Decision:** the model's structured output for one Turn.
 
-Evidence may represent a note, report, lab panel, FHIR resource, registry record, image, or PDF. Every Evidence item must provide `text`, `artifact`, or both. `artifact` is a safe relative path inside the dataset directory. In v0, the runner returns the path but does not parse or render the file, so importers should provide a useful textual representation when the model needs the content.
+Evidence may represent a note, report, lab panel, FHIR resource, registry record, image, or PDF. Every Evidence item must provide `text`, `artifact`, or both. `artifact` is a safe relative path inside the dataset directory. After `read_evidence`, JPEG, PNG, GIF, and WebP artifacts are delivered to OpenAI-compatible vision models as an `image_url` content part. Other artifact types remain path references, so importers should provide a useful textual representation when the model needs their content.
+
+Interactive runs keep their compact progress output. Enter `show` to inspect the complete model conversation so far, including system, human, assistant tool calls, and tool observations. Inline image bytes are always shown and recorded as a short artifact descriptor rather than base64.
 
 All fields in `episodes.jsonl`, including `Evidence.metadata`, are model-visible. Gold answers, derived labels, and evaluator-only tags belong in `targets.jsonl` or `policy.hidden`.
 

@@ -38,6 +38,20 @@ def redact_messages(messages: list[Any], keep: bool) -> Any:
     return f"<redacted model_context: {len(messages)} messages>"
 
 
+def sanitize_multimodal_content(obj: Any) -> Any:
+    """Remove inline binary payloads before content reaches any persistent log."""
+    if isinstance(obj, dict):
+        if obj.get("type") == "image_url" and isinstance(obj.get("image_url"), dict):
+            url = obj["image_url"].get("url", "")
+            if isinstance(url, str) and url.startswith("data:"):
+                mime = url[5:].split(";", 1)[0] or "unknown"
+                return {"type": "image_url", "image_url": {"url": f"<inline {mime} omitted>"}}
+        return {k: sanitize_multimodal_content(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_multimodal_content(v) for v in obj]
+    return obj
+
+
 def code_version() -> dict[str, Any]:
     repo = SRC_ROOT.parent
     try:

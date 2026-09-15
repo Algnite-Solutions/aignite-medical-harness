@@ -32,6 +32,7 @@ class ShellInteraction:
         self.trace_lines: list[str] = []
         self._label = ""
         self._decision = None
+        self.messages: list[Any] = []
 
     def _input(self, prompt: str) -> str:
         t0 = time.monotonic()
@@ -50,6 +51,45 @@ class ShellInteraction:
         self.trace_lines = []
         self._decision = None
 
+    def on_message(self, message) -> None:
+        self.messages.append(message)
+
+    @staticmethod
+    def _show_message(message) -> None:
+        role = "human" if message.role == "user" else message.role
+        print(f"\n  [{role}]")
+        if message.role == "assistant" and message.tool_calls:
+            for call in message.tool_calls:
+                fn = call.get("function") or {}
+                raw = fn.get("arguments") or "{}"
+                try:
+                    raw = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
+                except (TypeError, json.JSONDecodeError):
+                    pass
+                print(f"  tool_call {fn.get('name', '?')}: {raw}")
+            return
+        if isinstance(message.content, list):
+            for part in message.content:
+                if part.get("type") == "text":
+                    print(f"  {part.get('text', '')}")
+                elif part.get("type") == "image_url":
+                    print("  <inline image payload omitted>")
+            return
+        shown = message.content
+        if message.role == "tool":
+            try:
+                shown = json.dumps(json.loads(shown), ensure_ascii=False, indent=2)
+            except (TypeError, json.JSONDecodeError):
+                pass
+        print(f"  {shown}")
+
+    def _show_conversation(self) -> None:
+        if not self.messages:
+            print("  （尚无消息）")
+            return
+        for message in self.messages:
+            self._show_message(message)
+
     def _menu(self, allowed: str) -> bool:
         hint = "run" if allowed == "run" else "next"
         other = "next" if allowed == "run" else "run"
@@ -66,7 +106,7 @@ class ShellInteraction:
             if cmd == "quit":
                 return False
             if cmd == "show":
-                print(f"  world: 见上方本轮观察；当前公开 decision: {self._decision or '（尚未提交）'}")
+                self._show_conversation()
             elif cmd == "trace":
                 for line in self.trace_lines:
                     print(f"  {line}")

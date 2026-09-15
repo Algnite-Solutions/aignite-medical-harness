@@ -91,7 +91,7 @@ Choose a natural unit. A full report or same-time lab panel is often better than
 
 All Evidence fields are model-visible after `read_evidence`. Do not place gold answers, derived clinical conclusions, scorer labels, or future information in `metadata`. Put evaluator-only information in `targets.jsonl` or `policy.hidden`.
 
-`artifact` identifies source or derived material such as an image, PDF, waveform, or text file. AMA v0 validates that the path stays inside the dataset and that the file exists. The runner does not parse or render it. Provide `text` when the tested model needs a textual representation. A future multimodal backend can consume the same artifact reference without changing the Episode model.
+`artifact` identifies source or derived material such as an image, PDF, waveform, or text file. AMA v0 validates that the path stays inside the dataset and that the file exists. After `read_evidence`, JPEG, PNG, GIF, and WebP files are sent to OpenAI-compatible vision models as an `image_url` content part. The configured model must support that Chat Completions representation. Other file types remain path references; provide `text` when the tested model needs their content. Inline image bytes are never persisted in traces or printed by the interactive shell.
 
 | Source data | Suggested Evidence unit |
 |---|---|
