@@ -151,17 +151,46 @@ class OpenAICompatModel:
     """Chat Completions with function tools (stdlib urllib). One tool call per turn."""
 
     def __init__(self, name: str, base_url: str, model: str, api_key: str,
-                 request_timeout: float = 30.0, temperature: float = 0.0) -> None:
+                 request_timeout: float = 30.0, temperature: float = 0.0,
+                 wire: str = "openai") -> None:
+        if wire not in ("openai", "openai_compact_image"):
+            raise ValueError(f"unknown wire format: {wire!r}")
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.request_timeout = request_timeout
         self.temperature = temperature
+        self.wire = wire
         self.last_usage: dict[str, Any] | None = None
 
     @staticmethod
-    def _to_wire(messages: list[Message]) -> list[dict[str, Any]]:
+    def _compact_image_history(messages: list[Message]) -> list[Message]:
+        """For gateways that reject assistant(tool_call) -> tool -> user(image) sequences:
+        keep system messages, merge the original instruction with the image into ONE user
+        message, and keep whatever follows it. The agent still gates image delivery on a
+        successful read_evidence; only the provider transcript is compacted."""
+        image_indexes = [i for i, m in enumerate(messages)
+                         if m.role == "user" and isinstance(m.content, list)
+                         and any(isinstance(part, dict) and part.get("type") == "image_url"
+                                 for part in m.content)]
+        if not image_indexes:
+            return messages
+        image_i = image_indexes[-1]
+        original_user = next((str(m.content) for m in messages[:image_i]
+                              if m.role == "user" and isinstance(m.content, str)
+                              and not m.content.startswith("INVALID ACTION:")), "")
+        instruction = (original_user + "\n\nThe requested evidence has been successfully read. "
+                       "Use the attached image. Do not call read_evidence again; "
+                       "call submit_decision now with the required caption and CUIs.")
+        merged = Message(role="user", content=[{"type": "text", "text": instruction}]
+                         + list(messages[image_i].content))
+        return ([m for m in messages[:image_i] if m.role == "system"]
+                + [merged] + messages[image_i + 1:])
+
+    def _to_wire(self, messages: list[Message]) -> list[dict[str, Any]]:
+        if self.wire == "openai_compact_image":
+            messages = self._compact_image_history(messages)
         wire: list[dict[str, Any]] = []
         for m in messages:
             if m.role == "assistant":
@@ -235,6 +264,14 @@ class ModelConfig(BaseModel):
     model: str | None = None
     api_key_env: str = "GLM_API_KEY"
     temperature: float = 0.0
+    # wire: how the conversation is serialized for the provider.
+    #   "openai"               — standard tool-call pairing (default)
+    #   "openai_compact_image" — for gateways that reject assistant(tool_call) -> tool ->
+    #                           user(image) sequences; completed read_evidence history is
+    #                           compacted to system + merged instruction+image. Read-before-
+    #                           cite gating still happens in the agent; only the provider
+    #                           transcript differs (visible in the model config).
+    wire: str = "openai"
 
 
 DEFAULT_SCRIPTED = {"type": "scripted", "script_dir": "scripts"}
@@ -281,6 +318,7 @@ def make_model_factory(model_name: str, request_timeout: float = 60.0):
             return OpenAICompatModel(
                 name=f"{cfg.model}:{episode_id}", base_url=cfg.base_url, model=cfg.model,
                 api_key=api_key, request_timeout=request_timeout, temperature=cfg.temperature,
+                wire=cfg.wire,
             )
 
         return openai_factory
