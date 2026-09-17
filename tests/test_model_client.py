@@ -131,7 +131,8 @@ def test_wire_compact_image_drops_tool_history_before_image():
     assert [w["role"] for w in wire] == ["system", "user"]  # no assistant/tool pairs before image
     parts = wire[1]["content"]
     assert parts[0]["type"] == "text"
-    assert "successfully read" in parts[0]["text"] and "Review the image." in parts[0]["text"]
+    assert "read_evidence" in parts[0]["text"] and "submit_decision" in parts[0]["text"]
+    assert "Review the image." in parts[0]["text"]  # original world observation preserved
     assert parts[-1]["type"] == "image_url" and parts[-1]["image_url"]["url"].startswith("data:image/jpeg")
 
 
@@ -166,3 +167,80 @@ def test_unknown_wire_rejected():
     import pytest as _pytest
     with _pytest.raises(ValueError, match="unknown wire format"):
         OpenAICompatModel("t", "https://x/v1", "m", "k", wire="grpc")
+
+
+def test_wire_compact_preserves_two_turns_two_images():
+    # P1-1 regression: a 2-turn / 2-image transcript must keep BOTH world observations,
+    # BOTH images, the prior-turn decision, and the read observation text.
+    from ama.model import Message
+
+    def call(cid, name):
+        return [{"id": cid, "type": "function",
+                 "function": {"name": name, "arguments": "{}"}}]
+
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="[turn_id=t1 | 1/2] 超声完成"),
+        Message(role="assistant", content="{}", tool_calls=call("c1", "read_evidence")),
+        Message(role="tool", tool_call_id="c1", content='{"evidence_id": "us-1", "kind": "image"}'),
+        Message(role="user", content=[
+            {"type": "text", "text": "[image evidence: evidence_id=us-1]"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,IMG1"}},
+        ]),
+        Message(role="assistant", content="{}", tool_calls=call("c2", "submit_decision")),
+        Message(role="tool", tool_call_id="c2", content='{"ok": true}'),
+        Message(role="user", content="[turn_id=t2 | 2/2] 穿刺病理到达"),
+        Message(role="assistant", content="{}", tool_calls=call("c3", "read_evidence")),
+        Message(role="tool", tool_call_id="c3", content='{"evidence_id": "path-1", "kind": "image"}'),
+        Message(role="user", content=[
+            {"type": "text", "text": "[image evidence: evidence_id=path-1]"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,IMG2"}},
+        ]),
+    ]
+    m = OpenAICompatModel("t", "https://x/v1", "m", "k", wire="openai_compact_image")
+    wire = m._to_wire(msgs)
+    assert [w["role"] for w in wire] == ["system", "user"]
+    text = wire[1]["content"][0]["text"]
+    images = [p for p in wire[1]["content"] if p["type"] == "image_url"]
+    assert "超声完成" in text and "穿刺病理到达" in text          # both world observations
+    assert len(images) == 2 and images[0]["image_url"]["url"].endswith("IMG1") \
+        and images[1]["image_url"]["url"].endswith("IMG2")      # both images, in order
+    assert "Previous action: submit_decision" in text           # prior-turn decision kept
+    assert "us-1" in text and "path-1" in text                  # read observations kept
+
+
+def test_wire_compact_instruction_is_task_neutral():
+    # P1-2 regression: no dataset-specific output fields in the generic backend
+    m = OpenAICompatModel("t", "https://x/v1", "m", "k", wire="openai_compact_image")
+    msgs = _image_history_messages()
+    msgs[1] = __import__("ama.model", fromlist=["Message"]).Message(
+        role="user", content="[turn_id=t1] Review the thyroid ultrasound; report nodule side.")
+    wire = m._to_wire(msgs)
+    text = wire[1]["content"][0]["text"]
+    assert "thyroid ultrasound" in text          # non-ROCO task wording preserved
+    for banned in ("caption", "CUI", "ROCO"):
+        assert banned not in text, banned
+
+
+def test_manifest_records_resolved_model_and_wire(tmp_path):
+    # P2 regression: manifest must record the resolved provider model + wire dialect,
+    # not just the mutable alias.
+    from pathlib import Path as _Path
+    from ama.model import resolve_model_config
+    from ama.recorder import Budget, Recorder, TraceConfig
+    Path = _Path
+
+    resolved = resolve_model_config("qwen36")  # from repo ama.json
+    assert resolved.model == "Qwen3.6-27B" and resolved.wire == "openai_compact_image"
+
+    recorder = Recorder(tmp_path, "t", "qwen36", Path("datasets"), ["x"],
+                        TraceConfig(), Budget(10, 5, 60, 1),
+                        model_info={"alias": "qwen36", "type": resolved.type,
+                                    "provider_model": resolved.model,
+                                    "base_url": resolved.base_url,
+                                    "wire": resolved.wire})
+    manifest = json.loads((recorder.run_dir / "manifest.json").read_text())
+    assert manifest["model"] == "qwen36"
+    assert manifest["model_resolved"]["provider_model"] == "Qwen3.6-27B"
+    assert manifest["model_resolved"]["wire"] == "openai_compact_image"
+    assert "api_key" not in json.dumps(manifest).lower() or "api_key_env" not in manifest["model_resolved"]

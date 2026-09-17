@@ -166,27 +166,55 @@ class OpenAICompatModel:
 
     @staticmethod
     def _compact_image_history(messages: list[Message]) -> list[Message]:
-        """For gateways that reject assistant(tool_call) -> tool -> user(image) sequences:
-        keep system messages, merge the original instruction with the image into ONE user
-        message, and keep whatever follows it. The agent still gates image delivery on a
-        successful read_evidence; only the provider transcript is compacted."""
+        """Rewrite the transcript for gateways that reject image-bearing user messages
+        after tool messages (they 400 on assistant(tool_call) -> tool -> user(image)).
+
+        Everything up to and including the LAST image is folded into ONE user message:
+        world observations, prior actions and their observations, image descriptors, and
+        every successfully read image so far. Messages after the last image are kept
+        verbatim (the gateway accepts tool pairs that FOLLOW an image user message).
+        Agent-side read-before-cite gating is unchanged; only the wire transcript differs.
+        The appended instruction is task-neutral: it must not name any dataset's fields."""
         image_indexes = [i for i, m in enumerate(messages)
                          if m.role == "user" and isinstance(m.content, list)
                          and any(isinstance(part, dict) and part.get("type") == "image_url"
                                  for part in m.content)]
         if not image_indexes:
             return messages
-        image_i = image_indexes[-1]
-        original_user = next((str(m.content) for m in messages[:image_i]
-                              if m.role == "user" and isinstance(m.content, str)
-                              and not m.content.startswith("INVALID ACTION:")), "")
-        instruction = (original_user + "\n\nThe requested evidence has been successfully read. "
-                       "Use the attached image. Do not call read_evidence again; "
-                       "call submit_decision now with the required caption and CUIs.")
-        merged = Message(role="user", content=[{"type": "text", "text": instruction}]
-                         + list(messages[image_i].content))
-        return ([m for m in messages[:image_i] if m.role == "system"]
-                + [merged] + messages[image_i + 1:])
+        last = image_indexes[-1]
+        head, tail = messages[: last + 1], messages[last + 1:]
+
+        transcript: list[str] = []
+        image_parts: list[dict[str, Any]] = []
+        for m in head:
+            if m.role == "system":
+                continue  # preserved as separate system messages
+            if m.role == "user":
+                if isinstance(m.content, str):
+                    transcript.append(m.content)
+                else:
+                    for part in m.content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            image_parts.append(part)
+                        elif isinstance(part, dict) and part.get("type") == "text":
+                            transcript.append(str(part.get("text", "")))
+            elif m.role == "assistant":
+                if m.tool_calls:
+                    for call in m.tool_calls:
+                        fn = call.get("function", {})
+                        transcript.append(f'Previous action: {fn.get("name")}({fn.get("arguments")})')
+                elif m.content:
+                    transcript.append(f"Assistant reply: {m.content}")
+            elif m.role == "tool":
+                transcript.append(f"Observation: {m.content}")
+        transcript.append(
+            "The evidence above was delivered after a successful read_evidence call, and the "
+            "requested image(s) are attached. Do not call read_evidence again for evidence "
+            "already read; submit your decision for the current turn with submit_decision.")
+        merged = Message(role="user",
+                         content=[{"type": "text", "text": "\n\n".join(t for t in transcript if t)}]
+                         + image_parts)
+        return ([m for m in head if m.role == "system"] + [merged] + list(tail))
 
     def _to_wire(self, messages: list[Message]) -> list[dict[str, Any]]:
         if self.wire == "openai_compact_image":
@@ -289,14 +317,21 @@ def load_model_configs() -> dict[str, dict[str, Any]]:
     return configs
 
 
-def make_model_factory(model_name: str, request_timeout: float = 60.0):
-    """factory(episode_id) -> ModelClient (one client per episode, fresh usage)."""
+def resolve_model_config(model_name: str) -> ModelConfig:
+    """Resolve a model alias to its effective config (ama.json / user config merged).
+    Used by the factory and by run provenance (manifest) so a historical run records
+    the actual provider model and wire dialect, not just the mutable alias."""
     cfg_raw = load_model_configs().get(model_name)
     if model_name == "scripted" and cfg_raw is None:
         cfg_raw = DEFAULT_SCRIPTED
     if cfg_raw is None:
         raise ValueError(f"unknown model '{model_name}' (configure in ama.json or ~/.config/ama/models.json)")
-    cfg = ModelConfig.model_validate(cfg_raw)
+    return ModelConfig.model_validate(cfg_raw)
+
+
+def make_model_factory(model_name: str, request_timeout: float = 60.0):
+    """factory(episode_id) -> ModelClient (one client per episode, fresh usage)."""
+    cfg = resolve_model_config(model_name)
 
     if cfg.type == "scripted":
         script_dir = Path(cfg.script_dir)

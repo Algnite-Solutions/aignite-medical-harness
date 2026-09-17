@@ -125,7 +125,8 @@ class Recorder:
 
     def __init__(self, runs_root: Path, name: str, model_name: str, dataset_dir: Path,
                  episode_ids: list[str], trace: TraceConfig, budget: Budget,
-                 experiment: dict[str, Any] | None = None, interactive: bool = False) -> None:
+                 experiment: dict[str, Any] | None = None, interactive: bool = False,
+                 model_info: dict[str, Any] | None = None) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         import secrets
 
@@ -141,6 +142,10 @@ class Recorder:
             "run_id": self.run_id,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "model": model_name,
+            # resolved provider details keep historical runs auditable even if the alias
+            # in ama.json is later repointed (the wire option materially changes what the
+            # model sees); secrets (API keys) are never included
+            "model_resolved": model_info or {"alias": model_name},
             "dataset_dir": str(self.dataset_dir),
             "episode_ids": episode_ids,
             "interactive": interactive,
