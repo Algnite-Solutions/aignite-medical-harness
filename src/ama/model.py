@@ -151,17 +151,74 @@ class OpenAICompatModel:
     """Chat Completions with function tools (stdlib urllib). One tool call per turn."""
 
     def __init__(self, name: str, base_url: str, model: str, api_key: str,
-                 request_timeout: float = 30.0, temperature: float = 0.0) -> None:
+                 request_timeout: float = 30.0, temperature: float = 0.0,
+                 wire: str = "openai") -> None:
+        if wire not in ("openai", "openai_compact_image"):
+            raise ValueError(f"unknown wire format: {wire!r}")
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.request_timeout = request_timeout
         self.temperature = temperature
+        self.wire = wire
         self.last_usage: dict[str, Any] | None = None
 
     @staticmethod
-    def _to_wire(messages: list[Message]) -> list[dict[str, Any]]:
+    def _compact_image_history(messages: list[Message]) -> list[Message]:
+        """Rewrite the transcript for gateways that reject image-bearing user messages
+        after tool messages (they 400 on assistant(tool_call) -> tool -> user(image)).
+
+        Everything up to and including the LAST image is folded into ONE user message:
+        world observations, prior actions and their observations, image descriptors, and
+        every successfully read image so far. Messages after the last image are kept
+        verbatim (the gateway accepts tool pairs that FOLLOW an image user message).
+        Agent-side read-before-cite gating is unchanged; only the wire transcript differs.
+        The appended instruction is task-neutral: it must not name any dataset's fields."""
+        image_indexes = [i for i, m in enumerate(messages)
+                         if m.role == "user" and isinstance(m.content, list)
+                         and any(isinstance(part, dict) and part.get("type") == "image_url"
+                                 for part in m.content)]
+        if not image_indexes:
+            return messages
+        last = image_indexes[-1]
+        head, tail = messages[: last + 1], messages[last + 1:]
+
+        transcript: list[str] = []
+        image_parts: list[dict[str, Any]] = []
+        for m in head:
+            if m.role == "system":
+                continue  # preserved as separate system messages
+            if m.role == "user":
+                if isinstance(m.content, str):
+                    transcript.append(m.content)
+                else:
+                    for part in m.content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            image_parts.append(part)
+                        elif isinstance(part, dict) and part.get("type") == "text":
+                            transcript.append(str(part.get("text", "")))
+            elif m.role == "assistant":
+                if m.tool_calls:
+                    for call in m.tool_calls:
+                        fn = call.get("function", {})
+                        transcript.append(f'Previous action: {fn.get("name")}({fn.get("arguments")})')
+                elif m.content:
+                    transcript.append(f"Assistant reply: {m.content}")
+            elif m.role == "tool":
+                transcript.append(f"Observation: {m.content}")
+        transcript.append(
+            "The evidence above was delivered after a successful read_evidence call, and the "
+            "requested image(s) are attached. Do not call read_evidence again for evidence "
+            "already read; submit your decision for the current turn with submit_decision.")
+        merged = Message(role="user",
+                         content=[{"type": "text", "text": "\n\n".join(t for t in transcript if t)}]
+                         + image_parts)
+        return ([m for m in head if m.role == "system"] + [merged] + list(tail))
+
+    def _to_wire(self, messages: list[Message]) -> list[dict[str, Any]]:
+        if self.wire == "openai_compact_image":
+            messages = self._compact_image_history(messages)
         wire: list[dict[str, Any]] = []
         for m in messages:
             if m.role == "assistant":
@@ -235,6 +292,14 @@ class ModelConfig(BaseModel):
     model: str | None = None
     api_key_env: str = "GLM_API_KEY"
     temperature: float = 0.0
+    # wire: how the conversation is serialized for the provider.
+    #   "openai"               — standard tool-call pairing (default)
+    #   "openai_compact_image" — for gateways that reject assistant(tool_call) -> tool ->
+    #                           user(image) sequences; completed read_evidence history is
+    #                           compacted to system + merged instruction+image. Read-before-
+    #                           cite gating still happens in the agent; only the provider
+    #                           transcript differs (visible in the model config).
+    wire: str = "openai"
 
 
 DEFAULT_SCRIPTED = {"type": "scripted", "script_dir": "scripts"}
@@ -252,14 +317,21 @@ def load_model_configs() -> dict[str, dict[str, Any]]:
     return configs
 
 
-def make_model_factory(model_name: str, request_timeout: float = 60.0):
-    """factory(episode_id) -> ModelClient (one client per episode, fresh usage)."""
+def resolve_model_config(model_name: str) -> ModelConfig:
+    """Resolve a model alias to its effective config (ama.json / user config merged).
+    Used by the factory and by run provenance (manifest) so a historical run records
+    the actual provider model and wire dialect, not just the mutable alias."""
     cfg_raw = load_model_configs().get(model_name)
     if model_name == "scripted" and cfg_raw is None:
         cfg_raw = DEFAULT_SCRIPTED
     if cfg_raw is None:
         raise ValueError(f"unknown model '{model_name}' (configure in ama.json or ~/.config/ama/models.json)")
-    cfg = ModelConfig.model_validate(cfg_raw)
+    return ModelConfig.model_validate(cfg_raw)
+
+
+def make_model_factory(model_name: str, request_timeout: float = 60.0):
+    """factory(episode_id) -> ModelClient (one client per episode, fresh usage)."""
+    cfg = resolve_model_config(model_name)
 
     if cfg.type == "scripted":
         script_dir = Path(cfg.script_dir)
@@ -281,6 +353,7 @@ def make_model_factory(model_name: str, request_timeout: float = 60.0):
             return OpenAICompatModel(
                 name=f"{cfg.model}:{episode_id}", base_url=cfg.base_url, model=cfg.model,
                 api_key=api_key, request_timeout=request_timeout, temperature=cfg.temperature,
+                wire=cfg.wire,
             )
 
         return openai_factory

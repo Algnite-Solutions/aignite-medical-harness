@@ -145,7 +145,7 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
                  runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any]) -> Path:
     from .agent import Interaction, run_episode
     from .data import load_dataset, resolve_dataset_dir
-    from .model import make_model_factory
+    from .model import make_model_factory, resolve_model_config
     from .recorder import Budget, Recorder, TraceConfig
 
     dataset_dir = resolve_dataset_dir(dataset_dir)
@@ -165,9 +165,15 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
                     per_turn_model_calls=budget_args.get("per_turn_model_calls", 15),
                     deadline_seconds=budget_args.get("deadline_seconds", 900.0),
                     max_retries=budget_args.get("max_retries", 1))
+    resolved = resolve_model_config(model_name)
     recorder = Recorder(runs_root, name=dataset.info.name, model_name=model_name,
                         dataset_dir=dataset_dir, episode_ids=[e.episode_id for e in episodes],
-                        trace=TraceConfig(), budget=budget, interactive=interactive)
+                        trace=TraceConfig(), budget=budget, interactive=interactive,
+                        model_info={"alias": model_name, "type": resolved.type,
+                                    "provider_model": resolved.model,
+                                    "base_url": resolved.base_url,
+                                    "wire": resolved.wire,
+                                    "temperature": resolved.temperature})
 
     summaries: list[dict[str, Any]] = []
     for ep in episodes:
