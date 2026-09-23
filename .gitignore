@@ -3,5 +3,8 @@ __pycache__/
 *.egg-info/
 .venv/
 .env
+output/
+tmp/
 runs/
+**/provenance.jsonl
 dist/

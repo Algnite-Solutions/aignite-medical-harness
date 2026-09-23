@@ -1,4 +1,4 @@
-"""episode-folder importer: convert v0.2 prototype Episode Folders into AMA Dataset v0."""
+"""Convert prototype Episode Folders into AMA Dataset."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..dataset_card import write_dataset_cards
+from .dataset_writer import write_dataset
 
 
 def _iso(dt: str | None) -> str | None:
@@ -14,10 +15,10 @@ def _iso(dt: str | None) -> str | None:
 
 
 def import_episode_folders(source: Path, out: Path, dataset_name: str | None = None,
-                           scorer: str = "workflow_v0") -> dict[str, Any]:
+                           scorer: str = "workflow") -> dict[str, Any]:
     """Each <source>/<episode_id>/ folder (episode.json + evidence.jsonl + workflow.json
-    + gold.json) becomes one AMA episode. workflow.json → policy.json (public guidance
-    summary built from states/actions; hidden transitions verbatim). gold.json → targets.jsonl."""
+    + gold.json) becomes one AMA episode. Workflow rules go to eval.json,
+    guidance to instructions.txt, and gold labels to targets.jsonl."""
     source = Path(source)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -90,7 +91,7 @@ def import_episode_folders(source: Path, out: Path, dataset_name: str | None = N
         # one shared policy from the first workflow seen
         if policies is None:
             states = workflow.get("states", [])
-            lines = [f"诊疗流程节点（decision.state.workflow_state 取值）：{' → '.join(states)}。"]
+            lines = [f"诊疗流程节点（decision.answer.workflow_state 取值）：{' → '.join(states)}。"]
             for tr in workflow.get("transitions", []):
                 if tr.get("allowed_actions"):
                     lines.append(f"处于 {tr['from']}（通往 {tr['to']}）时可考虑的动作：{'、'.join(tr['allowed_actions'])}。")
@@ -107,21 +108,12 @@ def import_episode_folders(source: Path, out: Path, dataset_name: str | None = N
             }
 
     name = dataset_name or source.name
-    dataset = {
-        "schema": "ama-dataset-v0", "name": name, "version": "0.1",
-        "description": f"imported from episode folders in {source}",
-        "splits": {"all": [e["episode_id"] for e in episodes]},
-        "scorer": scorer,
-    }
-    (out / "dataset.json").write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out / "episodes.jsonl").write_text(
-        "\n".join(json.dumps(e, ensure_ascii=False) for e in episodes) + "\n", encoding="utf-8")
-    if targets:
-        (out / "targets.jsonl").write_text(
-            "\n".join(json.dumps(t, ensure_ascii=False) for t in targets) + "\n", encoding="utf-8")
     if policies:
         policies["hidden"]["evidence_tags"] = evidence_tags
-        (out / "policy.json").write_text(json.dumps(policies, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_dataset(out, name=name, splits={"all": [e["episode_id"] for e in episodes]},
+                     episodes=episodes, targets=targets, scorer=scorer,
+                     rules=(policies or {}).get("hidden"),
+                     instruction=(policies or {}).get("public", {}).get("guidance", ""))
     write_dataset_cards(
         out,
         name=name,

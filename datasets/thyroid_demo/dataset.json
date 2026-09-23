@@ -1,12 +1,9 @@
 {
-  "schema": "ama-dataset-v0",
+  "schema": "ama-dataset",
   "name": "thyroid_demo",
-  "version": "0.1",
-  "description": "imported from episode folders in episodes/dev",
   "splits": {
     "all": [
       "thyroid_001"
     ]
-  },
-  "scorer": "workflow_v0"
+  }
 }

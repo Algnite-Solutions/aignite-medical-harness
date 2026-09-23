@@ -1,9 +1,4 @@
-"""Scorers: dataset-side evaluation. The runner never opens targets; `ama eval` does.
-
-Protocol: score(episodes, decisions_by_episode, targets, policy) -> report dict.
-Built-ins: exact_v0, workflow_v0, unscored. Add a scorer by registering it — never
-by editing the loop.
-"""
+"""Evaluator-only scorers. The run path never loads targets or eval rules."""
 from __future__ import annotations
 
 import math
@@ -63,19 +58,18 @@ def _base_turn_entry(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------- exact_v0
+# ---------------------------------------------------------------- exact
 
 def score_exact(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    """Target turn keys: state (subset-equal), answers (state.answer ∈ list),
-    allowed_actions (action.name), required_evidence (⊆ citations)."""
+    """Target keys: answer (dict subset or scalar equality), answers (alternatives),
+    expect_abstain, allowed_actions (answer.next_step), required_evidence."""
     per_episode: dict[str, Any] = {}
-    tot = {k: 0 for k in ("state_correct", "answer_correct", "action_correct", "refs_covered")}
+    tot = {k: 0 for k in ("answer_correct", "action_correct", "refs_covered")}
     dens = {k: 0 for k in tot}
     for ep in dataset.episodes:
-        rows = decisions.get(ep.episode_id, [])
-        target = dataset.targets.get(ep.episode_id)
+        rows = decisions.get(ep.id, [])
+        target = dataset.targets.get(ep.id)
         turns_out: list[dict[str, Any]] = []
-        by_turn = _decisions_by_turn(rows)
         for row in rows:
             entry = _base_turn_entry(row)
             t = target.turns.get(row["turn_id"]) if target else None
@@ -84,22 +78,27 @@ def score_exact(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) ->
                 entry["scored"] = False
                 turns_out.append(entry)
                 continue
-            if "state" in t:
-                dens["state_correct"] += 1
-                entry["state_correct"] = ok = _states_equal(d.get("state") or {}, t["state"] or {})
-                tot["state_correct"] += int(ok)
-            if t.get("expect_abstain"):
+            answer = d.get("answer") if isinstance(d.get("answer"), dict) else {}
+            if "answer" in t:
                 dens["answer_correct"] += 1
-                entry["answer_correct"] = ok = bool(d.get("abstain"))
+                want = t["answer"]
+                ok = (row["decision"] is not None and
+                      (_states_equal(answer, want) if isinstance(want, dict)
+                       else _values_equal(d.get("answer"), want)))
+                entry["answer_correct"] = ok
                 tot["answer_correct"] += int(ok)
-            if "answers" in t:
+            elif "answers" in t:
                 dens["answer_correct"] += 1
-                answer = (d.get("state") or {}).get("answer")
-                entry["answer_correct"] = ok = any(_values_equal(answer, a) for a in t["answers"])
+                entry["answer_correct"] = ok = (row["decision"] is not None and
+                    any(_values_equal(d.get("answer"), a) for a in t["answers"]))
+                tot["answer_correct"] += int(ok)
+            elif t.get("expect_abstain"):
+                dens["answer_correct"] += 1
+                entry["answer_correct"] = ok = row["decision"] is not None and d.get("answer") is None
                 tot["answer_correct"] += int(ok)
             if t.get("allowed_actions"):
                 dens["action_correct"] += 1
-                name = (d.get("action") or {}).get("name")
+                name = answer.get("next_step")
                 entry["action_correct"] = ok = name in t["allowed_actions"]
                 tot["action_correct"] += int(ok)
             if t.get("required_evidence"):
@@ -110,25 +109,25 @@ def score_exact(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) ->
             entry["scored"] = True
             turns_out.append(entry)
         decided = sum(1 for r in rows if r["decision"])
-        per_episode[ep.episode_id] = {
+        per_episode[ep.id] = {
             "turns": turns_out,
             "target_present": target is not None,
             "completion": _rate(decided, len(rows)),
         }
     return {
-        "scorer": "exact_v0",
+        "scorer": "exact",
         "per_episode": per_episode,
         "aggregate": {k: _rate(tot[k], dens[k]) for k in tot},
     }
 
 
-# ---------------------------------------------------------------- workflow_v0
+# ---------------------------------------------------------------- workflow
 
 def _visible_tags(ep: Episode, upto_turn: str, evidence_tags: dict[str, list[str]]) -> set[str]:
     tags: set[str] = set()
     for t in ep.turns:
-        tags |= {tag for e in t.evidence for tag in evidence_tags.get(e.evidence_id, [])}
-        if t.turn_id == upto_turn:
+        tags |= {tag for e in t.evidence for tag in evidence_tags.get(e.id, [])}
+        if t.id == upto_turn:
             break
     return tags
 
@@ -174,11 +173,11 @@ def _validate_transition(rules: list[dict], current: str, proposed: str, action_
 
 
 def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    """Target turn keys: state (subset: workflow_state/hypotheses/...), allowed_actions,
-    forbidden_actions, required_evidence, expect_abstain. Policy hidden.transitions
-    supplies from/to/when/allowed_actions; hidden.evidence_tags maps evidence ids
+    """Target turn keys: answer (subset: workflow_state/hypotheses/...), allowed_actions,
+    forbidden_actions, required_evidence, expect_abstain. eval.rules.transitions
+    supplies from/to/when/allowed_actions; rules.evidence_tags maps evidence ids
     to evaluator-only transition tags."""
-    hidden = dataset.policy.hidden or {}
+    hidden = dataset.eval_config.rules if dataset.eval_config else {}
     rules = hidden.get("transitions", [])
     evidence_tags = hidden.get("evidence_tags", {})
     per_episode: dict[str, Any] = {}
@@ -186,10 +185,10 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
            "abstain_correct": [0, 0], "refs_covered": [0, 0]}
     gv_count = 0
     for ep in dataset.episodes:
-        rows = decisions.get(ep.episode_id, [])
-        target = dataset.targets.get(ep.episode_id)
+        rows = decisions.get(ep.id, [])
+        target = dataset.targets.get(ep.id)
         turns_out: list[dict[str, Any]] = []
-        current = (dataset.policy.hidden or {}).get("initial_state") or (
+        current = hidden.get("initial_state") or (
             rules[0]["from"] if rules else None)
         cum = 0
         for i, row in enumerate(rows):
@@ -201,25 +200,26 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
                 turns_out.append(entry)
                 continue
             num = den = 0
-            want_state = t.get("state") or {}
+            want_state = t.get("answer") or {}
+            got = d.get("answer") if isinstance(d.get("answer"), dict) else {}
             if want_state.get("workflow_state"):
                 den += 1
-                num += int(d.get("state", {}).get("workflow_state") == want_state["workflow_state"])
+                num += int(got.get("workflow_state") == want_state["workflow_state"])
             if want_state.get("hypotheses"):
-                got_map = {h.get("label"): h.get("status") for h in (d.get("state", {}).get("hypotheses") or [])
+                got_map = {h.get("label"): h.get("status") for h in (got.get("hypotheses") or [])
                            if isinstance(h, dict)}
                 for label, status in want_state["hypotheses"].items():
                     den += 1
                     num += int(got_map.get(label) == status)
             if want_state.get("clinical_stage") is not None:
                 den += 1
-                num += int(d.get("state", {}).get("clinical_stage") == want_state["clinical_stage"])
+                num += int(got.get("clinical_stage") == want_state["clinical_stage"])
             entry["state_field_accuracy"] = _rate(num, den)
             agg["state_field"][0] += num
             agg["state_field"][1] += den
 
-            action_name = (d.get("action") or {}).get("name")
-            v = _validate_transition(rules, current or "", d.get("state", {}).get("workflow_state") or "",
+            action_name = got.get("next_step")
+            v = _validate_transition(rules, current or "", got.get("workflow_state") or "",
                                      action_name, _visible_tags(ep, row["turn_id"], evidence_tags))
             entry["transition_valid"] = bool(v["transition_valid"])
             agg["transition_valid"][0] += int(v["transition_valid"])
@@ -229,7 +229,7 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
                 gvs.append(f"forbidden_action:{action_name}")
             if t.get("expect_abstain"):
                 agg["abstain_correct"][1] += 1
-                ok = bool(d.get("abstain"))
+                ok = row["decision"] is not None and d.get("answer") is None
                 entry["abstain_correct"] = ok
                 agg["abstain_correct"][0] += int(ok)
             elif t.get("allowed_actions"):
@@ -246,21 +246,21 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
             gv_count += len(gvs)
             turn_ok = (row["decision"] is not None and den > 0 and num == den
                        and v["transition_valid"] and not gvs
-                       and (not t.get("expect_abstain") or d.get("abstain"))
+                       and (not t.get("expect_abstain") or d.get("answer") is None)
                        and (not t.get("allowed_actions") or action_name in t["allowed_actions"]))
             cum += int(turn_ok)
             entry["turn_ok"] = turn_ok
             entry["cumulative_success"] = _rate(cum, i + 1)
             entry["scored"] = True
             turns_out.append(entry)
-            current = d.get("state", {}).get("workflow_state") or current
-        per_episode[ep.episode_id] = {
+            current = got.get("workflow_state") or current
+        per_episode[ep.id] = {
             "turns": turns_out, "target_present": target is not None,
             "completion": _rate(sum(1 for r in rows if r["decision"]), len(rows)),
             "final_cumulative_success": turns_out[-1].get("cumulative_success") if turns_out else None,
         }
     return {
-        "scorer": "workflow_v0",
+        "scorer": "workflow",
         "per_episode": per_episode,
         "aggregate": {k: _rate(v[0], v[1]) for k, v in agg.items()},
         "guideline_violation_count": gv_count,
@@ -272,9 +272,9 @@ def score_workflow(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
 def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     per = {}
     for ep in dataset.episodes:
-        rows = decisions.get(ep.episode_id, [])
+        rows = decisions.get(ep.id, [])
         usage = [r["usage"] for r in rows if isinstance(r.get("usage"), dict)]
-        per[ep.episode_id] = {
+        per[ep.id] = {
             "completion": _rate(sum(1 for r in rows if r["decision"]), len(rows)),
             "terminations": sorted({r["termination"] for r in rows}),
             "model_calls": sum(r["model_calls"] for r in rows),
@@ -283,7 +283,7 @@ def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]])
     return {"scorer": "unscored", "per_episode": per, "aggregate": None}
 
 
-# ---------------------------------------------------------------- rocov2_v0
+# ---------------------------------------------------------------- rocov2
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -315,8 +315,8 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
               "cui_overlap": 0, "cui_predicted": 0, "cui_gold": 0,
               "refs_covered": 0, "refs_total": 0}
     for ep in dataset.episodes:
-        rows = decisions.get(ep.episode_id, [])
-        target = dataset.targets.get(ep.episode_id)
+        rows = decisions.get(ep.id, [])
+        target = dataset.targets.get(ep.id)
         turns_out: list[dict[str, Any]] = []
         for row in rows:
             entry = _base_turn_entry(row)
@@ -326,8 +326,8 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
                 turns_out.append(entry)
                 continue
             decision = row.get("decision") or {}
-            state = decision.get("state") if isinstance(decision.get("state"), dict) else {}
-            want = t.get("state") if isinstance(t.get("state"), dict) else {}
+            state = decision.get("answer") if isinstance(decision.get("answer"), dict) else {}
+            want = t.get("answer") if isinstance(t.get("answer"), dict) else {}
             predicted_tokens = Counter(_caption_tokens(state.get("caption")))
             gold_tokens = Counter(_caption_tokens(want.get("caption")))
             caption_overlap = sum((predicted_tokens & gold_tokens).values())
@@ -357,14 +357,14 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
             totals["cui_gold"] += len(gold_cuis)
             entry["scored"] = True
             turns_out.append(entry)
-        per_episode[ep.episode_id] = {
+        per_episode[ep.id] = {
             "turns": turns_out,
             "target_present": target is not None,
             "completion": _rate(sum(1 for r in rows if r.get("decision")), len(rows)),
         }
     caption = _prf(totals["caption_overlap"], totals["caption_predicted"], totals["caption_gold"])
     cui = _prf(totals["cui_overlap"], totals["cui_predicted"], totals["cui_gold"])
-    return {"scorer": "rocov2_v0", "per_episode": per_episode, "aggregate": {
+    return {"scorer": "rocov2", "per_episode": per_episode, "aggregate": {
         "caption_token_precision": caption["precision"],
         "caption_token_recall": caption["recall"],
         "caption_token_f1": caption["f1"],
@@ -375,9 +375,10 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
     }}
 
 
+
 REGISTRY: dict[str, Any] = {
-    "exact_v0": score_exact,
-    "workflow_v0": score_workflow,
+    "exact": score_exact,
+    "workflow": score_workflow,
     "unscored": score_unscored,
-    "rocov2_v0": score_rocov2,
+    "rocov2": score_rocov2,
 }

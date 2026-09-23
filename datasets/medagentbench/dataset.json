@@ -1,15 +1,11 @@
 {
-  "schema": "ama-dataset-v0",
+  "schema": "ama-dataset",
   "name": "medagentbench",
-  "version": "0.1",
-  "description": "Three unscored multi-turn FHIR patient replays derived during a MedAgentBench import",
   "splits": {
     "all": [
       "patient-S2703270",
       "patient-S6534835",
       "patient-S6550627"
     ]
-  },
-  "scorer": "unscored",
-  "license": "MedAgentBench (see upstream)"
+  }
 }

@@ -26,7 +26,7 @@ The subset uses `unscored` and contains no `targets.jsonl`. It reports completio
 
 ## Artifacts
 
-No external artifacts are included. Each FHIR-derived Evidence item has a compact textual representation and source locator.
+No external artifacts are included. Each FHIR-derived Evidence item has a compact textual representation; source locators are in provenance.jsonl.
 
 ## Limitations and reporting
 

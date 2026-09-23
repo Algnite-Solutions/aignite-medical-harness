@@ -12,7 +12,7 @@ It demonstrates scored multi-turn workflow reasoning: the model updates a thyroi
 
 ## Construction
 
-One synthetic patient forms one Episode. Three dated reports are released in chronological Turns. Evaluator-only transition tags are stored in `policy.hidden`.
+One synthetic patient forms one Episode. Three dated reports are released in chronological Turns. Evaluator-only transition tags are stored in `eval.json`.
 
 ## Size
 
@@ -22,7 +22,7 @@ One synthetic patient forms one Episode. Three dated reports are released in chr
 
 ## Scoring and targets
 
-The dataset has one target record and uses `workflow_v0` to score state fields, transitions, actions, and citations.
+The dataset has one target record and uses `workflow` to score answer fields, transitions, proposed next steps, and citations.
 
 ## Artifacts
 

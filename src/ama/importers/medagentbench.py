@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..dataset_card import write_dataset_cards
+from .dataset_writer import write_dataset
 
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?")
 DEFAULT_TASK_FILE = Path(
@@ -160,7 +161,7 @@ def import_medagentbench(source: Path, out: Path, fhir_base: str | None = None,
                         evs.append({
                             "evidence_id": eid,
                             "kind": f"fhir_{res['resourceType'].lower()}",
-                            "text": f"[FHIR {res['resourceType']} id={res.get('id')}] date={date}"
+                            "text": f"[FHIR {res['resourceType']}] date={date}"
                                     + (f" | {_resource_summary(res)}" if _resource_summary(res) else ""),
                             "artifact": None,
                             "source": f"fhir,{res['resourceType']},{res.get('id')}",
@@ -190,21 +191,9 @@ def import_medagentbench(source: Path, out: Path, fhir_base: str | None = None,
             except Exception as exc:
                 fhir_report["patients"].append({"mrn": mrn, "error": f"{type(exc).__name__}: {exc}"})
 
-    dataset = {
-        "schema": "ama-dataset-v0",
-        "name": out.name,
-        "version": "0.1",
-        "description": "MedAgentBench tasks (single-turn) "
-                       + ("+ FHIR patient timelines (multi-turn, unscored)" if fhir_base else ""),
-        "splits": {"all": [e["episode_id"] for e in episodes]},
-        "scorer": "exact_v0",
-        "license": "MedAgentBench (see upstream)",
-    }
-    (out / "dataset.json").write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out / "episodes.jsonl").write_text(
-        "\n".join(json.dumps(e, ensure_ascii=False) for e in episodes) + "\n", encoding="utf-8")
-    (out / "targets.jsonl").write_text(
-        "\n".join(json.dumps(t, ensure_ascii=False) for t in targets) + "\n", encoding="utf-8")
+    write_dataset(out, name=out.name, splits={"all": [e["episode_id"] for e in episodes]},
+                     episodes=episodes, targets=targets, scorer="exact",
+                     retain_times=False)
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -213,7 +202,7 @@ def import_medagentbench(source: Path, out: Path, fhir_base: str | None = None,
         "n_targets": len(targets),
         "excluded_no_mrn": excluded_no_mrn,
         "time_proxy": {"single_turn_without_timestamp": no_timestamp,
-                       "rule": "turn time = timestamp parsed from task context; else null (documented, not guessed)"},
+                       "rule": "source dates remain in observation/evidence text; no availability time is inferred"},
         "fhir": fhir_report,
         "note": "derived replay scores must not be reported as original MedAgentBench benchmark scores",
     }
@@ -230,7 +219,7 @@ def import_medagentbench(source: Path, out: Path, fhir_base: str | None = None,
         episodes=len(episodes),
         turns=sum(len(e["turns"]) for e in episodes),
         evidence=sum(len(t["evidence"]) for e in episodes for t in e["turns"]),
-        scorer="exact_v0",
+        scorer="exact",
         targets=len(targets),
         limitations_en="FHIR replays have no turn-level gold targets. Derived replay results must not be reported as original MedAgentBench scores.",
         limitations_zh="FHIR 回放没有逐轮 gold target。派生回放结果不得作为原始 MedAgentBench 成绩报告。",

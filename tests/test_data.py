@@ -1,96 +1,80 @@
-"""AMA Dataset v0 schema, loader, validator round-trip tests."""
+"""Dataset schema and evaluator-only data boundary."""
 import json
 
 import pytest
 
-from ama.data import Episode, load_dataset, validate_dataset
+from ama.data import load_dataset, validate_dataset
 
 
-def make_dataset(tmp_path, episodes, dataset_extra=None, targets=None, policy=None):
-    ds = {"schema": "ama-dataset-v0", "name": "t", "version": "0.1",
-          "splits": {"all": [e["episode_id"] for e in episodes]}, "scorer": "unscored"}
-    ds.update(dataset_extra or {})
-    (tmp_path / "dataset.json").write_text(json.dumps(ds), encoding="utf-8")
-    (tmp_path / "episodes.jsonl").write_text(
-        "\n".join(json.dumps(e, ensure_ascii=False) for e in episodes) + "\n", encoding="utf-8")
+def write_dataset(root, episodes, targets=None, splits=None):
+    (root / "dataset.json").write_text(json.dumps({"schema": "ama-dataset", "name": "test",
+                                                  "splits": splits or {"all": [e["id"] for e in episodes]}}))
+    (root / "episodes.jsonl").write_text("\n".join(json.dumps(e) for e in episodes) + "\n")
     if targets is not None:
-        (tmp_path / "targets.jsonl").write_text(
-            "\n".join(json.dumps(t, ensure_ascii=False) for t in targets) + "\n", encoding="utf-8")
-    if policy is not None:
-        (tmp_path / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
-    return tmp_path
+        (root / "targets.jsonl").write_text("\n".join(json.dumps(t) for t in targets) + "\n")
+    return root
 
 
-EP_1TURN = {"episode_id": "e1", "subject_id": "s1", "metadata": {},
-            "turns": [{"turn_id": "t1", "time": None, "message": "hello",
-                       "evidence": [{"evidence_id": "v1", "kind": "lab", "text": "x",
-                                     "artifact": None, "source": "s", "metadata": {}}]}]}
-EP_3TURN = {"episode_id": "e2", "subject_id": "s2", "metadata": {},
-            "turns": [
-                {"turn_id": "t1", "time": "2026-01-01T09:00:00+00:00", "message": "a", "evidence": []},
-                {"turn_id": "t2", "time": "2026-01-03T09:00:00+00:00", "message": "b", "evidence": []},
-                {"turn_id": "t3", "time": "2026-01-06T09:00:00+00:00", "message": "c", "evidence": []},
-            ]}
+def example():
+    return {"id": "ep", "turns": [
+        {"id": "t1", "observation": "History", "evidence": [{"id": "hpi", "text": "pain"}]},
+        {"id": "t2", "observation": "Labs", "evidence": [{"id": "lab", "type": "lab", "text": "WBC 14"}]},
+    ]}
 
 
-def test_roundtrip_single_and_multi_turn(tmp_path):
-    d = make_dataset(tmp_path, [EP_1TURN, EP_3TURN])
-    assert validate_dataset(d) == []
-    ds = load_dataset(d, with_targets=True)
-    assert [e.episode_id for e in ds.episodes] == ["e1", "e2"]
-    assert ds.episode("e1").turns[0].time is None  # single-turn may omit time
-    assert len(ds.episode("e2").turns) == 3
+def test_minimal_multiturn_needs_no_fake_time(tmp_path):
+    root = write_dataset(tmp_path, [example()])
+    assert validate_dataset(root) == []
+    episode = load_dataset(root).episodes[0]
+    assert episode.id == "ep" and episode.turns[1].available_at is None
+    assert episode.turns[1].evidence[0].type == "lab"
 
 
-def test_validator_catches_structural_errors(tmp_path):
-    # non-monotonic multi-turn
-    bad = json.loads(json.dumps(EP_3TURN))
-    bad["turns"][1]["time"] = "2025-01-01T00:00:00+00:00"
-    errs = validate_dataset(make_dataset(tmp_path, [bad]))
-    assert any("non-monotonic" in e for e in errs)
-    # null time in multi-turn
-    (tmp_path2 := tmp_path / "x")
-    tmp_path2.mkdir()
-    bad2 = json.loads(json.dumps(EP_3TURN))
-    bad2["turns"][1]["time"] = None
-    assert any("null turn time" in e for e in validate_dataset(make_dataset(tmp_path2, [bad2])))
+def test_unknown_schema_rejected(tmp_path):
+    root = write_dataset(tmp_path, [example()])
+    (root / "dataset.json").write_text('{"schema":"unknown","name":"old","splits":{}}')
+    assert "unsupported dataset schema" in validate_dataset(root)[0]
 
 
-def test_validator_catches_ids_splits_targets_artifacts(tmp_path):
-    d = tmp_path / "a"
-    d.mkdir()
-    dup = [json.loads(json.dumps(EP_1TURN)), json.loads(json.dumps(EP_1TURN))]
-    errs = validate_dataset(make_dataset(d, dup))
-    assert any("duplicate episode ids" in e for e in errs)
-
-    d = tmp_path / "b"
-    d.mkdir()
-    ep = json.loads(json.dumps(EP_1TURN))
-    ep["turns"][0]["evidence"][0]["artifact"] = "../escape.png"
-    make_dataset(d, [ep])
-    assert any("unsafe artifact" in e for e in validate_dataset(d))
-
-    d2 = tmp_path / "c"
-    d2.mkdir()
-    make_dataset(d2, [EP_1TURN], dataset_extra={"splits": {"dev": ["ghost"]}})
-    assert any("unknown episode 'ghost'" in e for e in validate_dataset(d2))
-
-    d3 = tmp_path / "d"
-    d3.mkdir()
-    make_dataset(d3, [EP_1TURN], targets=[{"episode_id": "ghost", "turns": {}}])
-    assert any("targets reference unknown episode" in e for e in validate_dataset(d3))
-
-    d4 = tmp_path / "e"
-    d4.mkdir()
-    ep2 = json.loads(json.dumps(EP_1TURN))
-    ep2["turns"][0]["evidence"][0]["text"] = ""
-    make_dataset(d4, [ep2])
-    assert any("neither text nor artifact" in e for e in validate_dataset(d4))
+def test_duplicate_ids_and_unknown_refs(tmp_path):
+    ep = example()
+    ep["turns"][1]["id"] = "t1"
+    ep["turns"][1]["evidence"][0]["id"] = "hpi"
+    root = write_dataset(tmp_path, [ep], targets=[{"id": "ep", "turns": {"missing": {}}}],
+                         splits={"all": ["ep", "absent"]})
+    errors = validate_dataset(root)
+    assert any("duplicate turn" in e for e in errors)
+    assert any("duplicate evidence" in e for e in errors)
+    assert any("unknown episode" in e for e in errors)
+    assert any("unknown turn" in e for e in errors)
 
 
-def test_with_targets_false_never_parses_targets(tmp_path):
-    d = make_dataset(tmp_path, [EP_1TURN],
-                     targets=[{"episode_id": "e1", "turns": {"t1": {"answers": ["SECRET"]}}}])
-    ds = load_dataset(d, with_targets=False)
-    assert ds.targets == {}
-    assert validate_dataset(d) == []  # validator (eval-side) does see them
+def test_file_safety_and_missing_content(tmp_path):
+    ep = example()
+    ep["turns"][0]["evidence"] = [{"id": "x", "file": "../escape.png"}]
+    assert any("unsafe file" in e for e in validate_dataset(write_dataset(tmp_path, [ep])))
+    ep["turns"][0]["evidence"] = [{"id": "x"}]
+    assert "neither text nor file" in validate_dataset(write_dataset(tmp_path, [ep]))[0]
+
+
+def test_true_timestamps_must_be_monotonic_when_present(tmp_path):
+    ep = example()
+    ep["turns"][0]["available_at"] = "2026-01-03T00:00:00Z"
+    ep["turns"][1]["available_at"] = "2026-01-02T00:00:00Z"
+    assert any("non-monotonic" in e for e in validate_dataset(write_dataset(tmp_path, [ep])))
+
+
+def test_run_loader_never_reads_evaluator_files(tmp_path, monkeypatch):
+    root = write_dataset(tmp_path, [example()], targets=[{"id": "ep", "turns": {"t1": {"answer": "x"}}}])
+    (root / "eval.json").write_text('{"scorer":"exact"}')
+    (root / "provenance.jsonl").write_text('private source\n')
+    original = type(root).read_text
+
+    def guarded(path, *args, **kwargs):
+        if path.name in {"targets.jsonl", "eval.json", "provenance.jsonl"}:
+            raise AssertionError(f"run opened {path.name}")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(root), "read_text", guarded)
+    ds = load_dataset(root, with_targets=False)
+    assert ds.targets == {} and ds.eval_config is None

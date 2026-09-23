@@ -1,8 +1,4 @@
-"""Model backends: ScriptedModel (offline) + OpenAI-compatible Chat Completions.
-
-Exactly three tools: list_evidence, read_evidence, submit_decision.
-Model configs live in ~/.config/ama/models.json and/or project ./ama.json (project wins).
-"""
+"""Model transports. Interaction protocols own prompts and response parsing."""
 from __future__ import annotations
 
 import json
@@ -13,45 +9,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-from .data import Decision
-
-TOOLS = [
-    {"type": "function", "function": {
-        "name": "list_evidence",
-        "description": "列出截至当前轮可见证据的元数据（编号、kind、来源；不含全文）。",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    }},
-    {"type": "function", "function": {
-        "name": "read_evidence",
-        "description": "读取一条可见证据的全文与来源定位。引用前必须先读取。",
-        "parameters": {"type": "object",
-                       "properties": {"evidence_id": {"type": "string"}},
-                       "required": ["evidence_id"]},
-    }},
-    {"type": "function", "function": {
-        "name": "submit_decision",
-        "description": "提交本轮决策（每轮恰好一次）。证据不足以更新判断时 abstain=true 且不带 action/citations/state 内容。",
-        "parameters": {"type": "object",
-                       "properties": {"decision": {
-                           "type": "object",
-                           "properties": {
-                               "turn_id": {"type": "string"},
-                               "state": {"type": "object"},
-                               "action": {"type": ["object", "null"], "properties": {
-                                   "name": {"type": "string"},
-                                   "arguments": {"type": "object"},
-                               }, "required": ["name"]},
-                               "citations": {"type": "array", "items": {"type": "string"}},
-                               "abstain": {"type": "boolean"},
-                               "note": {"type": "string"},
-                           },
-                           "required": ["turn_id", "abstain"],
-                       }},
-                       "required": ["decision"]},
-    }},
-]
+from pydantic import BaseModel, ConfigDict
 
 
 class ModelError(Exception):
@@ -77,7 +35,7 @@ class ModelClient(Protocol):
     name: str
     last_usage: dict[str, Any] | None
 
-    def next(self, messages: list[Message]) -> Any: ...
+    def next(self, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> Any: ...
 
 
 # ---------------------------------------------------------------- scripted
@@ -90,7 +48,7 @@ class ScriptedModel:
         self.last_usage = None
         self._queue: deque[Any] = deque(actions)
 
-    def next(self, messages: list[Message]) -> Any:
+    def next(self, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> Any:
         if not self._queue:
             raise ModelError(f"script exhausted for {self.name}", kind="exhausted")
         item = self._queue.popleft()
@@ -100,59 +58,24 @@ class ScriptedModel:
 
 
 def load_episode_scripts(script_dir: Path) -> dict[str, list[Any]]:
-    """<script_dir>/<episode_id>.json = {"episode_id", "actions": [...]} (3-tool actions)."""
+    """<script_dir>/<episode_id>.json = {"episode_id", "actions": [...]} ."""
     scripts: dict[str, list[Any]] = {}
     for path in sorted(Path(script_dir).glob("*.json")):
         raw = json.loads(path.read_text(encoding="utf-8"))
-        scripts[raw["episode_id"]] = [parse_action(a) for a in raw.get("actions", [])]
+        scripts[raw["episode_id"]] = raw.get("actions", [])
     return scripts
-
-
-# ---------------------------------------------------------------- actions
-
-class ListEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    type: str = "list_evidence"
-
-
-class ReadEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    type: str = "read_evidence"
-    evidence_id: str
-
-
-class SubmitDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    type: str = "submit_decision"
-    decision: Decision
-
-
-def parse_action(obj: Any) -> ListEvidence | ReadEvidence | SubmitDecision:
-    """Validate an action payload (dict or already-typed instance); raises ValueError."""
-    if isinstance(obj, (ListEvidence, ReadEvidence, SubmitDecision)):
-        return obj
-    try:
-        if isinstance(obj, dict):
-            t = obj.get("type")
-            if t == "list_evidence":
-                return ListEvidence.model_validate(obj)
-            if t == "read_evidence":
-                return ReadEvidence.model_validate(obj)
-            if t == "submit_decision":
-                return SubmitDecision.model_validate(obj)
-    except ValidationError as exc:
-        raise ValueError(f"invalid action fields: {exc}") from exc
-    raise ValueError(f"unknown action: {str(obj)[:120]}")
 
 
 # ---------------------------------------------------------------- OpenAI-compatible
 
 class OpenAICompatModel:
-    """Chat Completions with function tools (stdlib urllib). One tool call per turn."""
+    """OpenAI-compatible Chat Completions using tools or plain JSON text."""
 
     def __init__(self, name: str, base_url: str, model: str, api_key: str,
                  request_timeout: float = 30.0, temperature: float = 0.0,
-                 wire: str = "openai") -> None:
+                 wire: str = "openai",
+                 max_tokens: int | None = None,
+                 chat_template_kwargs: dict[str, Any] | None = None) -> None:
         if wire not in ("openai", "openai_compact_image"):
             raise ValueError(f"unknown wire format: {wire!r}")
         self.name = name
@@ -162,6 +85,8 @@ class OpenAICompatModel:
         self.request_timeout = request_timeout
         self.temperature = temperature
         self.wire = wire
+        self.max_tokens = max_tokens
+        self.chat_template_kwargs = chat_template_kwargs
         self.last_usage: dict[str, Any] | None = None
 
     @staticmethod
@@ -173,8 +98,7 @@ class OpenAICompatModel:
         world observations, prior actions and their observations, image descriptors, and
         every successfully read image so far. Messages after the last image are kept
         verbatim (the gateway accepts tool pairs that FOLLOW an image user message).
-        Agent-side read-before-cite gating is unchanged; only the wire transcript differs.
-        The appended instruction is task-neutral: it must not name any dataset's fields."""
+        Agent-side read-before-cite gating is unchanged; only the wire transcript differs."""
         image_indexes = [i for i, m in enumerate(messages)
                          if m.role == "user" and isinstance(m.content, list)
                          and any(isinstance(part, dict) and part.get("type") == "image_url"
@@ -208,9 +132,8 @@ class OpenAICompatModel:
             elif m.role == "tool":
                 transcript.append(f"Observation: {m.content}")
         transcript.append(
-            "The evidence above was delivered after a successful read_evidence call, and the "
-            "requested image(s) are attached. Do not call read_evidence again for evidence "
-            "already read; submit your decision for the current turn with submit_decision.")
+            "The requested image(s) are attached after successful evidence reads. "
+            "Do not read those IDs again. When ready, return a JSON Decision for the current turn.")
         merged = Message(role="user",
                          content=[{"type": "text", "text": "\n\n".join(t for t in transcript if t)}]
                          + image_parts)
@@ -232,9 +155,15 @@ class OpenAICompatModel:
                 wire.append({"role": m.role, "content": m.content})
         return wire
 
-    def next(self, messages: list[Message]) -> Any:
+    def next(self, messages: list[Message], tools: list[dict[str, Any]] | None = None) -> Any:
         payload = {"model": self.model, "messages": self._to_wire(messages),
-                   "tools": TOOLS, "temperature": self.temperature}
+                   "temperature": self.temperature}
+        if tools:
+            payload["tools"] = tools
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        if self.chat_template_kwargs is not None:
+            payload["chat_template_kwargs"] = self.chat_template_kwargs
         req = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -259,27 +188,7 @@ class OpenAICompatModel:
             choice = data["choices"][0]["message"]
         except (KeyError, IndexError):
             raise ModelError(f"malformed response: {json.dumps(data, ensure_ascii=False)[:300]}", kind="bad_response") from None
-        tool_calls = choice.get("tool_calls")
-        if tool_calls:
-            fn = tool_calls[0].get("function") or {}
-            args = fn.get("arguments") or "{}"
-            try:
-                payload_args = json.loads(args)
-                payload_args["type"] = fn["name"]
-                return parse_action(payload_args)
-            except json.JSONDecodeError:
-                return args  # unparsable -> visible invalid-action in the loop
-            except Exception:
-                # schema-invalid payload: echo it back WITH the tool name attached, so the
-                # loop's validation error names the exact offending field (a precise repair
-                # signal instead of a generic 'unknown action'); never crash the run (spec §5)
-                try:
-                    echoed = json.loads(args)
-                    echoed["type"] = fn.get("name", "")
-                    return json.dumps(echoed, ensure_ascii=False)
-                except Exception:
-                    return args
-        return choice.get("content") or ""
+        return choice
 
 
 # ---------------------------------------------------------------- config + factory
@@ -292,6 +201,9 @@ class ModelConfig(BaseModel):
     model: str | None = None
     api_key_env: str = "GLM_API_KEY"
     temperature: float = 0.0
+    max_tokens: int | None = None
+    chat_template_kwargs: dict[str, Any] | None = None
+    context_window: int | None = None
     # wire: how the conversation is serialized for the provider.
     #   "openai"               — standard tool-call pairing (default)
     #   "openai_compact_image" — for gateways that reject assistant(tool_call) -> tool ->
@@ -353,7 +265,8 @@ def make_model_factory(model_name: str, request_timeout: float = 60.0):
             return OpenAICompatModel(
                 name=f"{cfg.model}:{episode_id}", base_url=cfg.base_url, model=cfg.model,
                 api_key=api_key, request_timeout=request_timeout, temperature=cfg.temperature,
-                wire=cfg.wire,
+                wire=cfg.wire, max_tokens=cfg.max_tokens,
+                chat_template_kwargs=cfg.chat_template_kwargs,
             )
 
         return openai_factory

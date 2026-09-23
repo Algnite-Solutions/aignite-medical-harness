@@ -12,7 +12,7 @@
 
 ## 构造方法
 
-一个合成患者构成一个 Episode，三份带时间的报告按时间顺序分三个 Turn 释放。仅供 evaluator 使用的迁移标签保存在 `policy.hidden`。
+一个合成患者构成一个 Episode，三份带时间的报告按时间顺序分三个 Turn 释放。仅供 evaluator 使用的迁移标签保存在 `eval.json`。
 
 ## 规模
 
@@ -22,7 +22,7 @@
 
 ## 评分与 targets
 
-数据集包含一条 target 记录，使用 `workflow_v0` 评估状态字段、迁移、动作和引用。
+数据集包含一条 target 记录，使用 `workflow` 评估 answer 字段、迁移、建议下一步和引用。
 
 ## Artifacts
 

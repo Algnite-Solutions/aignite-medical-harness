@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -45,9 +46,9 @@ class ShellInteraction:
 
     def on_turn_start(self, index, total, turn, visible_meta) -> None:
         self._label = f"(ama) {self.episode_id} t{index + 1}/{total} "
-        print(f"\n[{self.episode_id} 第{index + 1}/{total}轮 {turn.turn_id}] {turn.message}")
+        print(f"\n[{self.episode_id} 第{index + 1}/{total}轮 {turn.id}] {turn.observation or ''}")
         for m in visible_meta:
-            print(f"  新增证据: {m['evidence_id']} ({m['kind']})")
+            print(f"  新增证据: {m['id']} ({m['type']})")
         self.trace_lines = []
         self._decision = None
 
@@ -130,10 +131,7 @@ class ShellInteraction:
         if decision is None:
             print(f"  本轮未获得决策（{note or '见 trace'}），按真实轨迹进入下一轮。")
         else:
-            print(f"  decision: workflow_state={decision.state.get('workflow_state')} "
-                  f"abstain={decision.abstain} action="
-                  f"{decision.action.name if decision.action else None} "
-                  f"citations={decision.citations}")
+            print(f"  decision: answer={decision.answer!r} citations={decision.citations}")
 
     def wait_next(self) -> bool:
         return self._menu("next")
@@ -142,17 +140,19 @@ class ShellInteraction:
 # ---------------------------------------------------------------- run / eval orchestration
 
 def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_ids: list[str] | None,
-                 runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any]) -> Path:
+                 runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any],
+                 protocol: str = "direct_decision", instruction: str = "") -> Path:
     from .agent import Interaction, run_episode
-    from .data import load_dataset, resolve_dataset_dir
+    from .data import load_dataset, resolve_dataset_dir, validate_visible_files
     from .model import make_model_factory, resolve_model_config
     from .recorder import Budget, Recorder, TraceConfig
 
     dataset_dir = resolve_dataset_dir(dataset_dir)
     dataset = load_dataset(dataset_dir, with_targets=False)  # run NEVER opens targets.jsonl
+    validate_visible_files(dataset)
     if episode_ids:
         wanted = list(dict.fromkeys(episode_ids))
-        known = {e.episode_id: e for e in dataset.episodes}
+        known = {e.id: e for e in dataset.episodes}
         missing = [eid for eid in wanted if eid not in known]
         if missing:
             raise KeyError(f"episodes not found: {missing}")
@@ -167,24 +167,30 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
                     max_retries=budget_args.get("max_retries", 1))
     resolved = resolve_model_config(model_name)
     recorder = Recorder(runs_root, name=dataset.info.name, model_name=model_name,
-                        dataset_dir=dataset_dir, episode_ids=[e.episode_id for e in episodes],
+                        dataset_dir=dataset_dir, episode_ids=[e.id for e in episodes],
                         trace=TraceConfig(), budget=budget, interactive=interactive,
+                        experiment={"protocol": protocol,
+                                    "instruction": instruction,
+                                    "instruction_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest()},
                         model_info={"alias": model_name, "type": resolved.type,
                                     "provider_model": resolved.model,
                                     "base_url": resolved.base_url,
                                     "wire": resolved.wire,
-                                    "temperature": resolved.temperature})
+                                    "temperature": resolved.temperature,
+                                    "max_tokens": resolved.max_tokens,
+                                    "chat_template_kwargs": resolved.chat_template_kwargs,
+                                    "context_window": resolved.context_window})
 
     summaries: list[dict[str, Any]] = []
     for ep in episodes:
-        model = factory(ep.episode_id)
+        model = factory(ep.id)
         interaction: Interaction = Interaction()
         if interactive:
-            interaction = ShellInteraction(ep.episode_id,
+            interaction = ShellInteraction(ep.id,
                                             note_fn=lambda **kw: recorder.log("operator_note",
-                                                                              episode_id=ep.episode_id, **kw))
+                                                                              episode_id=ep.id, **kw))
         announce = (lambda m: print(m, flush=True)) if verbose else None
-        s = run_episode(ep, model, recorder, public_policy=dataset.policy.public,
+        s = run_episode(ep, model, recorder, protocol=protocol, instruction=instruction,
                         interaction=interaction, announce=announce)
         s.pop("rows")
         summaries.append(s)
@@ -208,13 +214,16 @@ def _eval_run(run_dir: Path, scorer_override: str | None = None) -> int:
     run_dir = Path(run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     dataset = load_dataset(Path(manifest["dataset_dir"]), with_targets=True)  # eval reads targets
+    selected_ids = set(manifest.get("episode_ids") or [])
+    if selected_ids:
+        dataset.episodes = [ep for ep in dataset.episodes if ep.id in selected_ids]
     decisions: dict[str, list[dict[str, Any]]] = {}
     for line in (run_dir / "decisions.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
             row = json.loads(line)
             decisions.setdefault(row["episode_id"], []).append(row)
 
-    scorer_name = scorer_override or dataset.info.scorer or "unscored"
+    scorer_name = scorer_override or (dataset.eval_config.scorer if dataset.eval_config else "unscored")
     fn = scorer_mod.REGISTRY.get(scorer_name)
     if fn is None:
         print(f"unknown scorer '{scorer_name}' (registry: {list(scorer_mod.REGISTRY)})")
@@ -227,8 +236,8 @@ def _eval_run(run_dir: Path, scorer_override: str | None = None) -> int:
         "model": manifest["model"],
         "scorer": scorer_name,
         "targets_sha256": sha256_file(targets_path) if targets_path.exists() else None,
-        "policy_sha256": sha256_file(Path(manifest["dataset_dir"]) / "policy.json")
-        if (Path(manifest["dataset_dir"]) / "policy.json").exists() else None,
+        "eval_sha256": sha256_file(Path(manifest["dataset_dir"]) / "eval.json")
+        if (Path(manifest["dataset_dir"]) / "eval.json").exists() else None,
         "scored": result,
         "operational": json.loads((run_dir / "metrics.json").read_text(encoding="utf-8")).get("operational"),
     }
@@ -240,7 +249,11 @@ def _eval_run(run_dir: Path, scorer_override: str | None = None) -> int:
 
 
 def _fmt(r: Any) -> str:
-    if not isinstance(r, dict) or not r.get("den"):
+    if not isinstance(r, dict):
+        return "N/A" if r is None else str(r)
+    if "den" not in r:
+        return json.dumps(r, ensure_ascii=False, separators=(",", ":"))
+    if not r.get("den"):
         return "N/A"
     return f"{r.get('num', 0)}/{r['den']}"
 
@@ -274,7 +287,8 @@ def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[s
         keys = [k for k in ("state_correct", "answer_correct", "action_correct", "refs_covered",
                             "state_field_accuracy", "transition_valid", "abstain_correct",
                             "caption_token_precision", "caption_token_recall", "caption_token_f1",
-                            "cui_precision", "cui_recall", "cui_f1")
+                            "cui_precision", "cui_recall", "cui_f1",
+                            "primary_diagnosis", "diagnosis_correct", "confidence")
                 if any(k in t for t in scored)]
         if keys:
             lines.append("| turn | " + " | ".join(keys) + " | violations |")
@@ -293,7 +307,8 @@ def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[s
                              f" | {len(t.get('guideline_violations', []))} |")
         else:
             for t in ep["turns"]:
-                lines.append(f"- {t['turn_id']}: submitted={t['submitted']} term={t['turn_termination']}")
+                lines.append(f"- {t['turn_id']}: submitted={t['submitted']} "
+                             f"term={t.get('turn_termination', 'unknown')}")
         if ep.get("final_cumulative_success"):
             lines.append(f"\ncumulative success: {_fmt(ep['final_cumulative_success'])}")
         lines.append("")
@@ -311,21 +326,19 @@ def _inspect(dataset_dir: Path, episode_id: str | None) -> int:
 
     dataset_dir = resolve_dataset_dir(dataset_dir)
     ds = load_dataset(dataset_dir, with_targets=False)
-    print(json.dumps({k: v for k, v in ds.info.model_dump().items()}, ensure_ascii=False, indent=2))
+    print(json.dumps(ds.info.model_dump(by_alias=True), ensure_ascii=False, indent=2))
     print(f"episodes: {len(ds.episodes)}  splits: {list(ds.info.splits)}  "
           f"targets: {'present (evaluator-only, not shown)' if (dataset_dir / 'targets.jsonl').exists() else 'absent'}")
-    if ds.policy.public:
-        print("policy.public keys:", list(ds.policy.public))
     for ep in ds.episodes:
-        if episode_id and ep.episode_id != episode_id:
+        if episode_id and ep.id != episode_id:
             continue
-        print(f"\n== {ep.episode_id} (subject {ep.subject_id}, {len(ep.turns)} turns)")
+        print(f"\n== {ep.id} ({len(ep.turns)} turns)")
         for t in ep.turns:
-            print(f"  {t.turn_id} @ {t.time} | evidence: {[e.evidence_id for e in t.evidence]}")
-            print(f"    {t.message[:100]}")
+            print(f"  {t.id} @ {t.available_at} | evidence: {[e.id for e in t.evidence]}")
+            print(f"    {(t.observation or '')[:100]}")
             for e in t.evidence:
-                preview = e.text[:80].replace("\n", " ") if e.text else f"<artifact {e.artifact}>"
-                print(f"      {e.evidence_id} [{e.kind}]: {preview}")
+                preview = e.text[:80].replace("\n", " ") if e.text else f"<file {e.file}>"
+                print(f"      {e.id} [{e.type}]: {preview}")
     return 0
 
 
@@ -350,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--interactive", action="store_true")
     r.add_argument("--runs-root", default="runs")
     r.add_argument("--verbose", action="store_true")
+    r.add_argument("--protocol", choices=["direct_decision", "tool_agent"], default="direct_decision")
+    r.add_argument("--instruction-file", type=Path,
+                   help="task-specific model instruction, copied into the run manifest")
     r.add_argument("--max-model-calls", type=int, default=60)
     r.add_argument("--per-turn-model-calls", type=int, default=15)
     r.add_argument("--request-timeout", type=float, default=60.0,
@@ -393,19 +409,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "inspect":
         try:
             return _inspect(Path(args.dataset_dir), args.episode)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             print(f"ERROR: {exc}")
             return 1
 
     if args.cmd == "run":
         try:
+            instruction = args.instruction_file.read_text(encoding="utf-8") if args.instruction_file else ""
             _run_dataset(Path(args.dataset_dir), args.model, args.split, args.episodes,
                          Path(args.runs_root), args.interactive, args.verbose,
                          {"max_model_calls": args.max_model_calls,
                           "per_turn_model_calls": args.per_turn_model_calls,
                           "deadline_seconds": args.deadline_seconds,
                           "max_retries": args.max_retries,
-                          "request_timeout": args.request_timeout})
+                          "request_timeout": args.request_timeout},
+                         protocol=args.protocol, instruction=instruction)
         except FileNotFoundError as exc:
             print(f"ERROR: {exc}")
             return 1

@@ -1,0 +1,7 @@
+诊疗流程节点（decision.answer.workflow_state 取值）：initial_imaging → advanced_imaging → pathology → staging → treatment_planning。
+处于 initial_imaging（通往 advanced_imaging）时可考虑的动作：order_contrast_imaging、order_mri。
+处于 initial_imaging（通往 pathology）时可考虑的动作：order_biopsy、order_fna。
+处于 advanced_imaging（通往 pathology）时可考虑的动作：order_biopsy、order_fna。
+处于 pathology（通往 staging）时可考虑的动作：complete_staging_workup、order_tnm_staging。
+处于 staging（通往 treatment_planning）时可考虑的动作：start_treatment_planning、mdt_review。
+（迁移的完整前置条件由评测端校验；不要编造列表之外的节点名。）

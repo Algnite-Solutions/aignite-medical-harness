@@ -137,7 +137,7 @@ class Recorder:
         self.budget = budget
         self.model_name = model_name
         self.dataset_dir = Path(dataset_dir).expanduser().resolve()
-        # hash only model-visible dataset files — NEVER targets.jsonl
+        # Hash only model-visible input; never read evaluator or provenance files.
         self.manifest = {
             "run_id": self.run_id,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -152,7 +152,8 @@ class Recorder:
             "code_version": code_version(),
             "dependencies": dependency_versions(),
             "dataset_hashes": {
-                p.name: sha256_file(p) for p in sorted(self.dataset_dir.glob("*.json*")) if p.name != "targets.jsonl"
+                name: sha256_file(self.dataset_dir / name)
+                for name in ("dataset.json", "episodes.jsonl")
             },
             "experiment": experiment,
             "trace": {"save_model_context": trace.save_model_context, "save_evidence_text": trace.save_evidence_text},

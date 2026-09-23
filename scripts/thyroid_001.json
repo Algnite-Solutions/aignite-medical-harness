@@ -1,9 +1,11 @@
-{"episode_id": "thyroid_001", "actions": [
-  {"type": "list_evidence"},
-  {"type": "read_evidence", "evidence_id": "ev-us-001"},
-  {"type": "submit_decision", "decision": {"turn_id": "t1", "state": {"workflow_state": "initial_imaging", "hypotheses": [{"label": "甲状腺恶性肿瘤", "status": "possible", "evidence_refs": ["ev-us-001"]}]}, "action": {"name": "order_contrast_imaging", "arguments": {"target": "颈部增强CT"}}, "citations": ["ev-us-001"], "abstain": false, "note": ""}},
-  {"type": "read_evidence", "evidence_id": "ev-ct-001"},
-  {"type": "submit_decision", "decision": {"turn_id": "t2", "state": {"workflow_state": "advanced_imaging", "hypotheses": [{"label": "甲状腺恶性肿瘤", "status": "supported", "evidence_refs": ["ev-us-001", "ev-ct-001"]}]}, "action": {"name": "order_fna", "arguments": {}}, "citations": ["ev-ct-001"], "abstain": false, "note": ""}},
-  {"type": "read_evidence", "evidence_id": "ev-path-001"},
-  {"type": "submit_decision", "decision": {"turn_id": "t3", "state": {"workflow_state": "pathology", "hypotheses": [{"label": "甲状腺乳头状癌", "status": "confirmed", "evidence_refs": ["ev-path-001"]}]}, "action": {"name": "complete_staging_workup", "arguments": {}}, "citations": ["ev-path-001"], "abstain": false, "note": ""}}
-]}
+{
+  "episode_id": "thyroid_001",
+  "actions": [
+    {"type": "read_evidence", "id": "ev-us-001"},
+    {"turn_id": "t1", "answer": {"workflow_state": "initial_imaging", "next_step": "order_contrast_imaging", "hypotheses": [{"label": "甲状腺恶性肿瘤", "status": "possible"}]}, "citations": ["ev-us-001"]},
+    {"type": "read_evidence", "id": "ev-ct-001"},
+    {"turn_id": "t2", "answer": {"workflow_state": "advanced_imaging", "next_step": "order_fna", "hypotheses": [{"label": "甲状腺恶性肿瘤", "status": "supported"}]}, "citations": ["ev-ct-001"]},
+    {"type": "read_evidence", "id": "ev-path-001"},
+    {"turn_id": "t3", "answer": {"workflow_state": "pathology", "next_step": "complete_staging_workup", "hypotheses": [{"label": "甲状腺乳头状癌", "status": "confirmed"}]}, "citations": ["ev-path-001"]}
+  ]
+}

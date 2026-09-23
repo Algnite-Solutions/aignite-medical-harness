@@ -1,0 +1,1 @@
+For every image, submit answer.caption as a string and answer.cuis as a list of UMLS CUI strings.

@@ -26,7 +26,7 @@
 
 ## Artifacts
 
-不包含外部 artifact。每条 FHIR 派生 Evidence 都有简短文本表示和来源定位。
+不包含外部 artifact。每条 FHIR 派生 Evidence 都有简短文本表示；来源定位单独保存在 provenance.jsonl。
 
 ## 限制与报告口径
 

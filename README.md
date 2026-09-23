@@ -8,7 +8,7 @@ AMA is a minimal research harness for evaluating medical agents. It uses one sma
 Episode -> Turn -> Evidence -> Decision
 ```
 
-An Episode is one independent evaluation unit. It may contain one Turn or many Turns. On each Turn, the harness releases new Evidence, lets the model inspect available Evidence through three tools, and records one structured Decision. A dataset scorer evaluates the recorded decisions after the run.
+An Episode is one independent evaluation unit. It may contain one Turn or many Turns. On each Turn, the harness releases new Evidence and records one structured Decision. The default `direct_decision` protocol shows evidence inline; the optional `tool_agent` protocol allows evidence lookup. A dataset scorer evaluates recorded decisions after the run.
 
 AMA is an evaluation runner, not a clinical system. It does not simulate patients, execute clinical actions, or understand FHIR, oncology workflows, or dataset-specific labels in its core loop.
 
@@ -21,18 +21,16 @@ Multi-turn execution is teacher-forced replay. A model decision does not change 
 
 ## How a turn works
 
-The model receives a world observation and can call exactly three tools:
+In the default `direct_decision` protocol, the model sees each newly released Evidence item and returns `{"turn_id":"t1","answer":...,"citations":[]}`. In `tool_agent`, the model can call two evidence tools before returning the same Decision:
 
 - `list_evidence`: list metadata for Evidence released so far.
 - `read_evidence`: read one released Evidence item.
-- `submit_decision`: submit the Turn's state, optional action, citations, or an abstention.
 
-Evidence visibility is cumulative within an Episode. A citation is accepted only after the model has read that Evidence item. Future Evidence is not visible. Scoring targets are never loaded during a run.
+Evidence visibility is cumulative within an Episode. Direct decisions may cite visible Evidence; tool-agent decisions may cite only Evidence actually read. Future Evidence is not visible. Scoring targets are never loaded during a run.
 
 ```text
-dataset -> release Turn -> list/read Evidence -> submit Decision -> record
-                                                               |
-targets + hidden policy ---------------------------------------+-> evaluate
+dataset -> release Turn -> protocol -> Decision -> record
+targets + eval rules -------------------------------> evaluate
 ```
 
 ## Quick start
@@ -43,7 +41,8 @@ Requires Python 3.11 or later.
 python3 -m pip install -e ".[dev]"
 pytest -q
 ama validate datasets/thyroid_demo
-ama run datasets/thyroid_demo --model scripted --runs-root runs
+ama run datasets/thyroid_demo --model scripted --protocol tool_agent \
+  --instruction-file datasets/thyroid_demo/instructions.txt --runs-root runs
 ama eval "$(ls -dt runs/* | head -1)"
 ```
 
@@ -58,8 +57,10 @@ Add the printed directory to `PATH`, or use `python3 -m ama.cli` in place of `am
 Real OpenAI-compatible models are configured in `ama.json` or `~/.config/ama/models.json`; API keys are read from environment variables.
 
 ```bash
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm --interactive
+ama run datasets/thyroid_demo --episode thyroid_001 --model glm \
+  --protocol tool_agent --instruction-file datasets/thyroid_demo/instructions.txt
+ama run datasets/thyroid_demo --episode thyroid_001 --model glm --interactive \
+  --protocol tool_agent --instruction-file datasets/thyroid_demo/instructions.txt
 ```
 
 Interactive and batch modes use the same `run_episode()` implementation.
@@ -76,35 +77,37 @@ An existing explicit path takes precedence. `import --out` always remains an exp
 
 ## Dataset layout
 
-AMA Dataset v0 is the only format understood by the runner:
+AMA Dataset is the format understood by the runner:
 
 ```text
 datasets/<name>/
-  dataset.json       metadata, splits, and scorer name
+  dataset.json       schema, name, and splits
   episodes.jsonl     model-visible Episodes
   targets.jsonl      optional evaluator-only targets
-  policy.json        optional public guidance and hidden evaluation policy
-  assets/             optional files referenced by Evidence
+  eval.json          optional evaluator-only scorer and rules
+  provenance.jsonl   optional local source locators; never read by the runner
+  instructions.txt   optional task prompt, passed explicitly to ama run
+  assets/            optional files referenced by Evidence
 ```
 
 The four core objects are deliberately small:
 
-- **Episode:** one independent evaluation unit and subject.
+- **Episode:** one independent evaluation unit.
 - **Turn:** one observation and the Evidence newly released with it.
 - **Evidence:** the smallest item that should be independently visible, readable, and citable in the study.
-- **Decision:** the model's structured output for one Turn.
+- **Decision:** a Turn ID, task-defined `answer`, and Evidence citations.
 
-Evidence may represent a note, report, lab panel, FHIR resource, registry record, image, or PDF. Every Evidence item must provide `text`, `artifact`, or both. `artifact` is a safe relative path inside the dataset directory. After `read_evidence`, JPEG, PNG, GIF, and WebP artifacts are delivered to OpenAI-compatible vision models as an `image_url` content part. Other artifact types remain path references, so importers should provide a useful textual representation when the model needs their content.
+Evidence may represent a note, report, lab panel, FHIR resource, registry record, image, or PDF. Every item must provide `text`, a safe relative `file`, or both. JPEG, PNG, GIF, and WebP files are delivered as image parts. Other file types remain path references, so importers should include useful text when needed.
 
 Interactive runs keep their compact progress output. Enter `show` to inspect the complete model conversation so far, including system, human, assistant tool calls, and tool observations. Inline image bytes are always shown and recorded as a short artifact descriptor rather than base64.
 
-All fields in `episodes.jsonl`, including `Evidence.metadata`, are model-visible. Gold answers, derived labels, and evaluator-only tags belong in `targets.jsonl` or `policy.hidden`.
+All fields in `episodes.jsonl` are model-visible. Gold answers and evaluator-only tags belong in `targets.jsonl` or `eval.json`; source locators and patient identifiers belong in `provenance.jsonl`.
 
-See the [AMA Dataset v0 data card](docs/ama-dataset-v0.md) for the complete contract and importer guidance.
+See the [AMA Dataset specification](docs/ama-dataset.md) for the complete contract.
 
 ## Importing data
 
-New data sources are added with offline importers. An importer converts source records into AMA Dataset v0 and writes a report describing provenance, exclusions, missing fields, and temporal assumptions. Dataset-specific logic must not be added to `run_episode()`.
+New data sources are added with offline importers. An importer converts source records into AMA Dataset and writes a report describing provenance, exclusions, missing fields, and temporal assumptions. Dataset-specific logic must not be added to `run_episode()`.
 
 ```bash
 ama import medagentbench --source test_data_v2.json --out datasets/medagentbench
@@ -118,9 +121,9 @@ Original MedAgentBench tasks become single-turn Episodes. Optional FHIR patient 
 
 Built-in scorers are registered in `src/ama/scorer.py`:
 
-- `exact_v0`: exact state or answer matching, allowed actions, required Evidence, and abstention.
-- `workflow_v0`: state fields, transition rules, action constraints, required Evidence, and cumulative success.
-- `rocov2_v0`: normalized caption token precision/recall/F1 and unordered UMLS CUI precision/recall/F1.
+- `exact`: exact answer matching, allowed next steps, required Evidence, and abstention.
+- `workflow`: answer fields, transition rules, next-step constraints, required Evidence, and cumulative success.
+- `rocov2`: normalized caption token precision/recall/F1 and unordered UMLS CUI precision/recall/F1.
 - `unscored`: completion and operational measurements only.
 
 Failed or missing decisions remain in the denominator. A zero denominator is reported as N/A.
@@ -132,7 +135,8 @@ Each run records decisions, events, model usage, latency, termination reasons, b
 ```text
 src/ama/data.py        schema, loader, and validator
 src/ama/model.py       scripted and OpenAI-compatible model clients
-src/ama/agent.py       the single Episode loop and three tools
+src/ama/agent.py       the single Episode replay controller
+src/ama/protocols.py   independent direct-decision and tool-agent protocols
 src/ama/scorer.py      scorer registry and built-in scorers
 src/ama/recorder.py    run artifacts, usage, hashes, and redaction
 src/ama/cli.py         validate, inspect, run, eval, and import
@@ -147,6 +151,6 @@ The checked-in examples cover both single-turn trustworthy reasoning and multi-t
 
 | Dataset | Source | Episodes | Turns | Targets | Scorer | Data card |
 |---|---|---:|---:|---|---|---|
-| `thyroid_demo` | Synthetic oncology workflow | 1 | 3 | Yes | `workflow_v0` | [English](datasets/thyroid_demo/DATASET_CARD.md) · [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) |
+| `thyroid_demo` | Synthetic oncology workflow | 1 | 3 | Yes | `workflow` | [English](datasets/thyroid_demo/DATASET_CARD.md) · [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) |
 | `medagentbench` | Derived MedAgentBench FHIR replay subset | 3 | 12 | No | `unscored` | [English](datasets/medagentbench/DATASET_CARD.md) · [中文](datasets/medagentbench/DATASET_CARD.zh-CN.md) |
-| `rocov2_demo` | ROCOv2 radiology image subset | 3 | 3 | Yes | `rocov2_v0` | [English](datasets/rocov2_demo/DATASET_CARD.md) · [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) |
+| `rocov2_demo` | ROCOv2 radiology image subset | 3 | 3 | Yes | `rocov2` | [English](datasets/rocov2_demo/DATASET_CARD.md) · [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) |

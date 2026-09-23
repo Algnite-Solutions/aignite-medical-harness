@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..dataset_card import write_dataset_cards
+from .dataset_writer import write_dataset
 
 _SPLIT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -108,8 +109,8 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
             "metadata": {"source": "ROCOv2", "split": split, "provenance": license_row},
             "turns": [{
                 "turn_id": "t1", "time": None,
-                "message": ("Review the released radiology image. Submit state.caption as one concise "
-                            "English radiology caption and state.cuis as a list of UMLS CUI strings. "
+                "message": ("Review the released radiology image. Submit answer.caption as one concise "
+                            "English radiology caption and answer.cuis as a list of UMLS CUI strings. "
                             "Cite the image evidence."),
                 "evidence": [{"evidence_id": evidence_id, "kind": "image", "text": "",
                               "artifact": f"artifacts/{destination.name}",
@@ -121,20 +122,9 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
             "required_evidence": [evidence_id],
         }}})
 
-    dataset = {
-        "schema": "ama-dataset-v0", "name": out.name, "version": "0.1",
-        "description": "ROCOv2 single-turn radiology image caption and concept prediction.",
-        "splits": {split: selected}, "scorer": "rocov2_v0", "license": "CC BY-NC-SA 4.0",
-    }
-    policy = {"public": {"guidance": (
-        "For every image, submit state.caption as a string and state.cuis as a list of UMLS CUI strings."
-    )}, "hidden": {}}
-    (out / "dataset.json").write_text(json.dumps(dataset, indent=2), encoding="utf-8")
-    (out / "episodes.jsonl").write_text(
-        "\n".join(json.dumps(e, ensure_ascii=False) for e in episodes) + "\n", encoding="utf-8")
-    (out / "targets.jsonl").write_text(
-        "\n".join(json.dumps(t, ensure_ascii=False) for t in targets) + "\n", encoding="utf-8")
-    (out / "policy.json").write_text(json.dumps(policy, indent=2), encoding="utf-8")
+    write_dataset(out, name=out.name, splits={split: selected}, episodes=episodes,
+                     targets=targets, scorer="rocov2",
+                     instruction="For each image, provide answer.caption and answer.cuis; cite the image ID.")
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source_dir": str(source.resolve()), "split": split, "selected_ids": selected,
@@ -156,11 +146,11 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
         construction_en="Each selected image becomes one Episode with one Turn and one image Evidence item. Captions and CUIs remain evaluator-only targets.",
         construction_zh="每张选定图像转换为一个 Episode、一个 Turn 和一条图像 Evidence；caption 与 CUI 仅保存在 evaluator target 中。",
         episodes=len(episodes), turns=len(episodes), evidence=len(episodes),
-        scorer="rocov2_v0", targets=len(targets),
+        scorer="rocov2", targets=len(targets),
         limitations_en="This derived subset is not an official ROCOv2 benchmark result. Captions have one reference and token overlap does not measure clinical correctness.",
         limitations_zh="该派生子集的结果不是官方 ROCOv2 benchmark 成绩；caption 仅有单一参考，token 重合度不能代表临床正确性。",
-        artifacts_en="JPEG images are copied under artifacts/. Per-image PMC links and attributions are recorded in Episode metadata and import_report.json.",
-        artifacts_zh="JPEG 图像复制到 artifacts/；逐图 PMC 链接与署名记录在 Episode metadata 和 import_report.json 中。",
+        artifacts_en="JPEG images are copied under artifacts/. Per-image PMC links and attributions are recorded in provenance.jsonl and import_report.json.",
+        artifacts_zh="JPEG 图像复制到 artifacts/；逐图 PMC 链接与署名记录在 provenance.jsonl 和 import_report.json 中。",
     )
     if len(provenance) <= 20:
         en_rows = ["", "## Included-image provenance", "", "| Image | PMCID | Attribution | Source |",
