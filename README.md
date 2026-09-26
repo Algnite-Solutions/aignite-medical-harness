@@ -20,7 +20,7 @@ Models are aliases in `ama.json`; fake models exist only in tests. A configured 
 that a provider supports images, tools, or their combination. Requests use standard Chat Completions;
 unsupported history is reported, never merged or rewritten.
 
-See the [small compatibility check](docs/compatibility-smoke.md): GLM vision returned a valid Decision
+In the small compatibility check, GLM vision returned a valid Decision
 envelope but omitted the caption; the configured Qwen endpoint returned invalid Decisions in the sampled image runs and
 rejected a tool-returned-image request. Its text-only tool/follow-up check passed.
 
@@ -55,7 +55,6 @@ Tool errors go back to the model. API errors terminate the episode instead of pr
 4. [runner.py](src/ama/runner.py) + [cli.py](src/ama/cli.py): observations, decisions and commands.
 
 The [Chinese code walkthrough](docs/minimal-agent.zh-CN.md) includes runnable review examples.
-The [ROCOv2 lab guide](docs/rocov2-lab-guide.zh-CN.md) explains medical terms and all three demo references.
 
 ## Data and results
 
@@ -79,4 +78,4 @@ Partial runs return a nonzero CLI status and remain independently evaluable.
 Only `eval` opens references/rules, producing `metrics.json`.
 It checks visible input hashes before scoring. Original answers remain in `decisions.jsonl`;
 references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy. Historical runs are preserved but must
-be rerun for this evaluator. Provenance and the human reading guide never enter model input.
+be rerun for this evaluator. Provenance never enters model input.

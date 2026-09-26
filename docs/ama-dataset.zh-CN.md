@@ -42,4 +42,4 @@ run 与 chat 共用 Agent。run 在 Agent 外解析 Decision，chat 允许自由
 `--instruction-file ...` 可替换；记录保存实际提示、指令哈希、模型配置、预期轮次和可见数据哈希。
 数据检查自动执行，参考答案与规则仅在 eval 时打开。失败与缺失回答仍保留在评测分母中。
 
-实验人员阅读材料见 [中文指南](rocov2-lab-guide.zh-CN.md)；它不进入模型提示。
+代码阅读与可执行例子见 [最小 Agent 导读](minimal-agent.zh-CN.md)。

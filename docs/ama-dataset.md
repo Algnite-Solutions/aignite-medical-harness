@@ -41,4 +41,4 @@ Use `{"scorer":"rocov2"}` in `eval.json`. Without an evaluation configuration, t
 
 Both run and chat use the same Agent. Run parses a Decision outside the Agent; chat allows natural-language follow-ups and cannot be scored. `--tools file.py` optionally loads an explicit TOOLS list. Instructions default to instructions.txt and can be replaced with `--instruction-file`; manifests record actual prompts, their instruction hash, model configuration and visible dataset hashes. Data checks run automatically. Only eval opens reference answers and rules. Failed and missing turns remain in evaluation denominators.
 
-The [Chinese lab guide](rocov2-lab-guide.zh-CN.md) is for human readers and never enters model input.
+See the [code walkthrough](minimal-agent.zh-CN.md) for runnable examples.

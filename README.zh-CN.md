@@ -19,7 +19,7 @@ ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 模型在 `ama.json` 注册；测试假模型只放在 tests，不是运行选项。
 注册成功不代表服务一定支持图像或工具，二者混用还需小样本检查。
 
-[本次兼容性检查](docs/compatibility-smoke.md)：GLM 返回合法 Decision，但缺少 caption（按空预测评分）；
+本次小样本兼容性检查：GLM 返回合法 Decision，但缺少 caption（按空预测评分）；
 Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision 格式，工具返回图像被接口拒绝。
 `--model glm-vision` 已跑通运行与评测流程，不代表任务答案完整。这不是模型能力排名。
 
@@ -73,6 +73,5 @@ API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后
 评测前检查可见数据是否已改变。历史实验记录保留，但需要重新运行才能交给新评测器。
 详见 [字段说明](docs/ama-dataset.zh-CN.md)。
 
-看不懂医学英文时，先读 [ROCOv2 中文阅读指南](docs/rocov2-lab-guide.zh-CN.md)。
-模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`；中文指南解释术语与指标，不把翻译混入模型输入或评分。
+模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`，按样本和轮次 ID 对照。
 词重合与 CUI 重合不是临床正确率。
