@@ -2,8 +2,19 @@
 
 [中文](README.zh-CN.md) | English
 
+[![CI](https://github.com/Algnite-Solutions/aignite-medical-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/Algnite-Solutions/aignite-medical-harness/actions/workflows/ci.yml)
+
 The Agent owns conversation history and optional tools. It knows nothing about datasets or scoring.
 The experiment layer feeds observations to it: automatically with `run`, interactively with `chat`.
+
+![Recorded single-sample run and Chinese follow-up chat](assets/ama-demo.gif)
+
+[Video (MP4)](assets/ama-demo.mp4) · [Terminal recording (.cast)](assets/ama-demo.cast)
+
+Recorded with `glm-vision` on the public ROCOv2 demo: one sample run, its saved result, and two Chinese follow-ups.
+The model's original output is preserved, including an omitted caption and incorrect medical inferences;
+this demonstrates the workflow, not diagnostic accuracy. Local paths and waiting times are shortened in the GIF/video.
+Replay the terminal recording with `asciinema play assets/ama-demo.cast`.
 
 ## Get started
 
@@ -15,6 +26,9 @@ ama run datasets/rocov2_demo --model qwen36
 ama eval runs/<run-directory>
 ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 ```
+
+GitHub Actions runs the deterministic tests and an installed-CLI check on Python 3.11 for PRs to `main`
+and updates to `main`. CI requires no model API keys.
 
 Models are aliases in `ama.json`; fake models exist only in tests. A configured alias is not a guarantee
 that a provider supports images, tools, or their combination. Requests use standard Chat Completions;
