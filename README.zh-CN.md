@@ -2,8 +2,20 @@
 
 中文 | [English](README.md)
 
+[![CI](https://github.com/Algnite-Solutions/aignite-medical-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/Algnite-Solutions/aignite-medical-harness/actions/workflows/ci.yml)
+
 Agent 只做三件事：保存历史、请求模型、执行可选工具。它不认识 Episode，也不负责评分。
 实验层才决定“什么时候把数据集的下一条 observation 给它”。
+
+![单样本 run 与中文追问 chat 录制](assets/ama-demo.gif)
+
+[视频 MP4](assets/ama-demo.mp4) · [终端记录 .cast](assets/ama-demo.cast)
+
+使用 `glm-vision` 和公开 ROCOv2 样本真实录制：单样本运行、查看保存的结果，再追问
+“你把你的预测用中文说一遍”“这个一般是什么病症”，最后演示 `/next` 与 `/quit`。
+保留模型原文，包括缺失 caption 和错误的医学推断；演示用于说明操作流程。
+GIF/视频缩短了等待时间，录制中的本地路径改为相对路径。
+可用 `asciinema play assets/ama-demo.cast` 回放终端记录。
 
 ## 安装
 
@@ -15,6 +27,9 @@ ama run datasets/rocov2_demo --model qwen36
 ama eval runs/<运行目录>
 ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 ```
+
+GitHub Actions 在发往 `main` 的 PR 和 `main` 更新时，使用 Python 3.11 运行确定性测试与 CLI 安装检查。
+CI 无需模型 API 密钥。
 
 模型在 `ama.json` 注册；测试假模型只放在 tests，不是运行选项。
 注册成功不代表服务一定支持图像或工具，二者混用还需小样本检查。
