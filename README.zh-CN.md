@@ -1,152 +1,79 @@
-# AMA — aignite-medical-agent
+# AMA — 一个最小化的临床Agent
 
 中文 | [English](README.md)
 
-AMA 是一个用于评测医疗 Agent 的最小研究运行器。单轮推理研究和多轮记忆研究共用同一个小型抽象：
+Agent 只做三件事：保存历史、请求模型、执行可选工具。它不认识 Episode，也不负责评分。
+实验层才决定“什么时候把数据集的下一条 observation 给它”。
 
-```text
-Episode -> Turn -> Evidence -> Decision
-```
-
-Episode 是一次独立评测，可以只有一个 Turn，也可以包含多个 Turn。每轮中，运行器释放新的 Evidence，模型通过三个工具查看当前可见证据，然后提交一个结构化 Decision。运行结束后，由数据集指定的 scorer 评分。
-
-AMA 是评测运行器，不是临床系统。它不模拟患者，不真正执行临床动作；核心循环也不理解 FHIR、肿瘤工作流或某个数据集的标签。
-
-## 研究形式
-
-- **单轮可信推理：** 一个 Episode 只有一个 Turn，适合研究基于证据的问答、引用、拒答和结构化决策。
-- **多轮长效记忆：** 一个 Episode 包含有序的多个 Turn。新 Evidence 随时间释放，先前证据和对话历史继续保留，适合研究判断更新、纵向一致性以及长上下文或记忆能力。
-
-多轮执行采用 teacher-forced replay。模型的决策不会改变后续观察，下一轮内容始终由数据集决定。这能保证回放可复现，但不能衡量一个动作对真实后续状态的影响。
-
-## 一轮如何运行
-
-模型收到一条 world observation，并且只能调用三个工具：
-
-- `list_evidence`：列出截至当前轮已经释放的 Evidence 元数据。
-- `read_evidence`：读取一条已经释放的 Evidence。
-- `submit_decision`：提交本轮状态、可选动作、引用，或者拒答。
-
-同一 Episode 内 Evidence 累计可见。模型只有先读取一条 Evidence，才能引用它；未来轮次的 Evidence 不可见。运行阶段永远不会加载评分答案。
-
-```text
-数据集 -> 释放一轮 -> 列出/读取证据 -> 提交决策 -> 保存轨迹
-                                                  |
-targets + hidden policy --------------------------+-> 评分
-```
-
-## 快速开始
-
-需要 Python 3.11 或更高版本。
+## 安装
 
 ```bash
 python3 -m pip install -e ".[dev]"
-pytest -q
-ama validate datasets/thyroid_demo
-ama run datasets/thyroid_demo --model scripted --runs-root runs
-ama eval "$(ls -dt runs/* | head -1)"
+python3 -m pytest -q
+# 参照 .env.example，把密钥写入本地 .env。
+ama run datasets/rocov2_demo --model qwen36
+ama eval runs/<运行目录>
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 ```
 
-如果已经安装但 shell 找不到 `ama`，可以查询脚本安装目录：
+模型在 `ama.json` 注册；测试假模型只放在 tests，不是运行选项。
+注册成功不代表服务一定支持图像或工具，二者混用还需小样本检查。
+
+本次小样本兼容性检查：GLM 返回合法 Decision，但缺少 caption（按空预测评分）；
+Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision 格式，工具返回图像被接口拒绝。
+`--model glm-vision` 已跑通运行与评测流程，不代表任务答案完整。这不是模型能力排名。
+
+- `run`：自动依次释放 observation，每个样本用一个新 Agent，每轮返回 JSON Decision。
+- `chat`：自动释放第一轮；普通输入是追问，`/next` 才推进一轮，`/quit` 保存退出。
+- 最后一轮之后仍可追问；chat 可自然语言回答，是探索记录，**不能评测**。
+
+两者自动检查可见数据，默认使用数据集的 `instructions.txt`。
+`--instruction-file 文件` 替换任务说明；`--tools examples/tools.py` 显式启用工具。
+默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
+`--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
+
+## 阅读顺序
+
+按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读
+[最小 Agent 导读](docs/minimal-agent.zh-CN.md)，里面有可直接执行的例子与对应测试。
+
+| 位置 | 唯一职责 |
+|---|---|
+| `model.py` | 配置别名、发送前编码图像、发一次请求 |
+| `agent.py` | 同一个 history 上追加消息，循环至最终回复 |
+| `tools.py` | 显式工具定义、Python 函数绑定、返回值 |
+| `runner.py` | 释放材料、检查 Decision、run/chat 流程 |
+| `cli.py` | 命令入口与独立 eval |
+| `data.py` / `scorer.py` | 数据对象与检查 / 评分定义 |
+| `recorder.py` | 原始消息、决策和实验配置记录 |
+
+工具文件是可信 Python，不是沙箱。不要让工具读取参考答案或未来轮次。
+没有历史协议层、暂停菜单或图像/工具角色改写；服务不支持时明确报错。
+
+## 数据和记录
+
+以ROCOv2为例。每张图像是一例、一轮；也只能多轮对话数据。
 
 ```bash
-python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))'
+ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
+ama run datasets/rocov2 --model qwen36 --split test
 ```
 
-把输出目录加入 `PATH`，或者用 `python3 -m ama.cli` 代替 `ama`。
+也可用可重复的 `--episode ID` 替代 `--split`，`--runs-root 目录` 指定输出父目录。
 
-真实的 OpenAI-compatible 模型配置写在 `ama.json` 或 `~/.config/ama/models.json`，API key 从环境变量读取。
+运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
+工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
+普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。
 
-```bash
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm --interactive
-```
+`chat` chat模式下没有关于decision格式的prompt指引，作为交互和数据集观察用。
 
-交互和批量模式使用同一个 `run_episode()`。
+`run` 的 JSON 无效时保留原文、记失败，不追加纠错对话。
+API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后停止整个批次。
+失败和缺失回答不会从评分分母中消失。部分失败时 CLI 返回非零状态，仍可独立 eval。
 
-本地目录或已挂载 NAS 中的数据集也可以通过名称访问：
+`eval` 才读取参考答案和评分配置，只生成 `metrics.json`；
+评测前检查可见数据是否已改变。历史实验记录保留，但需要重新运行才能交给新评测器。
+详见 [字段说明](docs/ama-dataset.zh-CN.md)。
 
-```bash
-export AMA_DATA_ROOT=/Volumes/lab-data/ama
-ama validate thyroid_demo
-ama run thyroid_demo --model glm
-```
-
-已经存在的显式路径优先；`import --out` 始终使用显式路径。
-
-## 数据集目录
-
-Runner 只理解 AMA Dataset v0：
-
-```text
-datasets/<name>/
-  dataset.json       元信息、split 和 scorer 名称
-  episodes.jsonl     模型可见的 Episode
-  targets.jsonl      可选，仅供 evaluator 读取
-  policy.json        可选，包含公开指导和隐藏评测规则
-  assets/             Evidence 引用的可选文件
-```
-
-四个核心对象保持最小：
-
-- **Episode：** 一次独立评测及其主体。
-- **Turn：** 一次观察，以及本轮新释放的 Evidence。
-- **Evidence：** 在当前研究中需要独立展示、读取和引用的最小信息单元。
-- **Decision：** 模型在一轮中提交的结构化结果。
-
-Evidence 可以是一份病历、影像或病理报告、一组检验、一个 FHIR Resource、一条登记记录、一张图片或一个 PDF。每条 Evidence 必须至少包含 `text` 或 `artifact`。`artifact` 是数据集目录内的安全相对路径。调用 `read_evidence` 后，JPEG、PNG、GIF 和 WebP artifact 会作为 `image_url` content part 发送给 OpenAI-compatible 视觉模型。其他 artifact 仍作为路径引用；如果模型需要理解其内容，importer 应同时提供有用的文本表示。
-
-交互运行默认保留简短进度输出。输入 `show` 可以查看截至当前的完整模型对话，包括 system、human、assistant 工具调用和 tool observation。内联图像在终端和运行记录中始终显示为简短 artifact 描述，不会输出 base64。
-
-`episodes.jsonl` 中的全部字段，包括 `Evidence.metadata`，都对模型可见。标准答案、派生标签和仅供评分器使用的 tag 必须放进 `targets.jsonl` 或 `policy.hidden`。
-
-完整约定和 importer 指南见 [AMA Dataset v0 中文数据卡](docs/ama-dataset-v0.zh-CN.md)。
-
-## 导入数据
-
-新数据源通过离线 importer 接入。Importer 将原始记录转换成 AMA Dataset v0，并输出报告，说明来源、排除记录、缺失字段和时间处理假设。数据集特有逻辑不应进入 `run_episode()`。
-
-```bash
-ama import medagentbench --source test_data_v2.json --out datasets/medagentbench
-ama import episode-folder --source path/to/episodes --out datasets/my_dataset
-ama import rocov2 --source /Volumes/Shared/Work/Data/RocoV2 --out datasets/rocov2 --split test --limit 100
-```
-
-原始 MedAgentBench task 会成为单轮 Episode。可选的 FHIR 患者时间线会成为独立的多轮回放 Episode，目前没有逐轮 gold target。此类派生回放的分数不能作为原始 MedAgentBench benchmark 成绩报告。
-
-## 评分与运行记录
-
-`src/ama/scorer.py` 注册了三个内置 scorer：
-
-- `exact_v0`：精确状态或答案、允许动作、必需 Evidence 和拒答。
-- `workflow_v0`：状态字段、迁移规则、动作约束、必需 Evidence 和累计成功率。
-- `rocov2_v0`：规范化 caption token 与无序 UMLS CUI 的 precision、recall 和 F1。
-- `unscored`：只报告完成情况和运行指标。
-
-失败或未提交的轮次仍保留在分母中；分母为零时记为 N/A。
-
-每次运行会记录决策、事件、模型 usage、延迟、终止原因、预算、数据 hash、依赖版本和 Git revision，并支持 trace 脱敏。scripted 模型的满分只证明 runner 与 scorer 可以工作，不代表模型具有医疗能力。
-
-## 仓库结构
-
-```text
-src/ama/data.py        schema、loader 和 validator
-src/ama/model.py       scripted 与 OpenAI-compatible 模型客户端
-src/ama/agent.py       唯一 Episode 循环和三个工具
-src/ama/scorer.py      scorer 注册表和内置 scorer
-src/ama/recorder.py    运行产物、usage、hash 和脱敏
-src/ama/cli.py         validate、inspect、run、eval 和 import
-src/ama/importers/     离线数据转换器
-datasets/              示例和已导入的数据集
-docs/                  数据集约定
-```
-
-## 已支持数据集
-
-仓库内置样例同时覆盖单轮可信推理与多轮长效记忆研究。
-
-| 数据集 | 来源 | Episode | Turn | Targets | Scorer | 数据卡 |
-|---|---|---:|---:|---|---|---|
-| `thyroid_demo` | 合成肿瘤工作流 | 1 | 3 | 有 | `workflow_v0` | [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) · [English](datasets/thyroid_demo/DATASET_CARD.md) |
-| `medagentbench` | MedAgentBench FHIR 派生回放子集 | 3 | 12 | 无 | `unscored` | [中文](datasets/medagentbench/DATASET_CARD.zh-CN.md) · [English](datasets/medagentbench/DATASET_CARD.md) |
-| `rocov2_demo` | ROCOv2 放射影像子集 | 3 | 3 | 有 | `rocov2_v0` | [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) · [English](datasets/rocov2_demo/DATASET_CARD.md) |
+模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`，按样本和轮次 ID 对照。
+词重合与 CUI 重合不是临床正确率。

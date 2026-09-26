@@ -1,6 +1,0 @@
-{
-  "public": {
-    "guidance": "For every image, submit state.caption as a string and state.cuis as a list of UMLS CUI strings."
-  },
-  "hidden": {}
-}

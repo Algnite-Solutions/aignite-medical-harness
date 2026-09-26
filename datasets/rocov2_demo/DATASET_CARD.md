@@ -22,11 +22,11 @@ Each selected image becomes one Episode with one Turn and one image Evidence ite
 
 ## Scoring and targets
 
-Scorer: `rocov2_v0`. Target records: 3.
+Scorer: `rocov2`. Target records: 3.
 
 ## Artifacts
 
-JPEG images are copied under artifacts/. Per-image PMC links and attributions are recorded in Episode metadata and import_report.json.
+JPEG images are copied under artifacts/. Per-image PMC links and attributions are recorded in provenance.jsonl and import_report.json.
 
 ## Limitations and reporting
 

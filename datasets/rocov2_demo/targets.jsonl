@@ -1,3 +1,3 @@
-{"episode_id": "ROCOv2_2023_test_000001", "turns": {"t1": {"state": {"caption": "CT chest axial view showing a huge ascending aortic aneurysm (*).", "cuis": ["C0040405"]}, "required_evidence": ["image-ROCOv2_2023_test_000001"]}}}
-{"episode_id": "ROCOv2_2023_test_000009", "turns": {"t1": {"state": {"caption": "Early sagittal T2-weighted MRI.", "cuis": ["C0024485"]}, "required_evidence": ["image-ROCOv2_2023_test_000009"]}}}
-{"episode_id": "ROCOv2_2023_test_000015", "turns": {"t1": {"state": {"caption": "Chest radiography shows aneurysm as protruding mass.", "cuis": ["C0817096", "C1306645", "C1996865"]}, "required_evidence": ["image-ROCOv2_2023_test_000015"]}}}
+{"id": "ROCOv2_2023_test_000001", "turns": {"t1": {"required_evidence": ["image-ROCOv2_2023_test_000001"], "answer": {"caption": "CT chest axial view showing a huge ascending aortic aneurysm (*).", "cuis": ["C0040405"]}}}}
+{"id": "ROCOv2_2023_test_000009", "turns": {"t1": {"required_evidence": ["image-ROCOv2_2023_test_000009"], "answer": {"caption": "Early sagittal T2-weighted MRI.", "cuis": ["C0024485"]}}}}
+{"id": "ROCOv2_2023_test_000015", "turns": {"t1": {"required_evidence": ["image-ROCOv2_2023_test_000015"], "answer": {"caption": "Chest radiography shows aneurysm as protruding mass.", "cuis": ["C0817096", "C1306645", "C1996865"]}}}}

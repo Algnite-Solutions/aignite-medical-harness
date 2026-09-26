@@ -22,11 +22,11 @@
 
 ## 评分与 targets
 
-Scorer：`rocov2_v0`。Target 记录数：3。
+Scorer：`rocov2`。Target 记录数：3。
 
 ## Artifacts
 
-JPEG 图像复制到 artifacts/；逐图 PMC 链接与署名记录在 Episode metadata 和 import_report.json 中。
+JPEG 图像复制到 artifacts/；逐图 PMC 链接与署名记录在 provenance.jsonl 和 import_report.json 中。
 
 ## 限制与报告口径
 

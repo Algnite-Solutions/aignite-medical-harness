@@ -1,4 +1,7 @@
-"""AMA Dataset v0: the only data standard. Episode → Turn → Evidence → Decision."""
+"""AMA Dataset: Episode → Turn → Evidence → Decision.
+
+The run loader never reads evaluator-only targets, eval rules, or provenance.
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def resolve_dataset_dir(value: str | Path) -> Path:
@@ -32,80 +35,100 @@ def resolve_dataset_dir(value: str | Path) -> Path:
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def nonempty_id(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "id" in value and (
+                not isinstance(value["id"], str) or not value["id"].strip()):
+            raise ValueError("id must be a non-empty string")
+        return value
+
 
 class Evidence(_Model):
-    evidence_id: str
-    kind: str
-    text: str = ""
-    artifact: str | None = None  # relative path inside the dataset dir
-    source: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    id: str
+    type: str | None = None
+    text: str | None = None
+    file: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def omit_missing_optional_fields(cls, value: Any) -> Any:
+        if isinstance(value, dict) and any(key in value and (value[key] is None or
+                                           isinstance(value[key], str) and not value[key].strip())
+                                           for key in ("type", "text", "file")):
+            raise ValueError("omit absent optional evidence fields instead of null or blank")
+        return value
+
+    @model_validator(mode="after")
+    def has_content(self) -> "Evidence":
+        if not (self.text and self.text.strip()) and not self.file:
+            raise ValueError("evidence has neither text nor file")
+        return self
 
 
 class Turn(_Model):
-    turn_id: str
-    time: datetime | None = None  # single-turn episodes may omit; multi-turn must be monotonic
-    message: str
-    evidence: list[Evidence] = Field(default_factory=list)
+    id: str
+    available_at: datetime | None = None
+    observation: str | None = None
+    evidence: list[Evidence]
+
+    @model_validator(mode="before")
+    @classmethod
+    def omit_missing_optional_fields(cls, value: Any) -> Any:
+        if isinstance(value, dict) and any(key in value and (value[key] is None or
+                                           isinstance(value[key], str) and not value[key].strip())
+                                           for key in ("available_at", "observation")):
+            raise ValueError("omit absent optional turn fields instead of null or blank")
+        return value
 
 
 class Episode(_Model):
-    episode_id: str
-    subject_id: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    turns: list[Turn] = Field(default_factory=list)
-
-
-class DecisionAction(_Model):
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    id: str
+    turns: list[Turn]
 
 
 class Decision(_Model):
     turn_id: str
-    state: dict[str, Any] = Field(default_factory=dict)
-    action: DecisionAction | None = None
-    citations: list[str] = Field(default_factory=list)
-    abstain: bool = False
-    note: str = ""
+    answer: Any
+    citations: list[str]
 
 
 class DatasetInfo(_Model):
-    schema_version: str = Field(default="ama-dataset-v0", alias="schema")
+    schema_name: str = Field(alias="schema")
     name: str
-    version: str = "0.1"
-    description: str = ""
-    splits: dict[str, list[str]] = Field(default_factory=dict)
-    scorer: str | None = None  # None => unscored runs (trace + operational metrics only)
-    license: str = ""
+    splits: dict[str, list[str]]
+
+    @model_validator(mode="after")
+    def known_schema(self) -> "DatasetInfo":
+        if self.schema_name != "ama-dataset":
+            raise ValueError(f"unsupported dataset schema {self.schema_name!r}; expected ama-dataset")
+        return self
 
 
 class TargetRecord(_Model):
     """One line of targets.jsonl. Turn payloads are scorer-interpreted dicts."""
 
-    model_config = ConfigDict(extra="allow")
-    episode_id: str
+    model_config = ConfigDict(extra="forbid")
+    id: str
     turns: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
-class Policy(_Model):
-    """policy.json: loader-enforced public/hidden split."""
-
-    public: dict[str, Any] = Field(default_factory=dict)
-    hidden: dict[str, Any] = Field(default_factory=dict)
+class EvalConfig(_Model):
+    scorer: str = "unscored"
+    rules: dict[str, Any] = Field(default_factory=dict)
 
 
 class Dataset:
     def __init__(self, folder: Path, info: DatasetInfo, episodes: list[Episode],
-                 targets: dict[str, TargetRecord], policy: Policy) -> None:
+                 targets: dict[str, TargetRecord], eval_config: EvalConfig | None) -> None:
         self.folder = folder
         self.info = info
         self.episodes = episodes
         self.targets = targets
-        self.policy = policy
+        self.eval_config = eval_config
 
     def episode(self, episode_id: str) -> Episode | None:
-        return next((e for e in self.episodes if e.episode_id == episode_id), None)
+        return next((e for e in self.episodes if e.id == episode_id), None)
 
     def select(self, split: str | None = None, episode_id: str | None = None) -> list[Episode]:
         if episode_id:
@@ -117,12 +140,12 @@ class Dataset:
             ids = self.info.splits.get(split)
             if ids is None:
                 raise KeyError(f"unknown split: {split} (have {list(self.info.splits)})")
-            return [e for e in self.episodes if e.episode_id in set(ids)]
+            return [e for e in self.episodes if e.id in set(ids)]
         return self.episodes
 
 
-def _safe_artifact(dataset_dir: Path, artifact: str) -> bool:
-    raw = Path(artifact)
+def _safe_file(dataset_dir: Path, file: str) -> bool:
+    raw = Path(file)
     if raw.is_absolute():
         return False
     resolved = (dataset_dir / raw).resolve()
@@ -130,7 +153,7 @@ def _safe_artifact(dataset_dir: Path, artifact: str) -> bool:
 
 
 def load_dataset(folder: Path, with_targets: bool = False) -> Dataset:
-    """Load a dataset directory. `with_targets=False` (the run path) NEVER touches targets.jsonl."""
+    """The run path reads only dataset.json and episodes.jsonl."""
     folder = Path(folder)
     info = DatasetInfo.model_validate(json.loads((folder / "dataset.json").read_text(encoding="utf-8")))
     episodes = [
@@ -144,12 +167,42 @@ def load_dataset(folder: Path, with_targets: bool = False) -> Dataset:
             for line in tpath.read_text(encoding="utf-8").splitlines():
                 if line.strip():
                     rec = TargetRecord.model_validate(json.loads(line))
-                    targets[rec.episode_id] = rec
-    policy = Policy()
-    ppath = folder / "policy.json"
-    if ppath.exists():
-        policy = Policy.model_validate(json.loads(ppath.read_text(encoding="utf-8")))
-    return Dataset(folder, info, episodes, targets, policy)
+                    if rec.id in targets:
+                        raise ValueError(f"duplicate target episode id: {rec.id}")
+                    targets[rec.id] = rec
+    eval_config = None
+    if with_targets and (folder / "eval.json").exists():
+        eval_config = EvalConfig.model_validate(json.loads((folder / "eval.json").read_text(encoding="utf-8")))
+    return Dataset(folder, info, episodes, targets, eval_config)
+
+
+def validate_visible_files(dataset: Dataset) -> None:
+    """Run-safe structural validation; never opens evaluator or provenance files."""
+    ids = [episode.id for episode in dataset.episodes]
+    if len(ids) != len(set(ids)) or not ids:
+        raise ValueError("episode IDs must be unique and non-empty")
+    for episode in dataset.episodes:
+        if not episode.turns:
+            raise ValueError(f"{episode.id}: no turns")
+        turn_ids = [turn.id for turn in episode.turns]
+        evidence_ids = [evidence.id for turn in episode.turns for evidence in turn.evidence]
+        if len(turn_ids) != len(set(turn_ids)) or len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError(f"{episode.id}: duplicate turn or evidence IDs")
+        times = [turn.available_at for turn in episode.turns if turn.available_at is not None]
+        try:
+            if any(later < earlier for earlier, later in zip(times, times[1:])):
+                raise ValueError(f"{episode.id}: non-monotonic available_at")
+        except TypeError as exc:
+            raise ValueError(f"{episode.id}: inconsistent timestamp timezones") from exc
+        for turn in episode.turns:
+            for evidence in turn.evidence:
+                if evidence.file and (not _safe_file(dataset.folder, evidence.file)
+                                      or not (dataset.folder / evidence.file).is_file()):
+                    raise ValueError(f"{episode.id}: unsafe or missing evidence file {evidence.file!r}")
+    for split, members in dataset.info.splits.items():
+        missing = set(members) - set(ids)
+        if missing:
+            raise ValueError(f"split {split!r} references unknown episodes: {sorted(missing)}")
 
 
 def validate_dataset(folder: Path) -> list[str]:
@@ -163,37 +216,34 @@ def validate_dataset(folder: Path) -> list[str]:
     except Exception as exc:
         return [f"load failed: {exc}"]
 
-    ids = [e.episode_id for e in ds.episodes]
+    ids = [e.id for e in ds.episodes]
     if len(set(ids)) != len(ids):
         errors.append("duplicate episode ids")
     if not ds.episodes:
         errors.append("no episodes")
     for ep in ds.episodes:
         if not ep.turns:
-            errors.append(f"{ep.episode_id}: no turns")
+            errors.append(f"{ep.id}: no turns")
             continue
-        turn_ids = [t.turn_id for t in ep.turns]
+        turn_ids = [t.id for t in ep.turns]
         if len(set(turn_ids)) != len(turn_ids):
-            errors.append(f"{ep.episode_id}: duplicate turn ids")
-        if len(ep.turns) > 1:
-            times = [t.time for t in ep.turns]
-            if any(t is None for t in times):
-                errors.append(f"{ep.episode_id}: multi-turn episode with null turn time")
-            else:
-                for a, b in zip(times, times[1:]):
-                    if b < a:
-                        errors.append(f"{ep.episode_id}: non-monotonic turn time at {b}")
-        ev_ids = [e.evidence_id for t in ep.turns for e in t.evidence]
+            errors.append(f"{ep.id}: duplicate turn ids")
+        times = [t.available_at for t in ep.turns]
+        known_times = [t for t in times if t is not None]
+        try:
+            if any(b < a for a, b in zip(known_times, known_times[1:])):
+                errors.append(f"{ep.id}: non-monotonic available_at")
+        except TypeError:
+            errors.append(f"{ep.id}: inconsistent available_at timezone awareness")
+        ev_ids = [e.id for t in ep.turns for e in t.evidence]
         if len(set(ev_ids)) != len(ev_ids):
-            errors.append(f"{ep.episode_id}: duplicate evidence ids")
+            errors.append(f"{ep.id}: duplicate evidence ids")
         for e in (ev for t in ep.turns for ev in t.evidence):
-            if not e.text and not e.artifact:
-                errors.append(f"{ep.episode_id}: evidence {e.evidence_id} has neither text nor artifact")
-            if e.artifact is not None:
-                if not _safe_artifact(folder, e.artifact):
-                    errors.append(f"{ep.episode_id}: evidence {e.evidence_id} unsafe artifact path '{e.artifact}'")
-                elif not (folder / e.artifact).exists():
-                    errors.append(f"{ep.episode_id}: evidence {e.evidence_id} artifact missing '{e.artifact}'")
+            if e.file is not None:
+                if not _safe_file(folder, e.file):
+                    errors.append(f"{ep.id}: evidence {e.id} unsafe file path '{e.file}'")
+                elif not (folder / e.file).is_file():
+                    errors.append(f"{ep.id}: evidence {e.id} file missing '{e.file}'")
     for split, split_ids in ds.info.splits.items():
         known = set(ids)
         for sid in split_ids:
@@ -202,4 +252,11 @@ def validate_dataset(folder: Path) -> list[str]:
     for tid in ds.targets:
         if tid not in set(ids):
             errors.append(f"targets reference unknown episode '{tid}'")
+    for ep in ds.episodes:
+        target = ds.targets.get(ep.id)
+        if target:
+            known_turns = {turn.id for turn in ep.turns}
+            for turn_id in target.turns:
+                if turn_id not in known_turns:
+                    errors.append(f"{ep.id}: target references unknown turn '{turn_id}'")
     return errors

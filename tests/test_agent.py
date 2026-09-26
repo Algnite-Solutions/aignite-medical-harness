@@ -1,281 +1,111 @@
-"""The ONE loop: visibility, read-before-cite, abstain, budgets, retries, usage,
-teacher-forced continuation, operator stop."""
 import json
-from pathlib import Path
 
-from ama.agent import Interaction, OperatorStopped, run_episode
-from ama.data import Episode
-from ama.model import ListEvidence, ModelError, ReadEvidence, SubmitDecision
-from ama.recorder import Budget, Recorder, TraceConfig
+import pytest
 
-EP = Episode.model_validate({
-    "episode_id": "ep1", "subject_id": "s1", "metadata": {},
-    "turns": [
-        {"turn_id": "t1", "time": "2026-01-01T00:00:00+00:00", "message": "m1",
-         "evidence": [{"evidence_id": "a1", "kind": "lab", "text": "肌酐 1.2", "artifact": None,
-                       "source": "s", "metadata": {}}]},
-        {"turn_id": "t2", "time": "2026-01-02T00:00:00+00:00", "message": "m2",
-         "evidence": [{"evidence_id": "b1", "kind": "note", "text": "病程记录", "artifact": None,
-                       "source": "s", "metadata": {}}]},
-        {"turn_id": "t3", "time": "2026-01-03T00:00:00+00:00", "message": "m3", "evidence": []},
-    ],
-})
+from ama.agent import Agent, CallLimitExceeded
+from ama.model import ModelError, image, wire_messages
+from ama.tools import Tool, ToolResult, load_tools
+from fakes import FakeModel, call, calls
 
 
-class Scripted:
-    def __init__(self, actions):
-        self.name = "scripted-test"
-        self.last_usage = None
-        self._it = iter(actions)
-
-    def next(self, messages):
-        return next(self._it)
+def addition():
+    return Tool("add", "Add", {"type": "object"}, lambda a, b: {"sum": a + b})
 
 
-def submit(turn, **kw):
-    d = {"turn_id": turn, "state": {}, "action": None, "citations": [], "abstain": False, "note": ""}
-    d.update(kw)
-    return SubmitDecision(type="submit_decision", decision=d)
+def test_no_tools_history_and_isolation():
+    model = FakeModel("first", "second", "fresh")
+    agent = Agent(model, system="system")
+    assert agent.chat("hello") == "first"
+    assert agent.chat("follow-up") == "second"
+    assert [m["role"] for m in model.requests[1][0]] == ["system", "user", "assistant", "user"]
+    assert all(tools is None for _, tools in model.requests)
+    Agent(model).chat("new episode")
+    assert model.requests[2][0] == [{"role": "user", "content": "new episode"}]
 
 
-def run(actions, budget=None, trace=None, interaction=None):
-    budget = budget or Budget(max_model_calls=40, per_turn_model_calls=15,
-                              deadline_seconds=60, max_retries=0)
-    recorder = Recorder(Path("/tmp/ama-test-runs"), "test", "scripted-test",
-                        Path("datasets"), ["ep1"], trace or TraceConfig(), budget)
-    result = run_episode(EP, Scripted(actions), recorder, interaction=interaction)
-    events = [json.loads(l) for l in (recorder.run_dir / "events.jsonl").read_text().splitlines()]
-    decisions = [json.loads(l) for l in (recorder.run_dir / "decisions.jsonl").read_text().splitlines()]
-    recorder.finalize([], {"n_episodes": 1})
-    return result, events, decisions
+def test_multiple_tools_order_ids_and_json():
+    model = FakeModel(calls(call(id="A"), call(arguments='{"a": 4, "b": 5}', id="B")), "done")
+    agent = Agent(model, tools=[addition()])
+    assert agent.chat("calculate") == "done"
+    results = [m for m in agent.history if m["role"] == "tool"]
+    assert [m["tool_call_id"] for m in results] == ["A", "B"]
+    assert [json.loads(m["content"])["sum"] for m in results] == [3, 9]
+    assert len(agent.calls) == 2
 
 
-def test_world_message_discloses_turn_id():
-    from ama.agent import world_message
-    msg = world_message(0, 3, EP.turns[0], ["a1"])
-    assert "turn_id=t1" in msg  # the model must be told the exact string it must echo
+@pytest.mark.parametrize("bad", [call(name="unknown"), call(arguments="invalid"), call(arguments="[]"),
+                                 call(arguments='{"wrong":1}')])
+def test_tool_error_can_be_corrected(bad):
+    model = FakeModel(calls(bad), calls(call()), "recovered")
+    agent = Agent(model, tools=[addition()])
+    assert agent.chat("go") == "recovered"
+    assert "error" in json.loads(agent.history[2]["content"])
+    assert json.loads(agent.history[4]["content"]) == {"sum": 3}
 
 
-def test_progressive_visibility_and_read_before_cite():
-    result, events, _ = run([
-        ListEvidence(),  # t1: only a1
-        ReadEvidence(evidence_id="a1"),
-        submit("t1"),
-        ReadEvidence(evidence_id="b1"),  # t2: b1 released, a1 still visible
-        ListEvidence(),
-        submit("t2", citations=["a1"]),  # citing evidence read in an EARLIER turn is fine
-        submit("t3"),
-    ])
-    assert result["termination"] == "completed" and result["turns_decided"] == 3
-    lists = [e for e in events if e["type"] == "step" and e["action"]["type"] == "list_evidence"]
-    ids1 = [x["evidence_id"] for x in lists[0]["observation"]["data"]["evidence"]]
-    ids2 = [x["evidence_id"] for x in lists[1]["observation"]["data"]["evidence"]]
-    assert ids1 == ["a1"] and ids2 == ["a1", "b1"]
+def test_all_tool_results_precede_images(tmp_path):
+    path = tmp_path / "scan.png"
+    path.write_bytes(b"image fixture")
+    tool = Tool("scan", "read scan", {"type": "object"}, lambda: ToolResult("scan", [path]))
+    model = FakeModel(calls(call("scan", "{}", "A"), call("scan", "{}", "B")), "seen")
+    agent = Agent(model, tools=[tool])
+    assert agent.chat(["image input", image(path)]) == "seen"
+    assert [m["role"] for m in agent.history] == ["user", "assistant", "tool", "tool", "user", "assistant"]
+    assert [p["text"] for p in agent.history[4]["content"] if p["type"] == "text"] == [
+        "Tool image: call_id=A, name=scan", "Tool image: call_id=B, name=scan"]
+    before = json.dumps(agent.history)
+    wire = wire_messages(agent.history)
+    assert "base64" in json.dumps(wire) and "base64" not in before
+    assert json.dumps(agent.history) == before
 
 
-def test_unreleased_evidence_invisible_with_internal_tag():
-    result, events, _ = run([
-        ReadEvidence(evidence_id="b1"),  # not yet released at t1
-        ReadEvidence(evidence_id="a1"),
-        submit("t1"),
-        submit("t2"),
-        submit("t3"),
-    ])
-    reads = [e for e in events if e["type"] == "step" and e["action"]["type"] == "read_evidence"]
-    assert reads[0]["observation"]["ok"] is False
-    assert reads[0]["violation"] == "future"
-    assert "violation" not in json.dumps(reads[0]["observation"])  # never shown to the model
+def test_tool_exception_and_missing_image_return_errors(tmp_path):
+    def bad():
+        raise RuntimeError("broken tool")
+    for handler in [bad, lambda: ToolResult(images=[tmp_path / "absent.png"])]:
+        agent = Agent(FakeModel(calls(call("bad", "{}")), "handled"),
+                      tools=[Tool("bad", "bad", {}, handler)])
+        assert agent.chat("go") == "handled"
+        assert "error" in agent.history[2]["content"]
 
 
-def test_visible_but_unread_citation_rejected_then_accepted():
-    result, events, _ = run([
-        ReadEvidence(evidence_id="a1"),
-        submit("t1", citations=["a1"]),
-        submit("t2", citations=["b1"]),  # visible but unread -> rejected, consumed
-        ReadEvidence(evidence_id="b1"),
-        submit("t2", citations=["b1"]),
-        submit("t3"),
-    ])
-    t2_steps = [e for e in events if e["type"] == "step" and e.get("turn_id") == "t2"
-                and e["action"]["type"] == "submit_decision"]
-    assert t2_steps[0]["observation"]["ok"] is False and "not read" in t2_steps[0]["observation"]["error"]
-    assert t2_steps[1]["observation"]["ok"] is True
-    assert result["turns_decided"] == 3
+def test_call_limit_keeps_tool_result_and_stops_session():
+    agent = Agent(FakeModel(calls(call())), tools=[addition()], max_calls=1)
+    with pytest.raises(CallLimitExceeded):
+        agent.chat("go")
+    assert agent.history[-1]["role"] == "tool"
+    with pytest.raises(RuntimeError, match="session has stopped"):
+        agent.chat("again")
 
 
-def test_abstain_and_turn_mismatch_validation():
-    result, events, _ = run([
-        submit("t1", abstain=True, state={"x": 1}),  # abstain with state -> rejected
-        submit("t1", abstain=True),
-        submit("t9"),  # wrong turn id -> rejected
-        submit("t2"),
-        submit("t3"),
-    ])
-    steps = [e for e in events if e["type"] == "step" and e["action"]["type"] == "submit_decision"]
-    assert "abstain" in steps[0]["observation"]["error"]        # abstain + state -> rejected
-    assert steps[1]["observation"]["ok"] is True                # clean abstain accepted, ends t1
-    assert "does not match" in steps[2]["observation"]["error"]  # wrong turn id rejected in t2
+@pytest.mark.parametrize("error", [ModelError("offline"), KeyboardInterrupt()])
+def test_errors_propagate_without_retry(error):
+    model = FakeModel(error)
+    agent = Agent(model)
+    with pytest.raises(type(error)):
+        agent.chat("keep this input")
+    assert len(model.requests) == 1 and len(agent.calls) == 1
+    assert agent.history[-1]["content"] == "keep this input"
+    assert agent.calls[0]["error"]
 
 
-def test_per_turn_budget_records_and_continues():
-    result, _, decisions = run([
-        ListEvidence(),
-        submit("t1"),
-        submit("t2"),
-        submit("t3"),
-    ], budget=Budget(max_model_calls=40, per_turn_model_calls=1, deadline_seconds=60, max_retries=0))
-    # t2's single call was a plain submit that got rejected? no: per_turn=1 -> one call, decision accepted
-    assert result["termination"] == "completed"
+def test_tool_exports_and_duplicate_names(tmp_path):
+    assert load_tools(None) == []
+    assert load_tools("examples/tools.py")[0].invoke('{"a":2,"b":3}').text == '{"sum": 5}'
+    invalid = tmp_path / "invalid.py"
+    invalid.write_text("TOOLS = [lambda: 1]")
+    with pytest.raises(ValueError, match="TOOLS"):
+        load_tools(invalid)
+    with pytest.raises(ValueError, match="duplicate"):
+        Agent(FakeModel(), tools=[addition(), addition()])
 
 
-def test_episode_budget_exhaustion():
-    result, _, _ = run([
-        ListEvidence(), ReadEvidence(evidence_id="a1"), submit("t1"),
-    ], budget=Budget(max_model_calls=2, per_turn_model_calls=10, deadline_seconds=60, max_retries=0))
-    assert result["termination"] == "budget_exceeded"
-    assert result["model_calls"] == 2
-
-
-def test_model_error_turn_continues_teacher_forced():
-    class FlakyT2(Scripted):
-        def next(self, messages):
-            last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
-            if "第 2/3 轮" in last_user:
-                raise ModelError("injected", kind="injected")
-            return super().next(messages)
-
-    budget = Budget(max_model_calls=40, per_turn_model_calls=15, deadline_seconds=60, max_retries=0)
-    recorder = Recorder(Path("/tmp/ama-test-runs"), "t2", "flaky", Path("datasets"), ["ep1"],
-                        TraceConfig(), budget)
-    result = run_episode(EP, FlakyT2([submit("t1"), submit("t3")]), recorder)
-    assert result["termination"] == "completed" and result["turns_decided"] == 2
-    rows = {r["turn_id"]: r for r in recorder.decisions}
-    assert rows["t2"]["termination"] == "model_error" and rows["t2"]["decision"] is None
-
-
-def test_usage_accumulates_per_call():
-    class UsageModel(Scripted):
-        def __init__(self, actions):
-            super().__init__(actions)
-            self._n = 0
-
-        def next(self, messages):
-            out = super().next(messages)
-            self._n += 1
-            self.last_usage = {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
-            return out
-
-    budget = Budget(max_model_calls=40, per_turn_model_calls=15, deadline_seconds=60, max_retries=0)
-    recorder = Recorder(Path("/tmp/ama-test-runs"), "u", "usage", Path("datasets"), ["ep1"],
-                        TraceConfig(), budget)
-    result = run_episode(EP, UsageModel([ListEvidence(), submit("t1"), submit("t2"), submit("t3")]), recorder)
-    assert result["usage"]["total_tokens"] == 4 * 11
-    calls = [e for e in (json.loads(l) for l in
-                         (recorder.run_dir / "events.jsonl").read_text().splitlines())
-             if e["type"] == "model_call"]
-    assert [c["call_id"] for c in calls] == ["1", "2", "3", "4"]
-    assert all(c["latency_ms"] is not None for c in calls)
-
-
-def test_retry_cannot_exceed_budget():
-    class AlwaysErr:
-        name = "err"
-        last_usage = None
-
-        def next(self, messages):
-            raise ModelError("boom", kind="http_error")
-
-    budget = Budget(max_model_calls=2, per_turn_model_calls=10, deadline_seconds=60, max_retries=5)
-    recorder = Recorder(Path("/tmp/ama-test-runs"), "r", "err", Path("datasets"), ["ep1"],
-                        TraceConfig(), budget)
-    result = run_episode(EP, AlwaysErr(), recorder)
-    assert result["termination"] == "budget_exceeded"
-    assert result["model_calls"] == 2
-
-
-def test_operator_stop_preserves_run():
-    class StopAfterFirst(Interaction):
-        def wait_next(self) -> bool:
-            return False
-
-    result, _, decisions = run([submit("t1")], interaction=StopAfterFirst())
-    assert result["termination"] == "operator_stopped"
-    assert len(decisions) == 1  # artifacts complete and flushed
-
-
-def test_invalid_action_gets_visible_feedback():
-    result, events, _ = run([
-        "not json",
-        submit("t1"), submit("t2"), submit("t3"),
-    ])
-    invalid = [e for e in events if e["type"] == "step" and e.get("action") is None]
-    assert invalid and "invalid action" in invalid[0]["observation"]["error"]
-    end = [e for e in events if e["type"] == "episode_end"][0]
-    contents = json.dumps(end["messages"])
-    assert "INVALID ACTION" in contents
-
-
-def test_trace_redaction():
-    result, events, _ = run([
-        ReadEvidence(evidence_id="a1"), submit("t1"), submit("t2"), submit("t3"),
-    ], trace=TraceConfig(save_model_context=False, save_evidence_text=False))
-    reads = [e for e in events if e["type"] == "step" and e["action"]["type"] == "read_evidence"]
-    assert reads[0]["observation"]["data"]["text"].startswith("<redacted")
-    end = [e for e in events if e["type"] == "episode_end"][0]
-    assert isinstance(end["messages"], str) and end["messages"].startswith("<redacted")
-
-
-def test_image_evidence_reaches_model_but_base64_is_not_persisted(tmp_path):
-    dataset = tmp_path / "dataset"
-    (dataset / "assets").mkdir(parents=True)
-    (dataset / "assets" / "scan.jpg").write_bytes(b"small-jpeg-fixture")
-    episode = Episode.model_validate({
-        "episode_id": "image", "subject_id": "s", "metadata": {},
-        "turns": [{"turn_id": "t1", "time": None, "message": "read image", "evidence": [{
-            "evidence_id": "scan", "kind": "image", "text": "",
-            "artifact": "assets/scan.jpg", "source": "fixture", "metadata": {},
-        }]}],
-    })
-
-    class InspectingModel(Scripted):
-        def next(self, messages):
-            out = super().next(messages)
-            if isinstance(out, SubmitDecision):
-                image_messages = [m for m in messages if isinstance(m.content, list)]
-                assert len(image_messages) == 1
-                assert image_messages[0].content[1]["image_url"]["url"].startswith(
-                    "data:image/jpeg;base64,")
-                assert "evidence_id=scan" in image_messages[0].content[0]["text"]
-            return out
-
-    recorder = Recorder(tmp_path / "runs", "image", "inspect", dataset, ["image"],
-                        TraceConfig(save_model_context=True),
-                        Budget(10, 10, 60, 0))
-    result = run_episode(episode, InspectingModel([
-        ReadEvidence(evidence_id="scan"), submit("t1", citations=["scan"]),
-    ]), recorder)
-    assert result["turns_decided"] == 1
-    events = (recorder.run_dir / "events.jsonl").read_text()
-    assert "data:image" not in events
-    assert "inline image/jpeg omitted" in events
-
-
-def test_missing_image_is_not_read_or_citable(tmp_path):
-    dataset = tmp_path / "dataset"
-    dataset.mkdir()
-    episode = Episode.model_validate({
-        "episode_id": "missing", "subject_id": "s", "metadata": {},
-        "turns": [{"turn_id": "t1", "time": None, "message": "read image", "evidence": [{
-            "evidence_id": "scan", "kind": "image", "text": "",
-            "artifact": "assets/missing.png", "source": "fixture", "metadata": {},
-        }]}],
-    })
-    recorder = Recorder(tmp_path / "runs", "missing", "scripted", dataset, ["missing"],
-                        TraceConfig(), Budget(10, 10, 60, 0))
-    result = run_episode(episode, Scripted([
-        ReadEvidence(evidence_id="scan"), submit("t1", citations=["scan"]), submit("t1", abstain=True),
-    ]), recorder)
-    assert result["turns_decided"] == 1
-    read = next(e for e in map(json.loads, (recorder.run_dir / "events.jsonl").read_text().splitlines())
-                if e["type"] == "step")
-    assert read["observation"]["ok"] is False and "missing" in read["observation"]["error"]
+def test_budget_resets_per_input_and_duplicate_ids_are_not_executed():
+    model = FakeModel("one", "two")
+    agent = Agent(model, max_calls=1)
+    assert agent.chat("first") == "one"
+    assert agent.chat("second") == "two"
+    agent = Agent(FakeModel(calls(call(id="same"), call(id="same"))), tools=[addition()])
+    with pytest.raises(ModelError, match="unique"):
+        agent.chat("go")
+    assert not any(m["role"] == "tool" for m in agent.history)

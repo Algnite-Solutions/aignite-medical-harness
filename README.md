@@ -1,152 +1,81 @@
-# AMA — aignite-medical-agent
+# AMA — one small Agent, two dataset workflows
 
 [中文](README.zh-CN.md) | English
 
-AMA is a minimal research harness for evaluating medical agents. It uses one small abstraction for both single-turn reasoning and multi-turn memory studies:
+The Agent owns conversation history and optional tools. It knows nothing about datasets or scoring.
+The experiment layer feeds observations to it: automatically with `run`, interactively with `chat`.
 
-```text
-Episode -> Turn -> Evidence -> Decision
-```
-
-An Episode is one independent evaluation unit. It may contain one Turn or many Turns. On each Turn, the harness releases new Evidence, lets the model inspect available Evidence through three tools, and records one structured Decision. A dataset scorer evaluates the recorded decisions after the run.
-
-AMA is an evaluation runner, not a clinical system. It does not simulate patients, execute clinical actions, or understand FHIR, oncology workflows, or dataset-specific labels in its core loop.
-
-## Research modes
-
-- **Single-turn grounded reasoning:** one Episode contains one Turn. Use it for grounded question answering, evidence citation, abstention, and structured decision studies.
-- **Multi-turn memory:** one Episode contains ordered Turns. New Evidence is released over time while earlier Evidence and conversation history remain available. Use it for belief updating, longitudinal consistency, and long-context or memory studies.
-
-Multi-turn execution is teacher-forced replay. A model decision does not change future observations; the dataset controls what is released next. This makes runs reproducible, but it does not measure the downstream effect of an action.
-
-## How a turn works
-
-The model receives a world observation and can call exactly three tools:
-
-- `list_evidence`: list metadata for Evidence released so far.
-- `read_evidence`: read one released Evidence item.
-- `submit_decision`: submit the Turn's state, optional action, citations, or an abstention.
-
-Evidence visibility is cumulative within an Episode. A citation is accepted only after the model has read that Evidence item. Future Evidence is not visible. Scoring targets are never loaded during a run.
-
-```text
-dataset -> release Turn -> list/read Evidence -> submit Decision -> record
-                                                               |
-targets + hidden policy ---------------------------------------+-> evaluate
-```
-
-## Quick start
-
-Requires Python 3.11 or later.
+## Get started
 
 ```bash
 python3 -m pip install -e ".[dev]"
-pytest -q
-ama validate datasets/thyroid_demo
-ama run datasets/thyroid_demo --model scripted --runs-root runs
-ama eval "$(ls -dt runs/* | head -1)"
+python3 -m pytest -q
+# Put your API key in local .env (see .env.example).
+ama run datasets/rocov2_demo --model qwen36
+ama eval runs/<run-directory>
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 ```
 
-If `ama` is installed but your shell cannot find it, locate its script directory with:
+Models are aliases in `ama.json`; fake models exist only in tests. A configured alias is not a guarantee
+that a provider supports images, tools, or their combination. Requests use standard Chat Completions;
+unsupported history is reported, never merged or rewritten.
+
+In the small compatibility check, GLM vision returned a valid Decision
+envelope but omitted the caption; the configured Qwen endpoint returned invalid Decisions in the sampled image runs and
+rejected a tool-returned-image request. Its text-only tool/follow-up check passed.
+
+`run` starts a new Agent for each episode and requests a JSON Decision per turn.
+`chat` sends the first observation immediately. Ordinary text is a follow-up, `/next` releases one
+more observation, and `/quit` saves and exits. After the last observation, follow-ups still work.
+Chat answers may be natural language; **chat records cannot be scored**.
+
+Both commands automatically check visible data and read the dataset's `instructions.txt`.
+Use `--instruction-file path` to replace it. `--max-calls 8` limits API calls per input;
+`--timeout 60` sets the per-request timeout. There are no automatic retries or context trimming.
+
+## Optional tools
 
 ```bash
-python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))'
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools examples/tools.py
 ```
 
-Add the printed directory to `PATH`, or use `python3 -m ama.cli` in place of `ama`.
+The Python file explicitly exports `TOOLS: list[Tool]`; both run and chat accept it.
+No flag means no tools. Tools are trusted Python, **not sandboxed**: do not expose references or
+future observations through them. See [the executable example](examples/tools.py).
 
-Real OpenAI-compatible models are configured in `ama.json` or `~/.config/ama/models.json`; API keys are read from environment variables.
+Tools return text, JSON or `ToolResult(text="scan", images=["scan.jpg"])`.
+Calls execute sequentially with original IDs; all tool results precede image attachments.
+Tool errors go back to the model. API errors terminate the episode instead of prompting a repair.
+
+## Read in four steps
+
+1. [model.py](src/ama/model.py): registration, image encoding and one request.
+2. [agent.py](src/ama/agent.py): full multi-turn history.
+3. [tools.py](src/ama/tools.py) + the Agent loop: optional tool calls.
+4. [runner.py](src/ama/runner.py) + [cli.py](src/ama/cli.py): observations, decisions and commands.
+
+The [Chinese code walkthrough](docs/minimal-agent.zh-CN.md) includes runnable review examples.
+
+## Data and results
 
 ```bash
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm
-ama run datasets/thyroid_demo --episode thyroid_001 --model glm --interactive
+ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
 ```
 
-Interactive and batch modes use the same `run_episode()` implementation.
+For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repeat
+`--episode ID` instead of `--split`. Use `--runs-root path` to choose the output parent.
 
-Datasets may also be addressed by name through a local or mounted NAS root:
+ROCOv2 is the only built-in importer/demo. Each image is one episode/turn; ordered multi-turn datasets
+also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
 
-```bash
-export AMA_DATA_ROOT=/Volumes/lab-data/ama
-ama validate thyroid_demo
-ama run thyroid_demo --model glm
-```
+Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
+`events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
+`decisions.jsonl`. Images stay as paths in logs and are encoded only for requests.
+Invalid decisions are kept, without correction dialogues. Failed/missing turns remain in evaluation.
+API/call-limit failures skip the rest of that episode and continue the batch; Ctrl-C stops the batch.
+Partial runs return a nonzero CLI status and remain independently evaluable.
 
-An existing explicit path takes precedence. `import --out` always remains an explicit path.
-
-## Dataset layout
-
-AMA Dataset v0 is the only format understood by the runner:
-
-```text
-datasets/<name>/
-  dataset.json       metadata, splits, and scorer name
-  episodes.jsonl     model-visible Episodes
-  targets.jsonl      optional evaluator-only targets
-  policy.json        optional public guidance and hidden evaluation policy
-  assets/             optional files referenced by Evidence
-```
-
-The four core objects are deliberately small:
-
-- **Episode:** one independent evaluation unit and subject.
-- **Turn:** one observation and the Evidence newly released with it.
-- **Evidence:** the smallest item that should be independently visible, readable, and citable in the study.
-- **Decision:** the model's structured output for one Turn.
-
-Evidence may represent a note, report, lab panel, FHIR resource, registry record, image, or PDF. Every Evidence item must provide `text`, `artifact`, or both. `artifact` is a safe relative path inside the dataset directory. After `read_evidence`, JPEG, PNG, GIF, and WebP artifacts are delivered to OpenAI-compatible vision models as an `image_url` content part. Other artifact types remain path references, so importers should provide a useful textual representation when the model needs their content.
-
-Interactive runs keep their compact progress output. Enter `show` to inspect the complete model conversation so far, including system, human, assistant tool calls, and tool observations. Inline image bytes are always shown and recorded as a short artifact descriptor rather than base64.
-
-All fields in `episodes.jsonl`, including `Evidence.metadata`, are model-visible. Gold answers, derived labels, and evaluator-only tags belong in `targets.jsonl` or `policy.hidden`.
-
-See the [AMA Dataset v0 data card](docs/ama-dataset-v0.md) for the complete contract and importer guidance.
-
-## Importing data
-
-New data sources are added with offline importers. An importer converts source records into AMA Dataset v0 and writes a report describing provenance, exclusions, missing fields, and temporal assumptions. Dataset-specific logic must not be added to `run_episode()`.
-
-```bash
-ama import medagentbench --source test_data_v2.json --out datasets/medagentbench
-ama import episode-folder --source path/to/episodes --out datasets/my_dataset
-ama import rocov2 --source /Volumes/Shared/Work/Data/RocoV2 --out datasets/rocov2 --split test --limit 100
-```
-
-Original MedAgentBench tasks become single-turn Episodes. Optional FHIR patient timelines become separate multi-turn replay Episodes and currently have no turn-level gold targets. Scores from derived replays must not be reported as original MedAgentBench benchmark scores.
-
-## Scoring and records
-
-Built-in scorers are registered in `src/ama/scorer.py`:
-
-- `exact_v0`: exact state or answer matching, allowed actions, required Evidence, and abstention.
-- `workflow_v0`: state fields, transition rules, action constraints, required Evidence, and cumulative success.
-- `rocov2_v0`: normalized caption token precision/recall/F1 and unordered UMLS CUI precision/recall/F1.
-- `unscored`: completion and operational measurements only.
-
-Failed or missing decisions remain in the denominator. A zero denominator is reported as N/A.
-
-Each run records decisions, events, model usage, latency, termination reasons, budgets, dataset hashes, dependency versions, and the Git revision. Trace content can be redacted. Scripted-model scores only verify the runner and scorer; they do not demonstrate medical capability.
-
-## Repository map
-
-```text
-src/ama/data.py        schema, loader, and validator
-src/ama/model.py       scripted and OpenAI-compatible model clients
-src/ama/agent.py       the single Episode loop and three tools
-src/ama/scorer.py      scorer registry and built-in scorers
-src/ama/recorder.py    run artifacts, usage, hashes, and redaction
-src/ama/cli.py         validate, inspect, run, eval, and import
-src/ama/importers/     offline source converters
-datasets/              examples and imported datasets
-docs/                  dataset contract
-```
-
-## Supported datasets
-
-The checked-in examples cover both single-turn trustworthy reasoning and multi-turn longitudinal memory studies.
-
-| Dataset | Source | Episodes | Turns | Targets | Scorer | Data card |
-|---|---|---:|---:|---|---|---|
-| `thyroid_demo` | Synthetic oncology workflow | 1 | 3 | Yes | `workflow_v0` | [English](datasets/thyroid_demo/DATASET_CARD.md) · [中文](datasets/thyroid_demo/DATASET_CARD.zh-CN.md) |
-| `medagentbench` | Derived MedAgentBench FHIR replay subset | 3 | 12 | No | `unscored` | [English](datasets/medagentbench/DATASET_CARD.md) · [中文](datasets/medagentbench/DATASET_CARD.zh-CN.md) |
-| `rocov2_demo` | ROCOv2 radiology image subset | 3 | 3 | Yes | `rocov2_v0` | [English](datasets/rocov2_demo/DATASET_CARD.md) · [中文](datasets/rocov2_demo/DATASET_CARD.zh-CN.md) |
+Only `eval` opens references/rules, producing `metrics.json`.
+It checks visible input hashes before scoring. Original answers remain in `decisions.jsonl`;
+references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy. Historical runs are preserved but must
+be rerun for this evaluator. Provenance never enters model input.
