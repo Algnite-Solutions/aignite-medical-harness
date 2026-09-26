@@ -13,7 +13,7 @@ EPISODE = {"id": "case", "turns": [
 ]}
 
 
-def run(tmp_path, actions, *, protocol="direct_decision", episode=None, per_turn=5,
+def run(tmp_path, actions, *, protocol=None, episode=None, per_turn=5,
         interaction=None, model=None, retries=0, files=None):
     source = tmp_path / "dataset"
     source.mkdir()
@@ -53,19 +53,31 @@ def test_direct_future_citation_repaired(tmp_path):
     assert summary["rows"][0]["decision"]["answer"] == "ok"
 
 
-def test_tool_agent_must_read_before_citing(tmp_path):
-    actions = [
-        {"type": "list_evidence"}, {"type": "read_evidence", "id": "e2"},
-        {"type": "read_evidence", "id": "e1"}, decision("t1", "A", ["e1"]),
-        decision("t2", "B", ["e2"]), {"type": "read_evidence", "id": "e2"},
-        decision("t2", "B", ["e2"]),
-    ]
-    summary, recorder = run(tmp_path, actions, protocol="tool_agent")
+def test_protocol_extension_can_supply_tools(tmp_path):
+    from ama.protocols import DirectDecisionProtocol, StepResult
+    from ama.model import Message
+
+    class ExampleExtension(DirectDecisionProtocol):
+        name = "example_extension"
+        tools = [{"type": "function", "function": {"name": "example_tool",
+                  "parameters": {"type": "object", "properties": {}}}}]
+
+        def step(self, item, turn, visible, root):
+            if item == "tool request":
+                return StepResult(messages=[Message(role="user", content="tool result")],
+                                  event={"action": "example_tool"})
+            return super().step(item, turn, visible, root)
+
+    class ToolAwareModel(ScriptedModel):
+        def next(self, messages, tools=None):
+            assert tools == ExampleExtension.tools
+            return super().next(messages, tools)
+
+    model = ToolAwareModel("extension", ["tool request", decision("t1", "ok"), decision("t2", "ok")])
+    summary, recorder = run(tmp_path, [], protocol=ExampleExtension(), model=model)
     assert summary["turns_decided"] == 2
-    assert summary["rows"][0]["steps"] == 4  # future read failed
-    assert summary["rows"][1]["steps"] == 3  # cite-before-read repaired
-    assert "e2" in summary["rows"][1]["read_ids"]
-    assert "read_evidence" in (recorder.run_dir / "events.jsonl").read_text()
+    assert summary["rows"][0]["steps"] == 2
+    assert "example_tool" in (recorder.run_dir / "events.jsonl").read_text()
 
 
 def test_abstain_is_null_answer_without_citations(tmp_path):

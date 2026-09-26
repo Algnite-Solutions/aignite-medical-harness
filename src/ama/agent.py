@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from .data import Decision, Episode, Evidence, Turn
 from .model import Message, ModelClient, ModelError
-from .protocols import get_protocol
+from .protocols import DirectDecisionProtocol, InteractionProtocol
 from .recorder import (Budget, Recorder, merge_usage, redact_content, redact_messages,
                        sanitize_multimodal_content)
 
@@ -67,17 +67,16 @@ def _call_model(model: ModelClient, messages: list[Message], tools: list[dict] |
 
 
 def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
-                protocol: str = "direct_decision", instruction: str = "",
+                protocol: InteractionProtocol | None = None, instruction: str = "",
                 interaction: Interaction | None = None,
                 announce: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Replay fixed observations, collecting one accepted Decision per Turn."""
-    driver = get_protocol(protocol)
+    driver = protocol or DirectDecisionProtocol()
     interaction = interaction or Interaction()
     budget = recorder.budget
     messages = [Message(role="system", content=driver.system_prompt(episode, instruction))]
     interaction.on_message(messages[0])
     visible: dict[str, Evidence] = {}
-    read: set[str] = set()
     usage_total: dict | None = None
     rows: list[dict[str, Any]] = []
     term = ("completed", "")
@@ -86,6 +85,7 @@ def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
                  model_context=[m.model_dump(exclude_none=True) for m in messages])
     try:
         for index, turn in enumerate(episode.turns):
+            # 1. 释放本轮材料；此前材料继续可见。
             for ev in turn.evidence:
                 visible[ev.id] = ev
             metadata = [{"id": ev.id, "type": ev.type} for ev in turn.evidence]
@@ -93,6 +93,7 @@ def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
                          available_at=turn.available_at.isoformat() if turn.available_at else None,
                          released=metadata)
             interaction.on_turn_start(index, len(episode.turns), turn, metadata)
+            # 2. 将本轮材料打包成模型消息（含图像）。
             for message in driver.turn_messages(turn, index, len(episode.turns), recorder.dataset_dir, visible):
                 messages.append(message)
                 interaction.on_message(message)
@@ -108,6 +109,7 @@ def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
             budget.exclude_wait(time.monotonic() - wait_started)
 
             while decision is None:
+                # 3. 请求模型并解析答案；格式错误时带反馈重试，受预算限制。
                 try:
                     item = _call_model(model, messages, driver.tools, budget, turn_calls,
                                        recorder.log, episode.id, turn.id)
@@ -120,7 +122,7 @@ def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
                 turn_calls += 1
                 turn_usage = merge_usage(turn_usage, getattr(model, "last_usage", None))
                 usage_total = merge_usage(usage_total, getattr(model, "last_usage", None))
-                result = driver.step(item, turn, visible, read, recorder.dataset_dir)
+                result = driver.step(item, turn, visible, recorder.dataset_dir)
                 steps += 1
                 for message in result.messages:
                     messages.append(message)
@@ -136,10 +138,11 @@ def run_episode(episode: Episode, model: ModelClient, recorder: Recorder,
                     announce(line)
                 decision = result.decision
 
+            # 4. 保存答案，再进入下一轮。这里不读取参考答案或计算分数。
             row = {"episode_id": episode.id, "turn_id": turn.id,
                    "termination": turn_term[0], "termination_detail": turn_term[1],
                    "decision": decision.model_dump(mode="json") if decision else None,
-                   "read_ids": sorted(read), "model_calls": turn_calls, "steps": steps,
+                   "model_calls": turn_calls, "steps": steps,
                    "usage": turn_usage if turn_usage is not None else "unknown",
                    "duration_ms": int((time.monotonic() - started) * 1000)}
             recorder.save_decision(row)

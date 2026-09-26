@@ -1,9 +1,0 @@
-{
-  "schema": "ama-dataset",
-  "name": "thyroid_demo",
-  "splits": {
-    "all": [
-      "thyroid_001"
-    ]
-  }
-}

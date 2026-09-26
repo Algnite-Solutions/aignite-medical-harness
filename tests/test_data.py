@@ -66,7 +66,7 @@ def test_true_timestamps_must_be_monotonic_when_present(tmp_path):
 
 def test_run_loader_never_reads_evaluator_files(tmp_path, monkeypatch):
     root = write_dataset(tmp_path, [example()], targets=[{"id": "ep", "turns": {"t1": {"answer": "x"}}}])
-    (root / "eval.json").write_text('{"scorer":"exact"}')
+    (root / "eval.json").write_text('{"scorer":"rocov2"}')
     (root / "provenance.jsonl").write_text('private source\n')
     original = type(root).read_text
 

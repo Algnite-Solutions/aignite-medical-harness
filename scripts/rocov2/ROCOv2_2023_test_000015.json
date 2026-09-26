@@ -1,0 +1,15 @@
+{
+  "episode_id": "ROCOv2_2023_test_000015",
+  "actions": [
+    {
+      "turn_id": "t1",
+      "answer": {
+        "caption": "A chest radiograph.",
+        "cuis": []
+      },
+      "citations": [
+        "image-ROCOv2_2023_test_000015"
+      ]
+    }
+  ]
+}

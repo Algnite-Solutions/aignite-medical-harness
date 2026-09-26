@@ -98,7 +98,7 @@ class OpenAICompatModel:
         world observations, prior actions and their observations, image descriptors, and
         every successfully read image so far. Messages after the last image are kept
         verbatim (the gateway accepts tool pairs that FOLLOW an image user message).
-        Agent-side read-before-cite gating is unchanged; only the wire transcript differs."""
+        Evidence visibility checks stay in the protocol; only the wire transcript differs."""
         image_indexes = [i for i, m in enumerate(messages)
                          if m.role == "user" and isinstance(m.content, list)
                          and any(isinstance(part, dict) and part.get("type") == "image_url"
@@ -132,8 +132,8 @@ class OpenAICompatModel:
             elif m.role == "tool":
                 transcript.append(f"Observation: {m.content}")
         transcript.append(
-            "The requested image(s) are attached after successful evidence reads. "
-            "Do not read those IDs again. When ready, return a JSON Decision for the current turn.")
+            "The evidence image(s) are attached. "
+            "Return a JSON Decision for the current turn when ready.")
         merged = Message(role="user",
                          content=[{"type": "text", "text": "\n\n".join(t for t in transcript if t)}]
                          + image_parts)

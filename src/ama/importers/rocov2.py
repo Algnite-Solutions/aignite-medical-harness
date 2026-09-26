@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from ..dataset_card import write_dataset_cards
-from .dataset_writer import write_dataset
 
 _SPLIT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -104,27 +103,33 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
         license_row = licenses[image_id]
         provenance.append({"image_id": image_id, **license_row})
         episodes.append({
-            "episode_id": image_id,
-            "subject_id": image_id,
-            "metadata": {"source": "ROCOv2", "split": split, "provenance": license_row},
+            "id": image_id,
             "turns": [{
-                "turn_id": "t1", "time": None,
-                "message": ("Review the released radiology image. Submit answer.caption as one concise "
+                "id": "t1",
+                "observation": ("Review the released radiology image. Submit answer.caption as one concise "
                             "English radiology caption and answer.cuis as a list of UMLS CUI strings. "
                             "Cite the image evidence."),
-                "evidence": [{"evidence_id": evidence_id, "kind": "image", "text": "",
-                              "artifact": f"artifacts/{destination.name}",
-                              "source": license_row["Link"], "metadata": {}}],
+                "evidence": [{"id": evidence_id, "type": "image",
+                              "file": f"artifacts/{destination.name}"}],
             }],
         })
-        targets.append({"episode_id": image_id, "turns": {"t1": {
-            "state": {"caption": captions[image_id], "cuis": cuis},
+        targets.append({"id": image_id, "turns": {"t1": {
+            "answer": {"caption": captions[image_id], "cuis": cuis},
             "required_evidence": [evidence_id],
         }}})
 
-    write_dataset(out, name=out.name, splits={split: selected}, episodes=episodes,
-                     targets=targets, scorer="rocov2",
-                     instruction="For each image, provide answer.caption and answer.cuis; cite the image ID.")
+    # 直接写入最终格式，不再经过另一套中间字段转换。
+    (out / "dataset.json").write_text(json.dumps({
+        "schema": "ama-dataset", "name": out.name, "splits": {split: selected},
+    }, indent=2), encoding="utf-8")
+    for filename, records in (("episodes.jsonl", episodes), ("targets.jsonl", targets),
+                              ("provenance.jsonl", provenance)):
+        (out / filename).write_text("".join(json.dumps(row, ensure_ascii=False) + "\n"
+                                            for row in records), encoding="utf-8")
+    (out / "eval.json").write_text('{"scorer": "rocov2"}\n', encoding="utf-8")
+    (out / "instructions.txt").write_text(
+        "For each image, provide answer.caption and answer.cuis; cite the image ID.\n",
+        encoding="utf-8")
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source_dir": str(source.resolve()), "split": split, "selected_ids": selected,

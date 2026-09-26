@@ -2,66 +2,22 @@
   "models": {
     "scripted": {
       "type": "scripted",
-      "script_dir": "scripts"
-    },
-    "glm": {
-      "type": "openai_compatible",
-      "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "model": "glm-5.3-flash",
-      "api_key_env": "GLM_API_KEY",
-      "temperature": 0.0
+      "script_dir": "scripts/rocov2"
     },
     "glm-vision": {
       "type": "openai_compatible",
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
       "model": "glm-4v-flash",
       "api_key_env": "GLM_API_KEY",
-      "temperature": 0.0
+      "temperature": 0
     },
     "qwen36": {
       "type": "openai_compatible",
       "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
       "model": "Qwen3.6-27B",
       "api_key_env": "MEDAI_API_KEY",
-      "temperature": 0.0,
+      "temperature": 0,
       "wire": "openai_compact_image"
-    },
-    "glm53-json": {
-      "type": "openai_compatible",
-      "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "model": "glm-5.3-flash",
-      "api_key_env": "GLM_API_KEY",
-      "temperature": 0.0,
-      "max_tokens": 4096,
-      "context_window": 32768
-    },
-    "antangelmed-json": {
-      "type": "openai_compatible",
-      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
-      "model": "AntAngelMed2.0-256k",
-      "api_key_env": "MEDAI_API_KEY",
-      "temperature": 0.0,
-      "max_tokens": 4096,
-      "context_window": 32768
-    },
-    "deepseek-v4-json": {
-      "type": "openai_compatible",
-      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
-      "model": "Deepseek-v4",
-      "api_key_env": "MEDAI_API_KEY",
-      "temperature": 0.0,
-      "max_tokens": 4096,
-      "context_window": 32768
-    },
-    "qwen36-json": {
-      "type": "openai_compatible",
-      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
-      "model": "Qwen3.6-27B",
-      "api_key_env": "MEDAI_API_KEY",
-      "temperature": 0.0,
-      "chat_template_kwargs": {"enable_thinking": false},
-      "max_tokens": 4096,
-      "context_window": 32768
     }
   }
 }

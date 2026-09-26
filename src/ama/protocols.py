@@ -7,20 +7,10 @@ import mimetypes
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .data import Decision, Episode, Evidence, Turn
 from .model import Message
-
-
-EVIDENCE_TOOLS = [
-    {"type": "function", "function": {"name": "list_evidence",
-     "description": "List IDs and types of evidence visible through the current stage.",
-     "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "read_evidence",
-     "description": "Read one visible evidence item before citing it.",
-     "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}},
-]
 
 
 @dataclass
@@ -90,9 +80,26 @@ def _evidence_text(evidence: Evidence) -> str:
     return f"{label}>\n{evidence.text or ''}\n</evidence>"
 
 
+class InteractionProtocol(Protocol):
+    """工具扩展接口：提供提示、每轮消息、工具定义和响应处理。
+
+    扩展自行管理工具状态；step 返回消息继续执行，或返回 Decision 结束本轮。
+    """
+
+    name: str
+    tools: list[dict[str, Any]] | None
+
+    def system_prompt(self, episode: Episode, instruction: str) -> str: ...
+
+    def turn_messages(self, turn: Turn, index: int, total: int, root: Path,
+                      visible: dict[str, Evidence]) -> list[Message]: ...
+
+    def step(self, item: Any, turn: Turn, visible: dict[str, Evidence],
+             root: Path) -> StepResult: ...
+
+
 class DirectDecisionProtocol:
     name = "direct_decision"
-    version = "1"
     tools: list[dict[str, Any]] | None = None
 
     def system_prompt(self, episode: Episode, instruction: str) -> str:
@@ -116,7 +123,7 @@ class DirectDecisionProtocol:
         return [Message(role="user", content=body)]
 
     def step(self, item: Any, turn: Turn, visible: dict[str, Evidence],
-             read: set[str], root: Path) -> StepResult:
+             root: Path) -> StepResult:
         raw = _content(item)
         try:
             decision = parse_decision(item)
@@ -129,81 +136,3 @@ class DirectDecisionProtocol:
             messages.append(Message(role="user", content=f"INVALID DECISION: {error}. Return one corrected JSON Decision only."))
             return StepResult(messages=messages, error=error, event={"action": "invalid_decision"})
         return StepResult(decision=decision, messages=messages, event={"action": "decision"})
-
-
-class ToolAgentProtocol(DirectDecisionProtocol):
-    name = "tool_agent"
-    tools = EVIDENCE_TOOLS
-
-    def system_prompt(self, episode: Episode, instruction: str) -> str:
-        return ("You are an evaluated agent in a fixed evidence-release replay. "
-                f"This episode has {len(episode.turns)} stages. Use list_evidence and read_evidence "
-                "to inspect currently visible evidence. You may cite only IDs you have read. "
-                "When ready, return exactly one JSON Decision with turn_id, answer, citations; "
-                "answer=null means abstain. Do not call a submit tool.\n" + instruction)
-
-    def turn_messages(self, turn: Turn, index: int, total: int, root: Path,
-                      visible: dict[str, Evidence]) -> list[Message]:
-        label = f"[turn_id={turn.id} | stage {index + 1}/{total}]"
-        if turn.available_at:
-            label += f" available_at={turn.available_at.isoformat()}"
-        ids = ", ".join(ev.id for ev in turn.evidence) or "none"
-        return [Message(role="user", content=f"{label}\n{turn.observation or ''}\nNew evidence IDs: {ids}")]
-
-    def step(self, item: Any, turn: Turn, visible: dict[str, Evidence],
-             read: set[str], root: Path) -> StepResult:
-        call = None
-        if isinstance(item, dict) and item.get("tool_calls"):
-            call = item["tool_calls"][0]
-        elif isinstance(item, dict) and item.get("type") in {"list_evidence", "read_evidence"}:
-            call = {"id": "scripted_tool", "type": "function", "function": {
-                "name": item["type"], "arguments": json.dumps({k: v for k, v in item.items() if k != "type"})}}
-        if call is None:
-            result = super().step(item, turn, visible, read, root)
-            if result.decision:
-                error = _visible_decision(result.decision, turn, read)
-                if error:
-                    result.decision = None
-                    result.error = error
-                    result.messages.append(Message(role="user", content=f"INVALID DECISION: {error}. Read evidence before citing."))
-            return result
-        fn = call.get("function") or {}
-        name = fn.get("name")
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
-            if not isinstance(args, dict):
-                raise ValueError("tool arguments must be an object")
-            if name == "list_evidence":
-                observation: dict[str, Any] = {"evidence": [{"id": ev.id, "type": ev.type} for ev in visible.values()]}
-            elif name == "read_evidence":
-                evidence_id = args.get("id")
-                if evidence_id not in visible:
-                    raise ValueError(f"evidence {evidence_id!r} is not visible")
-                ev = visible[evidence_id]
-                observation = {"evidence": ev.model_dump(exclude_none=True)}
-                read.add(evidence_id)
-            else:
-                raise ValueError(f"unknown tool {name!r}")
-            error = None
-        except (ValueError, TypeError) as exc:
-            observation, error = {"error": str(exc)}, str(exc)
-        call_id = call.get("id") or "call_1"
-        messages = [Message(role="assistant", content="", tool_calls=[call]),
-                    Message(role="tool", tool_call_id=call_id,
-                            content=json.dumps(observation, ensure_ascii=False))]
-        if not error and name == "read_evidence":
-            part = _file_part(visible[args["id"]], root)
-            if part:
-                messages.append(Message(role="user", content=[
-                    {"type": "text", "text": f"Image evidence id={args['id']}"}, part]))
-        return StepResult(messages=messages, error=error,
-                          event={"action": name, "arguments": args if not error else {},
-                                 "observation": observation})
-
-
-def get_protocol(name: str) -> DirectDecisionProtocol | ToolAgentProtocol:
-    if name == "direct_decision":
-        return DirectDecisionProtocol()
-    if name == "tool_agent":
-        return ToolAgentProtocol()
-    raise ValueError(f"unknown protocol {name!r}")

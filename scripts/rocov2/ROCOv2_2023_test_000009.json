@@ -1,0 +1,15 @@
+{
+  "episode_id": "ROCOv2_2023_test_000009",
+  "actions": [
+    {
+      "turn_id": "t1",
+      "answer": {
+        "caption": "An MRI image.",
+        "cuis": []
+      },
+      "citations": [
+        "image-ROCOv2_2023_test_000009"
+      ]
+    }
+  ]
+}

@@ -141,7 +141,7 @@ class ShellInteraction:
 
 def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_ids: list[str] | None,
                  runs_root: Path, interactive: bool, verbose: bool, budget_args: dict[str, Any],
-                 protocol: str = "direct_decision", instruction: str = "") -> Path:
+                 instruction: str = "") -> Path:
     from .agent import Interaction, run_episode
     from .data import load_dataset, resolve_dataset_dir, validate_visible_files
     from .model import make_model_factory, resolve_model_config
@@ -169,7 +169,7 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
     recorder = Recorder(runs_root, name=dataset.info.name, model_name=model_name,
                         dataset_dir=dataset_dir, episode_ids=[e.id for e in episodes],
                         trace=TraceConfig(), budget=budget, interactive=interactive,
-                        experiment={"protocol": protocol,
+                        experiment={"protocol": "direct_decision",
                                     "instruction": instruction,
                                     "instruction_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest()},
                         model_info={"alias": model_name, "type": resolved.type,
@@ -190,7 +190,7 @@ def _run_dataset(dataset_dir: Path, model_name: str, split: str | None, episode_
                                             note_fn=lambda **kw: recorder.log("operator_note",
                                                                               episode_id=ep.id, **kw))
         announce = (lambda m: print(m, flush=True)) if verbose else None
-        s = run_episode(ep, model, recorder, protocol=protocol, instruction=instruction,
+        s = run_episode(ep, model, recorder, instruction=instruction,
                         interaction=interaction, announce=announce)
         s.pop("rows")
         summaries.append(s)
@@ -243,7 +243,7 @@ def _eval_run(run_dir: Path, scorer_override: str | None = None) -> int:
     }
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    _write_scored_report(run_dir, manifest, result)
+    _write_scored_report(run_dir, manifest, result, dataset, decisions)
     _print_eval_summary(result)
     return 0
 
@@ -268,56 +268,50 @@ def _print_eval_summary(result: dict[str, Any]) -> None:
             print(f"  {eid}: scored_turns={decided}/{len(ep['turns'])}")
 
 
-def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[str, Any]) -> None:
-    backend_note = ("scripted 满分只证明运行器与评分器工作，不代表真实模型效果"
-                    if manifest["model"] == "scripted" else
-                    f"{manifest['model']} 真实模型；teacher-forced replay 评估，小样本不构成基准结论")
-    lines = [f"# AMA run — {manifest['run_id']}", "",
-             f"- model: **{manifest['model']}**（{backend_note}）",
-             f"- scorer: {result.get('scorer')}", "",
-             "## Per-episode", ""]
-    for eid, ep in result.get("per_episode", {}).items():
-        lines.append(f"### {eid}")
-        lines.append("")
-        if "turns" not in ep:
-            lines.append(f"- {ep}")
-            lines.append("")
-            continue
-        scored = [t for t in ep["turns"] if t.get("scored")]
-        keys = [k for k in ("state_correct", "answer_correct", "action_correct", "refs_covered",
-                            "state_field_accuracy", "transition_valid", "abstain_correct",
-                            "caption_token_precision", "caption_token_recall", "caption_token_f1",
-                            "cui_precision", "cui_recall", "cui_f1",
-                            "primary_diagnosis", "diagnosis_correct", "confidence")
-                if any(k in t for t in scored)]
-        if keys:
-            lines.append("| turn | " + " | ".join(keys) + " | violations |")
-            lines.append("|---|" + "---|" * (len(keys) + 1))
-            for t in scored:
-                cells = []
-                for k in keys:
-                    v = t.get(k)
-                    if isinstance(v, dict):
-                        cells.append(_fmt(v))
-                    elif isinstance(v, bool):
-                        cells.append("✓" if v else "✗")
-                    else:
-                        cells.append(str(v))
-                lines.append(f"| {t['turn_id']} | " + " | ".join(cells) +
-                             f" | {len(t.get('guideline_violations', []))} |")
-        else:
-            for t in ep["turns"]:
-                lines.append(f"- {t['turn_id']}: submitted={t['submitted']} "
-                             f"term={t.get('turn_termination', 'unknown')}")
-        if ep.get("final_cumulative_success"):
-            lines.append(f"\ncumulative success: {_fmt(ep['final_cumulative_success'])}")
-        lines.append("")
-    if result.get("aggregate"):
-        lines += ["## Aggregate", "",
-                  "| metric | value |", "|---|---|"]
-        for k, v in result["aggregate"].items():
-            lines.append(f"| {k} | {_fmt(v)} |")
-    lines += ["", "失败/未提交轮保留在分母；分母为 0 记 N/A。", ""]
+def _write_scored_report(run_dir: Path, manifest: dict[str, Any], result: dict[str, Any],
+                         dataset, decisions: dict[str, list[dict[str, Any]]]) -> None:
+    """中文阅读层：展示英文原文与评分，不改变模型输入或评分内容。"""
+    labels = {
+        "caption_token_precision": "描述词精确率（预测词中匹配参考的比例）",
+        "caption_token_recall": "描述词召回率（参考词中被预测覆盖的比例）",
+        "caption_token_f1": "描述词 F1（精确率与召回率的综合）",
+        "cui_precision": "概念编号精确率",
+        "cui_recall": "概念编号召回率",
+        "cui_f1": "概念编号 F1",
+        "refs_covered": "引用覆盖率",
+    }
+    lines = [f"# AMA 实验报告 — {manifest['run_id']}", "",
+             f"模型：{manifest['model']}；评分器：{result.get('scorer')}", "",
+             "caption = 英文影像描述；cuis = UMLS 医学概念编号列表。编号本身不是诊断。",
+             "本报告比较描述词和概念编号的重合程度；分数不代表临床判断正确率。"]
+    if manifest["model"] == "scripted":
+        lines += ["scripted 使用预写答案，只用于检查运行流程。"]
+    lines += ["", "## 汇总", "", "| 指标 | 分子/分母 |", "|---|---|"]
+    for key, value in (result.get("aggregate") or {}).items():
+        lines.append(f"| {labels.get(key, key)} | {_fmt(value)} |")
+    lines += ["", "## 逐例对照", ""]
+    for ep in dataset.episodes:
+        lines += [f"### {ep.id}", ""]
+        rows = {row["turn_id"]: row for row in decisions.get(ep.id, [])}
+        target = dataset.targets.get(ep.id)
+        for turn in ep.turns:
+            lines += [f"轮次：{turn.id}", ""]
+            for evidence in turn.evidence:
+                if evidence.file and Path(evidence.file).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+                    image = os.path.relpath(dataset.folder / evidence.file, run_dir)
+                    lines += [f"![影像 {evidence.id}](<{image}>)", ""]
+            row = rows.get(turn.id, {})
+            decision = row.get("decision")
+            if decision is None:
+                lines += [f"未获得答案：{row.get('termination', '未执行')}", ""]
+            else:
+                lines += ["模型原文：", "", "```json",
+                          json.dumps(decision["answer"], ensure_ascii=False, indent=2), "```", ""]
+            reference = target.turns.get(turn.id, {}) if target else {}
+            if "answer" in reference:
+                lines += ["参考原文（仅评测阶段读取）：", "", "```json",
+                          json.dumps(reference["answer"], ensure_ascii=False, indent=2), "```", ""]
+    lines += ["分母为 0 时显示 N/A。医学术语与三个示例的中文对照见仓库 docs/rocov2-lab-guide.zh-CN.md。", ""]
     (run_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -363,7 +357,6 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--interactive", action="store_true")
     r.add_argument("--runs-root", default="runs")
     r.add_argument("--verbose", action="store_true")
-    r.add_argument("--protocol", choices=["direct_decision", "tool_agent"], default="direct_decision")
     r.add_argument("--instruction-file", type=Path,
                    help="task-specific model instruction, copied into the run manifest")
     r.add_argument("--max-model-calls", type=int, default=60)
@@ -378,12 +371,9 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--scorer")
 
     imp = sub.add_parser("import", help="offline dataset conversion")
-    imp.add_argument("kind", choices=["medagentbench", "episode-folder", "rocov2"])
+    imp.add_argument("kind", choices=["rocov2"])
     imp.add_argument("--source", required=True)
     imp.add_argument("--out", required=True)
-    imp.add_argument("--fhir-base", default=None, help="medagentbench: also build FHIR patient episodes")
-    imp.add_argument("--fhir-patients", type=int, default=5)
-    imp.add_argument("--name", default=None, help="episode-folder: dataset name")
     imp.add_argument("--split", default="test", help="rocov2: source split (default: test)")
     imp.add_argument("--limit", type=int, default=None, help="rocov2: maximum records after sorting")
     imp.add_argument("--id", action="append", dest="ids", help="rocov2: exact image ID (repeatable)")
@@ -423,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
                           "deadline_seconds": args.deadline_seconds,
                           "max_retries": args.max_retries,
                           "request_timeout": args.request_timeout},
-                         protocol=args.protocol, instruction=instruction)
+                         instruction=instruction)
         except FileNotFoundError as exc:
             print(f"ERROR: {exc}")
             return 1
@@ -433,17 +423,9 @@ def main(argv: list[str] | None = None) -> int:
         return _eval_run(Path(args.run_dir), args.scorer)
 
     if args.cmd == "import":
-        if args.kind == "medagentbench":
-            from .importers.medagentbench import import_medagentbench
-            report = import_medagentbench(Path(args.source), Path(args.out),
-                                          fhir_base=args.fhir_base, fhir_patients=args.fhir_patients)
-        elif args.kind == "episode-folder":
-            from .importers.episode_folder import import_episode_folders
-            report = import_episode_folders(Path(args.source), Path(args.out), dataset_name=args.name)
-        else:
-            from .importers.rocov2 import import_rocov2
-            report = import_rocov2(Path(args.source), Path(args.out), split=args.split,
-                                   limit=args.limit, ids=args.ids)
+        from .importers.rocov2 import import_rocov2
+        report = import_rocov2(Path(args.source), Path(args.out), split=args.split,
+                              limit=args.limit, ids=args.ids)
         print(json.dumps(report, ensure_ascii=False, indent=2)[:4000])
         print(f"\nimported -> {args.out}  next: ama validate {args.out}")
         return 0

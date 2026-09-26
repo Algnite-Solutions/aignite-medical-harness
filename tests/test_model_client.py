@@ -3,7 +3,6 @@ import json
 import urllib.request
 
 from ama.model import Message, OpenAICompatModel, resolve_model_config
-from ama.protocols import EVIDENCE_TOOLS
 
 
 class FakeResponse:
@@ -40,22 +39,24 @@ def test_no_tools_by_default_and_raw_response(monkeypatch):
 
 def test_tool_choice_is_per_request(monkeypatch):
     captured = {}
+    tools = [{"type": "function", "function": {"name": "example_tool",
+              "parameters": {"type": "object", "properties": {}}}}]
 
     def fake(req, timeout=None):
         captured.update(json.loads(req.data))
         return FakeResponse(json.dumps({"choices": [{"message": {"content": None,
             "tool_calls": [{"id": "call_1", "type": "function", "function": {
-                "name": "list_evidence", "arguments": "{}"}}]}}]}).encode())
+                "name": "example_tool", "arguments": "{}"}}]}}]}).encode())
 
     monkeypatch.setattr(urllib.request, "urlopen", fake)
     model = OpenAICompatModel("m", "https://example.test/v1", "provider", "secret")
-    result = model.next([Message(role="user", content="hello")], tools=EVIDENCE_TOOLS)
-    assert captured["tools"] == EVIDENCE_TOOLS
-    assert result["tool_calls"][0]["function"]["name"] == "list_evidence"
+    result = model.next([Message(role="user", content="hello")], tools=tools)
+    assert captured["tools"] == tools
+    assert result["tool_calls"][0]["function"]["name"] == "example_tool"
 
 
 def test_provider_alias_does_not_encode_protocol():
-    cfg = resolve_model_config("qwen36-json")
+    cfg = resolve_model_config("qwen36")
     assert cfg.model == "Qwen3.6-27B"
-    assert cfg.chat_template_kwargs == {"enable_thinking": False}
+    assert cfg.wire == "openai_compact_image"
     assert "response_mode" not in cfg.model_dump()
