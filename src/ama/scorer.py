@@ -24,10 +24,18 @@ def _base_turn_entry(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def expected_rows(episode, decisions):
+    """Missing/failed answers remain in the expected-turn denominator."""
+    indexed = {row["turn_id"]: row for row in decisions.get(episode.id, [])}
+    return [{"turn_id": turn.id, "decision": None, "termination": "not_executed",
+             "model_calls": 0, "usage": None, "duration_ms": 0,
+             **indexed.get(turn.id, {})} for turn in episode.turns]
+
+
 def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     per = {}
     for ep in dataset.episodes:
-        rows = decisions.get(ep.id, [])
+        rows = expected_rows(ep, decisions)
         usage = [r["usage"] for r in rows if isinstance(r.get("usage"), dict)]
         per[ep.id] = {
             "completion": _rate(sum(1 for r in rows if r["decision"]), len(rows)),
@@ -70,7 +78,7 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
               "cui_overlap": 0, "cui_predicted": 0, "cui_gold": 0,
               "refs_covered": 0, "refs_total": 0}
     for ep in dataset.episodes:
-        rows = decisions.get(ep.id, [])
+        rows = expected_rows(ep, decisions)
         target = dataset.targets.get(ep.id)
         turns_out: list[dict[str, Any]] = []
         for row in rows:

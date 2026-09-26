@@ -4,8 +4,9 @@ Array order defines when evidence is released. An optional `available_at` must b
 
 | File | Contents | Read by |
 |---|---|---|
-| dataset.json | schema, name, splits | run and eval |
-| episodes.jsonl | one Episode per line | run and eval |
+| dataset.json | schema, name, splits | run, chat and eval |
+| episodes.jsonl | one Episode per line | run, chat and eval |
+| instructions.txt | global task instructions | run and chat |
 | targets.jsonl | per-turn reference answers | eval only |
 | eval.json | scorer and optional rules | eval only |
 | provenance.jsonl | source locators | neither run nor eval |
@@ -17,10 +18,10 @@ Array order defines when evidence is released. An optional `available_at` must b
 
 One line of `episodes.jsonl`:
 ```json
-{"id":"image-1","turns":[{"id":"t1","observation":"Describe this image.","evidence":[{"id":"scan","type":"image","file":"artifacts/scan.jpg"}]}]}
+{"id":"image-1","turns":[{"id":"t1","evidence":[{"id":"scan","type":"image","file":"artifacts/scan.jpg"}]}]}
 ```
 
-Evidence needs at least one of `text` or a safe relative `file`. Type, observation and true availability time are optional; omit absent values. JPEG, PNG, GIF and WebP evidence is sent as image content. Other files need useful accompanying text when the model must understand them.
+Evidence needs at least one of `text` or a safe relative `file`. Type, observation and true availability time are optional; omit absent values. JPEG, PNG, GIF and WebP evidence is sent as image content. Other files are read as UTF-8 text; unsupported binary formats must be converted first. Global task requirements belong in instructions.txt, not repeated in each observation.
 
 Episode IDs are unique across a dataset; Turn and Evidence IDs are unique within an Episode. Known timestamps must be monotonic.
 
@@ -38,6 +39,6 @@ A ROCOv2 target line:
 
 Use `{"scorer":"rocov2"}` in `eval.json`. Without an evaluation configuration, the runner reports completion only.
 
-The built-in interaction directly presents evidence and requests a Decision. Custom tool protocols implement `InteractionProtocol` and are passed to `run_episode`. Optional instructions are supplied with `--instruction-file`; manifests record their text and hash, model configuration and visible dataset hashes.
+Both run and chat use the same Agent. Run parses a Decision outside the Agent; chat allows natural-language follow-ups and cannot be scored. `--tools file.py` optionally loads an explicit TOOLS list. Instructions default to instructions.txt and can be replaced with `--instruction-file`; manifests record actual prompts, their instruction hash, model configuration and visible dataset hashes. Data checks run automatically. Only eval opens reference answers and rules. Failed and missing turns remain in evaluation denominators.
 
 The [Chinese lab guide](rocov2-lab-guide.zh-CN.md) is for human readers and never enters model input.

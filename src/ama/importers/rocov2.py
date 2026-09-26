@@ -106,9 +106,6 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
             "id": image_id,
             "turns": [{
                 "id": "t1",
-                "observation": ("Review the released radiology image. Submit answer.caption as one concise "
-                            "English radiology caption and answer.cuis as a list of UMLS CUI strings. "
-                            "Cite the image evidence."),
                 "evidence": [{"id": evidence_id, "type": "image",
                               "file": f"artifacts/{destination.name}"}],
             }],
@@ -128,7 +125,8 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
                                             for row in records), encoding="utf-8")
     (out / "eval.json").write_text('{"scorer": "rocov2"}\n', encoding="utf-8")
     (out / "instructions.txt").write_text(
-        "For each image, provide answer.caption and answer.cuis; cite the image ID.\n",
+        "Describe each radiology image in concise English and identify its UMLS concepts.\n"
+        "When a structured answer is requested, use {\"caption\": \"description\", \"cuis\": [\"CUI strings\"]}.\n",
         encoding="utf-8")
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

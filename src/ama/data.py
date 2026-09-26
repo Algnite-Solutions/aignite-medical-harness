@@ -35,6 +35,14 @@ def resolve_dataset_dir(value: str | Path) -> Path:
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def nonempty_id(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "id" in value and (
+                not isinstance(value["id"], str) or not value["id"].strip()):
+            raise ValueError("id must be a non-empty string")
+        return value
+
 
 class Evidence(_Model):
     id: str
@@ -45,9 +53,10 @@ class Evidence(_Model):
     @model_validator(mode="before")
     @classmethod
     def omit_missing_optional_fields(cls, value: Any) -> Any:
-        if isinstance(value, dict) and any(key in value and value[key] is None
+        if isinstance(value, dict) and any(key in value and (value[key] is None or
+                                           isinstance(value[key], str) and not value[key].strip())
                                            for key in ("type", "text", "file")):
-            raise ValueError("omit absent optional evidence fields instead of null")
+            raise ValueError("omit absent optional evidence fields instead of null or blank")
         return value
 
     @model_validator(mode="after")
@@ -66,9 +75,10 @@ class Turn(_Model):
     @model_validator(mode="before")
     @classmethod
     def omit_missing_optional_fields(cls, value: Any) -> Any:
-        if isinstance(value, dict) and any(key in value and value[key] is None
+        if isinstance(value, dict) and any(key in value and (value[key] is None or
+                                           isinstance(value[key], str) and not value[key].strip())
                                            for key in ("available_at", "observation")):
-            raise ValueError("omit absent optional turn fields instead of null")
+            raise ValueError("omit absent optional turn fields instead of null or blank")
         return value
 
 
@@ -157,6 +167,8 @@ def load_dataset(folder: Path, with_targets: bool = False) -> Dataset:
             for line in tpath.read_text(encoding="utf-8").splitlines():
                 if line.strip():
                     rec = TargetRecord.model_validate(json.loads(line))
+                    if rec.id in targets:
+                        raise ValueError(f"duplicate target episode id: {rec.id}")
                     targets[rec.id] = rec
     eval_config = None
     if with_targets and (folder / "eval.json").exists():

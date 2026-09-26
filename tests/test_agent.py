@@ -1,139 +1,111 @@
-"""Deterministic protocol and replay-controller coverage."""
 import json
 
-from ama.agent import Interaction, run_episode
-from ama.data import Episode
-from ama.model import ModelError, ScriptedModel
-from ama.recorder import Budget, Recorder, TraceConfig
+import pytest
+
+from ama.agent import Agent, CallLimitExceeded
+from ama.model import ModelError, image, wire_messages
+from ama.tools import Tool, ToolResult, load_tools
+from fakes import FakeModel, call, calls
 
 
-EPISODE = {"id": "case", "turns": [
-    {"id": "t1", "observation": "History", "evidence": [{"id": "e1", "type": "note", "text": "pain"}]},
-    {"id": "t2", "observation": "Labs", "evidence": [{"id": "e2", "type": "lab", "text": "WBC 14"}]},
-]}
+def addition():
+    return Tool("add", "Add", {"type": "object"}, lambda a, b: {"sum": a + b})
 
 
-def run(tmp_path, actions, *, protocol=None, episode=None, per_turn=5,
-        interaction=None, model=None, retries=0, files=None):
-    source = tmp_path / "dataset"
-    source.mkdir()
-    (source / "dataset.json").write_text('{"schema":"ama-dataset","name":"test","splits":{}}')
-    (source / "episodes.jsonl").write_text(json.dumps(episode or EPISODE) + "\n")
-    for name, content in (files or {}).items():
-        path = source / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-    ep = Episode.model_validate(episode or EPISODE)
-    recorder = Recorder(tmp_path / "runs", "test", "scripted", source, [ep.id], TraceConfig(),
-                        Budget(30, per_turn, 60, retries))
-    summary = run_episode(ep, model or ScriptedModel("script", actions), recorder, protocol=protocol,
-                          interaction=interaction)
-    recorder.finalize([{k: v for k, v in summary.items() if k != "rows"}],
-                      {"n_episodes": 1})
-    return summary, recorder
+def test_no_tools_history_and_isolation():
+    model = FakeModel("first", "second", "fresh")
+    agent = Agent(model, system="system")
+    assert agent.chat("hello") == "first"
+    assert agent.chat("follow-up") == "second"
+    assert [m["role"] for m in model.requests[1][0]] == ["system", "user", "assistant", "user"]
+    assert all(tools is None for _, tools in model.requests)
+    Agent(model).chat("new episode")
+    assert model.requests[2][0] == [{"role": "user", "content": "new episode"}]
 
 
-def decision(turn, answer, citations=()):
-    return {"turn_id": turn, "answer": answer, "citations": list(citations)}
+def test_multiple_tools_order_ids_and_json():
+    model = FakeModel(calls(call(id="A"), call(arguments='{"a": 4, "b": 5}', id="B")), "done")
+    agent = Agent(model, tools=[addition()])
+    assert agent.chat("calculate") == "done"
+    results = [m for m in agent.history if m["role"] == "tool"]
+    assert [m["tool_call_id"] for m in results] == ["A", "B"]
+    assert [json.loads(m["content"])["sum"] for m in results] == [3, 9]
+    assert len(agent.calls) == 2
 
 
-def test_direct_shows_evidence_and_accepts_cumulative_citation(tmp_path):
-    summary, recorder = run(tmp_path, [decision("t1", {"diagnosis": "pain"}, ["e1"]),
-                                       decision("t2", {"diagnosis": "infection"}, ["e1", "e2"])])
-    assert summary["turns_decided"] == 2
-    events = (recorder.run_dir / "events.jsonl").read_text()
-    assert "read_evidence" not in events
-    assert summary["rows"][1]["decision"]["answer"]["diagnosis"] == "infection"
+@pytest.mark.parametrize("bad", [call(name="unknown"), call(arguments="invalid"), call(arguments="[]"),
+                                 call(arguments='{"wrong":1}')])
+def test_tool_error_can_be_corrected(bad):
+    model = FakeModel(calls(bad), calls(call()), "recovered")
+    agent = Agent(model, tools=[addition()])
+    assert agent.chat("go") == "recovered"
+    assert "error" in json.loads(agent.history[2]["content"])
+    assert json.loads(agent.history[4]["content"]) == {"sum": 3}
 
 
-def test_direct_future_citation_repaired(tmp_path):
-    summary, _ = run(tmp_path, [decision("t1", "wrong", ["e2"]), decision("t1", "ok", ["e1"]),
-                                decision("t2", "ok", ["e2"])])
-    assert summary["rows"][0]["steps"] == 2
-    assert summary["rows"][0]["decision"]["answer"] == "ok"
+def test_all_tool_results_precede_images(tmp_path):
+    path = tmp_path / "scan.png"
+    path.write_bytes(b"image fixture")
+    tool = Tool("scan", "read scan", {"type": "object"}, lambda: ToolResult("scan", [path]))
+    model = FakeModel(calls(call("scan", "{}", "A"), call("scan", "{}", "B")), "seen")
+    agent = Agent(model, tools=[tool])
+    assert agent.chat(["image input", image(path)]) == "seen"
+    assert [m["role"] for m in agent.history] == ["user", "assistant", "tool", "tool", "user", "assistant"]
+    assert [p["text"] for p in agent.history[4]["content"] if p["type"] == "text"] == [
+        "Tool image: call_id=A, name=scan", "Tool image: call_id=B, name=scan"]
+    before = json.dumps(agent.history)
+    wire = wire_messages(agent.history)
+    assert "base64" in json.dumps(wire) and "base64" not in before
+    assert json.dumps(agent.history) == before
 
 
-def test_protocol_extension_can_supply_tools(tmp_path):
-    from ama.protocols import DirectDecisionProtocol, StepResult
-    from ama.model import Message
-
-    class ExampleExtension(DirectDecisionProtocol):
-        name = "example_extension"
-        tools = [{"type": "function", "function": {"name": "example_tool",
-                  "parameters": {"type": "object", "properties": {}}}}]
-
-        def step(self, item, turn, visible, root):
-            if item == "tool request":
-                return StepResult(messages=[Message(role="user", content="tool result")],
-                                  event={"action": "example_tool"})
-            return super().step(item, turn, visible, root)
-
-    class ToolAwareModel(ScriptedModel):
-        def next(self, messages, tools=None):
-            assert tools == ExampleExtension.tools
-            return super().next(messages, tools)
-
-    model = ToolAwareModel("extension", ["tool request", decision("t1", "ok"), decision("t2", "ok")])
-    summary, recorder = run(tmp_path, [], protocol=ExampleExtension(), model=model)
-    assert summary["turns_decided"] == 2
-    assert summary["rows"][0]["steps"] == 2
-    assert "example_tool" in (recorder.run_dir / "events.jsonl").read_text()
+def test_tool_exception_and_missing_image_return_errors(tmp_path):
+    def bad():
+        raise RuntimeError("broken tool")
+    for handler in [bad, lambda: ToolResult(images=[tmp_path / "absent.png"])]:
+        agent = Agent(FakeModel(calls(call("bad", "{}")), "handled"),
+                      tools=[Tool("bad", "bad", {}, handler)])
+        assert agent.chat("go") == "handled"
+        assert "error" in agent.history[2]["content"]
 
 
-def test_abstain_is_null_answer_without_citations(tmp_path):
-    summary, _ = run(tmp_path, [decision("t1", None), decision("t2", None)])
-    assert summary["turns_decided"] == 2
-    assert summary["rows"][0]["decision"]["answer"] is None
+def test_call_limit_keeps_tool_result_and_stops_session():
+    agent = Agent(FakeModel(calls(call())), tools=[addition()], max_calls=1)
+    with pytest.raises(CallLimitExceeded):
+        agent.chat("go")
+    assert agent.history[-1]["role"] == "tool"
+    with pytest.raises(RuntimeError, match="session has stopped"):
+        agent.chat("again")
 
 
-def test_invalid_json_hits_turn_budget_but_replay_advances(tmp_path):
-    summary, _ = run(tmp_path, ["not json", decision("t2", "ok")], per_turn=1)
-    assert summary["rows"][0]["decision"] is None
-    assert summary["rows"][1]["decision"]["answer"] == "ok"
+@pytest.mark.parametrize("error", [ModelError("offline"), KeyboardInterrupt()])
+def test_errors_propagate_without_retry(error):
+    model = FakeModel(error)
+    agent = Agent(model)
+    with pytest.raises(type(error)):
+        agent.chat("keep this input")
+    assert len(model.requests) == 1 and len(agent.calls) == 1
+    assert agent.history[-1]["content"] == "keep this input"
+    assert agent.calls[0]["error"]
 
 
-class StopAfterTurn(Interaction):
-    def wait_next(self):
-        return False
+def test_tool_exports_and_duplicate_names(tmp_path):
+    assert load_tools(None) == []
+    assert load_tools("examples/tools.py")[0].invoke('{"a":2,"b":3}').text == '{"sum": 5}'
+    invalid = tmp_path / "invalid.py"
+    invalid.write_text("TOOLS = [lambda: 1]")
+    with pytest.raises(ValueError, match="TOOLS"):
+        load_tools(invalid)
+    with pytest.raises(ValueError, match="duplicate"):
+        Agent(FakeModel(), tools=[addition(), addition()])
 
 
-def test_operator_stop(tmp_path):
-    summary, _ = run(tmp_path, [decision("t1", "ok")], interaction=StopAfterTurn())
-    assert summary["termination"] == "operator_stopped" and len(summary["rows"]) == 1
-
-
-class CaptureModel:
-    name = "capture"
-    last_usage = None
-
-    def __init__(self, response, fail_once=False):
-        self.response = response
-        self.fail_once = fail_once
-        self.calls = 0
-        self.messages = []
-
-    def next(self, messages, tools=None):
-        self.calls += 1
-        self.messages = messages[:]
-        if self.fail_once and self.calls == 1:
-            raise ModelError("temporary failure", kind="network")
-        return self.response
-
-
-def test_model_retry_respects_budget(tmp_path):
-    one = {"id": "case", "turns": [EPISODE["turns"][0]]}
-    model = CaptureModel(decision("t1", "ok", ["e1"]), fail_once=True)
-    summary, recorder = run(tmp_path, [], episode=one, model=model, retries=1)
-    assert summary["turns_decided"] == 1 and model.calls == 2
-    assert "model_retry" in (recorder.run_dir / "events.jsonl").read_text()
-
-
-def test_direct_image_is_sent_but_binary_not_logged(tmp_path):
-    one = {"id": "case", "turns": [{"id": "t1", "evidence": [
-        {"id": "scan", "type": "image", "file": "assets/scan.jpg"}]}]}
-    model = CaptureModel(decision("t1", {"caption": "x"}, ["scan"]))
-    summary, recorder = run(tmp_path, [], episode=one, model=model,
-                            files={"assets/scan.jpg": b"synthetic-image-bytes"})
-    assert summary["turns_decided"] == 1
-    assert any(p["type"] == "image_url" for p in model.messages[1].content)
-    assert "c3ludGhldGljLWltYWdlLWJ5dGVz" not in (recorder.run_dir / "events.jsonl").read_text()
+def test_budget_resets_per_input_and_duplicate_ids_are_not_executed():
+    model = FakeModel("one", "two")
+    agent = Agent(model, max_calls=1)
+    assert agent.chat("first") == "one"
+    assert agent.chat("second") == "two"
+    agent = Agent(FakeModel(calls(call(id="same"), call(id="same"))), tools=[addition()])
+    with pytest.raises(ModelError, match="unique"):
+        agent.chat("go")
+    assert not any(m["role"] == "tool" for m in agent.history)

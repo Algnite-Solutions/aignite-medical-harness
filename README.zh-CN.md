@@ -1,63 +1,78 @@
-# AMA — 实验室最小评测器
+# AMA — 一个小 Agent，两种数据集用法
 
 中文 | [English](README.md)
 
-目前只保留 **ROCOv2 看图描述**：给模型一张影像，得到英文描述和医学概念编号，再与参考答案比较。
+Agent 只做三件事：保存历史、请求模型、执行可选工具。它不认识 Episode，也不负责评分。
+实验层才决定“什么时候把数据集的下一条 observation 给它”。
 
-`Episode（一个样本）→ Turn（一轮）→ Evidence（图像）→ Decision（模型答案）`
-
-ROCOv2 每个样本只有一轮。核心循环仍能按顺序处理多轮；模型回答不会改变下一轮材料。
-
-## 先离线跑通
+## 先跑起来
 
 ```bash
 python3 -m pip install -e ".[dev]"
-ama validate datasets/rocov2_demo
-ama run datasets/rocov2_demo --model scripted
+python3 -m pytest -q
+# 参照 .env.example，把密钥写入本地 .env。
+ama run datasets/rocov2_demo --model qwen36
+ama eval runs/<运行目录>
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36
 ```
 
-最后一行会打印运行目录和对应的 `ama eval` 命令。执行它后打开该目录的 `report.md`：图像、模型原文、参考原文和中文指标说明都在里面。`scripted` 只播放三个预写答案，不访问云端，也不代表模型能力。
+模型在 `ama.json` 注册；测试假模型只放在 tests，不是运行选项。
+注册成功不代表服务一定支持图像或工具，二者混用还需小样本检查。
 
-看不懂医学英文时，先读 [ROCOv2 中文阅读指南](docs/rocov2-lab-guide.zh-CN.md)：包含三个样本参考描述的中英对照、术语和分数解释。
+[本次兼容性检查](docs/compatibility-smoke.md)：GLM 返回合法 Decision，但缺少 caption（按空预测评分）；
+Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision 格式，工具返回图像被接口拒绝。
+`--model glm-vision` 已跑通运行与评测流程，不代表任务答案完整。这不是模型能力排名。
 
-## 再使用视觉模型
+- `run`：自动依次释放 observation，每个样本用一个新 Agent，每轮返回 JSON Decision。
+- `chat`：自动释放第一轮；普通输入是追问，`/next` 才推进一轮，`/quit` 保存退出。
+- 最后一轮之后仍可追问；chat 可自然语言回答，是探索记录，**不能评测**。
 
-模型配置见 `ama.json`，密钥写在本地 `.env`（见 `.env.example`）。
+两者自动检查可见数据，默认使用数据集的 `instructions.txt`。
+`--instruction-file 文件` 替换任务说明；`--tools examples/tools.py` 显式启用工具。
+默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
+`--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
-```bash
-ama run datasets/rocov2_demo --model glm-vision \
-  --instruction-file datasets/rocov2_demo/instructions.txt
-```
+## PI 与学生一起读的顺序
 
-模型每轮直接收到图像并返回一个 JSON：
-```json
-{"turn_id":"t1","answer":{"caption":"A chest image.","cuis":[]},"citations":["image-ID"]}
-```
-`image-ID` 换成该样本的真实 Evidence ID。`answer: null` 表示弃答。
+按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读
+[最小 Agent 导读](docs/minimal-agent.zh-CN.md)，里面有可直接执行的例子与对应测试。
 
-## 代码从哪里读
-
-按下面顺序看即可：
-
-| 文件 | 负责什么 |
+| 位置 | 唯一职责 |
 |---|---|
-| `data.py` | 定义四个数据对象、读取和检查数据 |
-| `agent.py: run_episode` | 依次展示每轮材料、请求模型、记录答案 |
-| `protocols.py: DirectDecisionProtocol` | 组装提示、发送图像、解析和检查答案 |
-| `model.py` | 把消息发给模型，取回原始响应 |
-| `scorer.py: score_rocov2` | 比较答案中的描述词和概念编号 |
-| `cli.py` / `recorder.py` | 命令入口、报告和实验记录 |
+| `model.py` | 配置别名、发送前编码图像、发一次请求 |
+| `agent.py` | 同一个 history 上追加消息，循环至最终回复 |
+| `tools.py` | 显式工具定义、Python 函数绑定、返回值 |
+| `runner.py` | 释放材料、检查 Decision、run/chat 流程 |
+| `cli.py` | 命令入口与独立 eval |
+| `data.py` / `scorer.py` | 数据对象与检查 / 评分定义 |
+| `recorder.py` | 原始消息、决策和实验配置记录 |
 
-CLI 目前只运行直接决策。工具使用留在 `InteractionProtocol` 接口：以后实现自己的协议对象并传给 `run_episode(protocol=...)`，由它提供工具列表并处理响应。当前没有内置工具代理或工具模式开关。
+工具文件是可信 Python，不是沙箱。不要让工具读取参考答案或未来轮次。
+没有历史协议层、暂停菜单或图像/工具角色改写；服务不支持时明确报错。
 
-## 数据
+## 数据和记录
 
-唯一内置示例是 `datasets/rocov2_demo`。导入完整数据或子集：
+只保留 ROCOv2。每张图像是一例、一轮；其他按顺序排列的多轮数据也能用。
 
 ```bash
 ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
+ama run datasets/rocov2 --model qwen36 --split test
 ```
 
-模型只读取 `dataset.json`、`episodes.jsonl` 和其中引用的图像。`targets.jsonl` 和 `eval.json` 在评测时读取。`provenance.jsonl` 保存来源。中文阅读指南供实验人员使用。
+也可用可重复的 `--episode ID` 替代 `--split`，`--runs-root 目录` 指定输出父目录。
 
-完整字段见 [数据格式](docs/ama-dataset.zh-CN.md)。运行记录保存在 `runs/`，测试使用 `pytest -q`。
+运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
+工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
+普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。
+
+`run` 的 JSON 无效时保留原文、记失败，不追加纠错对话。
+API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后停止整个批次。
+失败和缺失回答不会从评分分母中消失。部分失败时 CLI 返回非零状态，仍可独立 eval。
+
+`eval` 才读取参考答案和评分配置，只生成 `metrics.json`；
+评测前检查可见数据是否已改变。历史实验记录保留，但需要重新运行才能交给新评测器。
+详见 [字段说明](docs/ama-dataset.zh-CN.md)。
+
+看不懂医学英文时，先读 [ROCOv2 中文阅读指南](docs/rocov2-lab-guide.zh-CN.md)。
+模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`；中文指南解释术语与指标，不把翻译混入模型输入或评分。
+词重合与 CUI 重合不是临床正确率。

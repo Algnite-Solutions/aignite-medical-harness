@@ -1,1 +1,2 @@
-For every image, submit answer.caption as a string and answer.cuis as a list of UMLS CUI strings.
+Describe each radiology image in concise English and identify its UMLS concepts.
+When a structured answer is requested, use {"caption": "description", "cuis": ["CUI strings"]}.

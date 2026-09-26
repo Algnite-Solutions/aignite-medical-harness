@@ -1,23 +1,17 @@
 {
   "models": {
-    "scripted": {
-      "type": "scripted",
-      "script_dir": "scripts/rocov2"
-    },
     "glm-vision": {
-      "type": "openai_compatible",
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
       "model": "glm-4v-flash",
       "api_key_env": "GLM_API_KEY",
       "temperature": 0
     },
     "qwen36": {
-      "type": "openai_compatible",
       "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
       "model": "Qwen3.6-27B",
       "api_key_env": "MEDAI_API_KEY",
       "temperature": 0,
-      "wire": "openai_compact_image"
+      "chat_template_kwargs": {"enable_thinking": false}
     }
   }
 }

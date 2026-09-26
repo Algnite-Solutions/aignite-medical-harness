@@ -78,3 +78,14 @@ def test_run_loader_never_reads_evaluator_files(tmp_path, monkeypatch):
     monkeypatch.setattr(type(root), "read_text", guarded)
     ds = load_dataset(root, with_targets=False)
     assert ds.targets == {} and ds.eval_config is None
+
+
+def test_blank_optional_fields_ids_and_duplicate_targets(tmp_path):
+    ep = example()
+    ep["id"] = " "
+    assert "non-empty" in validate_dataset(write_dataset(tmp_path, [ep]))[0]
+    ep = example()
+    ep["turns"][0]["evidence"][0]["type"] = ""
+    assert "omit absent" in validate_dataset(write_dataset(tmp_path, [ep]))[0]
+    target = {"id": "ep", "turns": {}}
+    assert "duplicate target" in validate_dataset(write_dataset(tmp_path, [example()], [target, target]))[0]

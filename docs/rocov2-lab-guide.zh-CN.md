@@ -61,7 +61,8 @@ CUI 是编号，不能只凭它推断疾病或严重程度。完整 ROCOv2 数�
 
 ## 如何看分数
 
-运行 `ama eval` 后打开运行目录的 `report.md`，逐例对照图像、模型原文和参考原文。
+运行 `ama eval` 后打开运行目录的 `metrics.json` 查看分数。
+模型原文在同目录的 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`；按样本 ID 与轮次 ID 对照。
 
 - 描述词精确率：模型写出的词，有多少能在参考描述中找到。
 - 描述词召回率：参考描述里的词，有多少被模型覆盖。
@@ -75,11 +76,14 @@ CUI 是编号，不能只凭它推断疾病或严重程度。完整 ROCOv2 数�
 
 ## 如何看代码
 
-打开 `src/ama/agent.py` 的 `run_episode`，沿着四步读：
+按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”读：
 
-1. 将本轮 Evidence 加入可见材料。
-2. 用 `DirectDecisionProtocol.turn_messages` 组装消息和图像。
-3. `model.next` 发出请求，`DirectDecisionProtocol.step` 解析答案。
-4. `recorder.save_decision` 保存这一轮，继续下一轮。
+1. `model.py: Model.complete`：发一次请求，只有发送时才编码图像。
+2. `agent.py: Agent.chat`：在同一份历史里追加输入与回复。
+3. `tools.py` 和 Agent 循环：可选工具调用，保留调用 ID 与图像来源。
+4. `runner.py` / `cli.py`：释放数据、解析 Decision、记录与独立评测。
 
-评测由另一条 `ama eval` 命令触发，最后才读参考答案。工具使用的扩展接口在 `protocols.py`，当前读主流程时只需看直接决策实现。
+可执行例子和对应测试见 [最小 Agent 导读](minimal-agent.zh-CN.md)。
+评测由另一条 `ama eval` 命令触发，最后才读参考答案。
+`ama chat` 围绕指定样本自由追问，支持用中文要求解释，但探索记录不可评分。
+正式 run 保留模型英文原文；不把本指南或参考翻译发给模型。为保持最小代码，不再自动生成对照报告。

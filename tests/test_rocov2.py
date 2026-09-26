@@ -105,18 +105,14 @@ def test_rocov2_import_run_eval(tmp_path, monkeypatch):
     out = tmp_path / "out"
     import_rocov2(source_fixture(tmp_path), out, ids=["ROCO_test_001"])
     assert validate_dataset(out) == []
-    scripts = tmp_path / "scripts"
-    scripts.mkdir()
-    (scripts / "ROCO_test_001.json").write_text(json.dumps({
-        "episode_id": "ROCO_test_001", "actions": [{
-            "turn_id": "t1", "answer": {"caption": "CT chest axial view.",
-                                         "cuis": ["C0040405", "C0000001"]},
-            "citations": ["image-ROCO_test_001"]}]}))
-    (tmp_path / "ama.json").write_text(json.dumps({"models": {"scripted": {
-        "type": "scripted", "script_dir": str(scripts)}}}))
-    monkeypatch.chdir(tmp_path)
+    from ama.model import Model
+    from fakes import FakeModel, decision
+    model = FakeModel(decision(answer={"caption": "CT chest axial view.",
+                                       "cuis": ["C0040405", "C0000001"]},
+                               citations=["image-ROCO_test_001"]))
+    monkeypatch.setattr(Model, "from_config", lambda *a, **kw: model)
     runs = tmp_path / "runs"
-    assert main(["run", str(out), "--model", "scripted", "--runs-root", str(runs)]) == 0
+    assert main(["run", str(out), "--model", "test-model", "--runs-root", str(runs)]) == 0
     run_dir = next(runs.iterdir())
     assert main(["eval", str(run_dir)]) == 0
     metrics = json.loads((run_dir / "metrics.json").read_text())
