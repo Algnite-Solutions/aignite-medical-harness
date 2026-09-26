@@ -159,17 +159,17 @@ def explore(dataset, episode, agent, recorder, input_fn):
     while True:
         turn = episode.turns[index]
         if source == "dataset":
-            print(f"\nObservation {index + 1}/{len(episode.turns)}: {turn.id}")
+            print(f"\n[dataset] Observation {index + 1}/{len(episode.turns)}: {turn.id}")
             for part in message:
                 print(part if isinstance(part, str) else f"[image] {part['path']}")
         row = exchange(agent, recorder, message, episode_id=episode.id, turn_id=turn.id, source=source)
         if row["termination"] != "completed":
             print(f"Stopped: {row['termination']}: {row['error']}")
             return row["termination"]
-        print(row["reply"])
+        print(f"\n[assistant]\n{row['reply']}")
         while True:
             try:
-                text = input_fn("(ama) /next /quit > ").strip()
+                text = input_fn("\n[human] (/next, /quit) > ").strip()
             except EOFError:
                 return "eof"
             if text == "/quit":

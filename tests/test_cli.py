@@ -69,7 +69,10 @@ def test_chat_followups_next_and_unscorable_without_hidden_reads(tmp_path, monke
     messages = [r for r in rows(path, "events.jsonl") if r["kind"] == "message" and r["message"]["role"] == "user"]
     assert [r["source"] for r in messages] == ["dataset", "human", "dataset", "human"]
     assert [r["turn_id"] for r in messages] == ["t1", "t1", "t2", "t2"]
-    assert "没有后续材料" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "没有后续材料" in output
+    assert output.count("[dataset] Observation") == 2
+    assert output.count("[assistant]") == 4
     with pytest.raises(ValueError, match="探索"):
         _eval_run(path)
     assert not (path / "metrics.json").exists() and not (path / "decisions.jsonl").exists()

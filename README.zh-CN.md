@@ -1,11 +1,11 @@
-# AMA — 一个小 Agent，两种数据集用法
+# AMA — 一个最小化的临床Agent
 
 中文 | [English](README.md)
 
 Agent 只做三件事：保存历史、请求模型、执行可选工具。它不认识 Episode，也不负责评分。
 实验层才决定“什么时候把数据集的下一条 observation 给它”。
 
-## 先跑起来
+## 安装
 
 ```bash
 python3 -m pip install -e ".[dev]"
@@ -32,7 +32,7 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
 `--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
-## PI 与学生一起读的顺序
+## 阅读顺序
 
 按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读
 [最小 Agent 导读](docs/minimal-agent.zh-CN.md)，里面有可直接执行的例子与对应测试。
@@ -52,7 +52,7 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 
 ## 数据和记录
 
-只保留 ROCOv2。每张图像是一例、一轮；其他按顺序排列的多轮数据也能用。
+以ROCOv2为例。每张图像是一例、一轮；也只能多轮对话数据。
 
 ```bash
 ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
@@ -64,6 +64,8 @@ ama run datasets/rocov2 --model qwen36 --split test
 运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
 工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
 普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。
+
+`chat` chat模式下没有关于decision格式的prompt指引，作为交互和数据集观察用。
 
 `run` 的 JSON 无效时保留原文、记失败，不追加纠错对话。
 API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后停止整个批次。
