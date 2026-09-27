@@ -99,8 +99,10 @@ ama eval /path/to/restricted-runs/RUN_ID
 ```
 
 The importer creates both 2,400-admission datasets and validates source structure. Interactive
-episodes start with HPI; the trusted tool file binds examination, lab, microbiology, and imaging
-requests to the current admission. Full-information episodes present all those inputs together.
+episodes start with HPI; the trusted tool file binds examination, complete laboratory results,
+microbiology, and imaging to the current admission. Use `list_imaging` to see available reports,
+then `imaging(report_id)` to read one. Existing processed datasets work with these tools without
+reimporting. Full-information episodes present all those inputs together.
 Discharge outcomes remain evaluator-only. Both modes score four-way diagnosis; treatment plans are
 recorded for review. Tool results appear in event logs, but the current Decision citation check only
 accepts episode evidence IDs, so interactive answers may cite HPI or leave citations empty. The

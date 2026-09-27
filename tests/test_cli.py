@@ -176,7 +176,7 @@ def test_chat_interrupt_while_waiting_preserves_answer(tmp_path):
     assert any(r.get("message", {}).get("content") == "answer" for r in rows(path, "events.jsonl"))
 
 
-def test_tool_image_source_and_log_has_no_base64(tmp_path):
+def test_tool_image_source_and_log_has_no_base64(tmp_path, capsys):
     root = dataset(tmp_path)
     scan = tmp_path / "scan.png"
     scan.write_bytes(b"fixture")
@@ -190,6 +190,11 @@ def test_tool_image_source_and_log_has_no_base64(tmp_path):
     assert [r["source"] for r in messages] == ["system", "dataset", "model", "tool", "tool", "model"]
     assert messages[3]["message"]["tool_call_id"] == "image-call"
     assert "base64" not in (path / "events.jsonl").read_text()
+    output = capsys.readouterr().out
+    assert "[tool call] scan {}" in output
+    assert "[tool result] scan" in output
+    assert output.count("[model] waiting for response...") == 2
+    assert output.index("[tool call]") < output.index("[assistant]")
 
 
 def test_abstain_and_extra_fields():

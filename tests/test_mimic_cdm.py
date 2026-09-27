@@ -86,11 +86,21 @@ def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
     tools_file = Path("src/ama/importers/mimic_cdm_tools.py")
     tools1 = {t.name: t for t in load_tools(tools_file, dataset_dir=folder, episode_id="1")}
     tools2 = {t.name: t for t in load_tools(tools_file, dataset_dir=folder, episode_id="2")}
+    assert set(tools1) == {"physical_examination", "laboratory_results", "microbiology",
+                           "list_imaging", "imaging"}
     assert "tenderness A" in tools1["physical_examination"].invoke("{}").text
     assert "tenderness B" in tools2["physical_examination"].invoke("{}").text
-    assert "finding B" not in tools1["imaging"].invoke('{"modality":"CT","region":"Abdomen"}').text
-    assert "12" in tools1["laboratory_tests"].invoke('{"names":["White blood cells"]}').text
-    assert "19" not in tools1["laboratory_tests"].invoke('{"names":["White blood cells"]}').text
+    labs = json.loads(tools1["laboratory_results"].invoke("{}").text)["results"]
+    assert [(row["label"], row["value"], row["fluid"]) for row in labs] == [
+        ("White blood cells", "12", "Blood")]
+    catalog = json.loads(tools1["list_imaging"].invoke("{}").text)["reports"]
+    assert catalog == [{"report_id": "imaging-1", "modality": "CT", "region": "Abdomen",
+                        "exam_name": "CT abdomen"}]
+    assert "finding" not in json.dumps(catalog)
+    assert "finding A" in tools1["imaging"].invoke('{"report_id":"imaging-1"}').text
+    assert "finding B" not in tools1["imaging"].invoke('{"report_id":"imaging-1"}').text
+    with pytest.raises(ValueError, match="unknown imaging report ID"):
+        tools1["imaging"].invoke('{"report_id":"imaging-2"}')
 
     model = FakeModel(calls(call("physical_examination", "{}")),
                       decision(answer={"diagnosis": "appendicitis", "treatment_plan": "surgery"},

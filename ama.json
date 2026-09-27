@@ -2,13 +2,20 @@
   "models": {
     "glm-vision": {
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "model": "glm-4v-flash",
+      "model": "glm-5.3-flash",
       "api_key_env": "GLM_API_KEY",
       "temperature": 0
     },
     "qwen36": {
       "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
       "model": "Qwen3.6-27B",
+      "api_key_env": "MEDAI_API_KEY",
+      "temperature": 0,
+      "chat_template_kwargs": {"enable_thinking": false}
+    },
+    "deepseek-v4-flash": {
+      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+      "model": "Deepseek-v4",
       "api_key_env": "MEDAI_API_KEY",
       "temperature": 0,
       "chat_template_kwargs": {"enable_thinking": false}

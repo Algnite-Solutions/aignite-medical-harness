@@ -14,7 +14,8 @@ class CallLimitExceeded(RuntimeError):
 
 
 class Agent:
-    def __init__(self, model, system: str = "", tools: list[Tool] | None = None, max_calls: int = 8):
+    def __init__(self, model, system: str = "", tools: list[Tool] | None = None, max_calls: int = 8,
+                 on_event=None):
         if max_calls < 1:
             raise ValueError("max_calls must be positive")
         self.model, self.max_calls = model, max_calls
@@ -24,6 +25,11 @@ class Agent:
         self.history = [{"role": "system", "content": system}] if system else []
         self.calls: list[dict] = []
         self.failed = False
+        self.on_event = on_event
+
+    def _emit(self, kind: str, value=None) -> None:
+        if self.on_event is not None:
+            self.on_event(kind, value)
 
     def chat(self, message: str | list) -> str:
         if self.failed:
@@ -36,6 +42,7 @@ class Agent:
                 started = time.monotonic()
                 call = {"usage": None, "error": None}
                 try:
+                    self._emit("model_start")
                     reply = self.model.complete(self.history, tools=definitions or None)
                     if not isinstance(reply, dict):
                         raise ModelError("assistant message must be an object")
@@ -68,6 +75,7 @@ class Agent:
                 attachments = []
                 for request in requests:
                     function = request.get("function") or {}
+                    self._emit("tool_call", function)
                     try:
                         if request.get("type") != "function":
                             raise ValueError("unsupported tool call type")
@@ -81,6 +89,7 @@ class Agent:
                     except Exception as exc:
                         text = json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                     self.history.append({"role": "tool", "tool_call_id": request["id"], "content": text})
+                    self._emit("tool_result", text)
                 if attachments:
                     self.history.append({"role": "user", "content": content(attachments)})
             raise CallLimitExceeded(f"maximum model calls per chat reached: {self.max_calls}")

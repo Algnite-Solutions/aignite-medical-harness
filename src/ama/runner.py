@@ -155,6 +155,15 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
 
 
 def explore(dataset, episode, agent, recorder, input_fn):
+    def show_activity(kind, value):
+        if kind == "model_start":
+            print("\n[model] waiting for response...", flush=True)
+        elif kind == "tool_call":
+            print(f"\n[tool call] {value.get('name', '?')} {value.get('arguments', '{}')}", flush=True)
+        elif kind == "tool_result":
+            print(f"[tool result] {value}", flush=True)
+
+    agent.on_event = show_activity
     index = 0
     source = "dataset"
     message = render(episode.turns[index], dataset.folder)

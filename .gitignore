@@ -10,3 +10,4 @@ runs/
 **/provenance.jsonl
 dist/
 .DS_Store
+datasets/mimic_cdm/

@@ -117,8 +117,9 @@ def _write_dataset(folder: Path, *, mode: str, ids: list[str], cases: list[dict]
         "You are reviewing a de-identified abdominal-pathology case for research evaluation. "
         "Choose the most likely diagnosis from appendicitis, cholecystitis, diverticulitis, "
         "and pancreatitis. This is not a live clinical decision.\n"
-        + ("Start with the HPI. Request physical examination, laboratory tests, microbiology, "
-           "and imaging through the available tools as needed. Finish with a JSON Decision "
+        + ("Start with the HPI. Request physical examination and the complete laboratory results "
+           "through the available tools. List available imaging reports before requesting a report "
+           "by ID; request microbiology as needed. Finish with a JSON Decision "
            "whose answer is {\"diagnosis\": \"one of four labels\", "
            "\"treatment_plan\": \"concise free text\"}. Cite hpi if used; tool "
            "responses are logged but cannot be cited by ID in this AMA version.\n"
@@ -234,88 +235,56 @@ def load_cases(folder: Path) -> dict:
 def make_case_tools(data: dict, episode_id: str) -> list[Tool]:
     """Bind trusted built-in retrieval tools to one admission, never to targets."""
     case = data["cases"][episode_id]
-    mapping = data["mapping"]
-    scan_cursor: dict[tuple[str, str], int] = defaultdict(int)
+    mapping = {row["itemid"]: row for row in data["mapping"] if row["itemid"]}
 
     def physical_examination() -> ToolResult:
         return ToolResult(f"Physical examination:\n{case['pe']}")
 
-    def search_lab_tests(query: str) -> list[dict]:
-        key = query.strip().casefold()
-        if len(key) < 2:
-            raise ValueError("provide at least two characters")
-        found = [r for r in mapping if key in r["label"].casefold() or key == r["itemid"]]
-        return [{"itemid": r["itemid"], "label": r["label"], "fluid": r["fluid"]}
-                for r in found[:20]]
-
-    def laboratory_tests(names: list[str]) -> ToolResult:
-        if not isinstance(names, list) or not names or len(names) > 20 or not all(
-                isinstance(name, str) and name.strip() for name in names):
-            raise ValueError("names must contain 1–20 non-empty lab names or itemids")
+    def laboratory_results() -> ToolResult:
         results = []
-        for name in names:
-            key = name.strip().casefold()
-            matched = [r for r in mapping if r["label"].casefold() == key or r["itemid"] == key]
-            if not matched:
-                results.append({"requested": name, "status": "unknown test; use search_lab_tests"})
-                continue
-            equivalent = set()
-            for row in matched:
-                equivalent.add(row["itemid"])
-                equivalent.update(str(value) for value in json.loads(row["corresponding_ids"]))
-            values = [r for r in case["labs"] if r["itemid"] in equivalent]
-            if not values:
-                results.append({"requested": name, "status": "not available for this admission"})
-                continue
-            for row in values:
-                evidence_id = f"lab-{row['itemid']}"
-                results.append({"requested": name, "evidence_id": evidence_id,
-                                "label": next((m["label"] for m in mapping
-                                               if m["itemid"] == row["itemid"]), row["itemid"]),
-                                "value": row["valuestr"],
-                                "ref_range_lower": row["ref_range_lower"],
-                                "ref_range_upper": row["ref_range_upper"]})
-        return ToolResult(json.dumps(results, ensure_ascii=False))
+        for row in case["labs"]:
+            itemid = row["itemid"]
+            detail = mapping[itemid]
+            results.append({"evidence_id": f"lab-{itemid}", "itemid": itemid,
+                            "label": detail["label"], "fluid": detail["fluid"],
+                            "category": detail["category"], "value": row["valuestr"],
+                            "ref_range_lower": row["ref_range_lower"],
+                            "ref_range_upper": row["ref_range_upper"]})
+        return ToolResult(json.dumps({"results": results}, ensure_ascii=False))
 
     def microbiology() -> ToolResult:
         if not case["microbiology"]:
             return ToolResult("No microbiology results available for this admission.")
         return ToolResult(json.dumps({"results": case["microbiology"]}, ensure_ascii=False))
 
-    def imaging(modality: str, region: str) -> ToolResult:
-        if not modality.strip() or not region.strip():
-            raise ValueError("modality and region are required")
-        aliases = {"xray": "radiograph", "x-ray": "radiograph", "ctu": "ct",
-                   "mrcp": "mri", "mre": "mri", "mra": "mri"}
-        want_modality = aliases.get(modality.strip().casefold(), modality.strip().casefold())
-        want_region = region.strip().casefold()
-        matches = [(i, row) for i, row in enumerate(case["imaging"], 1)
-                   if aliases.get(row["modality"].casefold(), row["modality"].casefold())
-                   == want_modality and row["region"].casefold() == want_region]
-        key = (want_modality, want_region)
-        index = scan_cursor[key]
-        if index >= len(matches):
-            return ToolResult("No further matching imaging report available.")
-        scan_cursor[key] += 1
-        source_index, row = matches[index]
-        evidence_id = f"imaging-{source_index}"
-        return ToolResult(json.dumps({"evidence_id": evidence_id, **row}, ensure_ascii=False))
+    reports = {f"imaging-{index}": row for index, row in enumerate(case["imaging"], 1)}
+
+    def list_imaging() -> ToolResult:
+        return ToolResult(json.dumps({"reports": [
+            {"report_id": report_id, "modality": row["modality"],
+             "region": row["region"], "exam_name": row["exam_name"]}
+            for report_id, row in reports.items()]}, ensure_ascii=False))
+
+    def imaging(report_id: str) -> ToolResult:
+        if report_id not in reports:
+            raise ValueError("unknown imaging report ID; use list_imaging")
+        row = reports[report_id]
+        return ToolResult(json.dumps({"report_id": report_id, "modality": row["modality"],
+                                      "region": row["region"], "exam_name": row["exam_name"],
+                                      "text": row["text"]}, ensure_ascii=False))
 
     object_schema = {"type": "object", "properties": {}, "additionalProperties": False}
     return [
         Tool("physical_examination", "Request the patient's physical examination.", object_schema,
              physical_examination),
-        Tool("search_lab_tests", "Find global laboratory test names or item IDs; does not reveal patient results.",
-             {"type": "object", "properties": {"query": {"type": "string"}},
-              "required": ["query"], "additionalProperties": False}, search_lab_tests),
-        Tool("laboratory_tests", "Request results for up to 20 named laboratory tests or item IDs.",
-             {"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}}},
-              "required": ["names"], "additionalProperties": False}, laboratory_tests),
+        Tool("laboratory_results", "Read all available laboratory results for this admission, including blood, urine, and other fluids.",
+             object_schema, laboratory_results),
         Tool("microbiology", "Request the available microbiology results.", object_schema, microbiology),
-        Tool("imaging", "Request one imaging findings report by modality and anatomical region.",
-             {"type": "object", "properties": {"modality": {"type": "string"},
-                                                "region": {"type": "string"}},
-              "required": ["modality", "region"], "additionalProperties": False}, imaging),
+        Tool("list_imaging", "List available imaging reports and their IDs without revealing report findings.",
+             object_schema, list_imaging),
+        Tool("imaging", "Read one imaging report by report_id from list_imaging.",
+             {"type": "object", "properties": {"report_id": {"type": "string"}},
+              "required": ["report_id"], "additionalProperties": False}, imaging),
     ]
 
 
