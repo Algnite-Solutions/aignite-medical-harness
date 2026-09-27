@@ -98,7 +98,7 @@ ama run /path/to/processed/mimic_cdm_full_info --model MODEL --episode HADM_ID \
 ama eval /path/to/restricted-runs/RUN_ID
 ```
 
-The importer creates both 2,400-admission datasets and verifies the source checksums. Interactive
+The importer creates both 2,400-admission datasets and validates source structure. Interactive
 episodes start with HPI; the trusted tool file binds examination, lab, microbiology, and imaging
 requests to the current admission. Full-information episodes present all those inputs together.
 Discharge outcomes remain evaluator-only. Both modes score four-way diagnosis; treatment plans are

@@ -6,10 +6,8 @@ authorized local copy and writes only to the caller's chosen output directory.
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import os
-import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -32,17 +30,6 @@ TABLES = {
     "icd_procedures": ("hadm_id", "icd_code", "icd_title", "icd_version"),
 }
 LAB_COLUMNS = ("itemid", "label", "fluid", "category", "count", "corresponding_ids")
-VISIBLE = ("history_of_present_illness", "physical_examination", "laboratory_tests",
-           "microbiology", "radiology_reports")
-TARGETS = ("discharge_diagnosis", "discharge_procedures", "icd_diagnosis", "icd_procedures")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -64,30 +51,6 @@ def _table(path: Path, columns: tuple[str, ...]) -> list[dict[str, str]]:
     if any(None in row or any(value is None for value in row.values()) for row in rows):
         raise ValueError(f"{path.name}: malformed CSV row")
     return rows
-
-
-def _source_hashes(source: Path) -> dict[str, str]:
-    checksums = source / "SHA256SUMS.txt"
-    if not checksums.is_file():
-        raise FileNotFoundError(checksums)
-    expected: dict[str, str] = {}
-    for line in checksums.read_text(encoding="utf-8").splitlines():
-        parts = line.strip().split(maxsplit=1)
-        if len(parts) != 2 or not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
-            raise ValueError("malformed SHA256SUMS.txt")
-        name = parts[1].lstrip("*")
-        if Path(name).name != name or name.startswith("._") or name in expected:
-            raise ValueError(f"unsafe or duplicate checksum entry: {name}")
-        expected[name] = parts[0].lower()
-    required = {"LICENSE.txt", "pathology_ids.json", "lab_test_mapping.csv"} | {
-        f"{name}.csv" for name in TABLES}
-    if set(expected) != required:
-        raise ValueError(f"checksum manifest differs from required source files: {sorted(set(expected) ^ required)}")
-    actual = {name: _sha256(source / name) for name in sorted(expected)}
-    bad = [name for name in actual if actual[name] != expected[name]]
-    if bad:
-        raise ValueError(f"source checksum mismatch: {bad}")
-    return actual
 
 
 def _one(rows: list[dict[str, str]], name: str) -> dict[str, str]:
@@ -131,7 +94,7 @@ def _full_episode(hadm: str, case: dict, labels: dict[str, str]) -> dict:
 
 def _write_dataset(folder: Path, *, mode: str, ids: list[str], cases: list[dict],
                    targets: list[dict], mapping: list[dict], labels: dict[str, str],
-                   source_hashes: dict[str, str], counts: dict[str, int], source: Path) -> None:
+                   counts: dict[str, int], source: Path) -> None:
     folder.mkdir()
     interactive = mode == "interactive"
     _write_json(folder / "dataset.json", {
@@ -166,7 +129,6 @@ def _write_dataset(folder: Path, *, mode: str, ids: list[str], cases: list[dict]
     (folder / "instructions.txt").write_text(instruction, encoding="utf-8")
     report = {"source": SOURCE_URL, "source_dir": str(source.resolve()), "mode": mode,
               "admissions": len(ids), "source_row_counts": counts,
-              "source_sha256": source_hashes,
               "max_case_characters": max((len(json.dumps(c, ensure_ascii=False)) for c in cases), default=0),
               "license": "PhysioNet Credentialed Health Data License 1.5.0"}
     _write_json(folder / "import_report.json", report)
@@ -193,7 +155,6 @@ def import_mimic_cdm(source: Path, out: Path, *, limit: int | None = None,
     source, out = Path(source), Path(out)
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
-    source_hashes = _source_hashes(source)
     tables = {name: _table(source / f"{name}.csv", columns) for name, columns in TABLES.items()}
     mapping = _table(source / "lab_test_mapping.csv", LAB_COLUMNS)
     pathology = json.loads((source / "pathology_ids.json").read_text(encoding="utf-8"))
@@ -249,7 +210,7 @@ def import_mimic_cdm(source: Path, out: Path, *, limit: int | None = None,
         for mode, name in (("interactive", final_names[0]), ("full_info", final_names[1])):
             _write_dataset(staging / name, mode=mode, ids=selected, cases=cases,
                            targets=target_rows, mapping=mapping, labels=lab_labels,
-                           source_hashes=source_hashes, counts=counts, source=source)
+                           counts=counts, source=source)
         for name in final_names:
             os.rename(staging / name, out / name)
     finally:

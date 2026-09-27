@@ -1,5 +1,4 @@
 import csv
-import hashlib
 import json
 from pathlib import Path
 
@@ -57,10 +56,6 @@ def _source(root):
     (root / "pathology_ids.json").write_text(json.dumps({
         "appendicitis": [1], "cholecystitis": [2], "diverticulitis": [], "pancreatitis": []}))
     (root / "LICENSE.txt").write_text("credentialed test fixture")
-    names = ["LICENSE.txt", "pathology_ids.json", "lab_test_mapping.csv"] + [
-        f"{name}.csv" for name in TABLES]
-    (root / "SHA256SUMS.txt").write_text("".join(
-        f"{hashlib.sha256((root / name).read_bytes()).hexdigest()} {name}\n" for name in names))
     return root
 
 
@@ -113,9 +108,19 @@ def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
     assert score_mimic_cdm(dataset, rows)["aggregate"]["diagnosis_accuracy"]["value"] == 1
 
 
-def test_checksum_mismatch_fails_before_output(tmp_path):
+def test_checksum_manifest_is_not_required(tmp_path):
     source = _source(tmp_path / "source")
-    (source / "physical_examination.csv").write_text("modified")
-    with pytest.raises(ValueError, match="checksum mismatch"):
+    _csv(source / "physical_examination.csv", TABLES["physical_examination"], [
+        {"hadm_id": "1", "pe": "updated exam A"},
+        {"hadm_id": "2", "pe": "updated exam B"}])
+    import_mimic_cdm(source, tmp_path / "processed")
+    assert "updated exam A" in (tmp_path / "processed" / "mimic_cdm_full_info"
+                                / "episodes.jsonl").read_text()
+
+
+def test_malformed_source_still_fails_before_output(tmp_path):
+    source = _source(tmp_path / "source")
+    (source / "physical_examination.csv").write_text("wrong,columns\n1,exam\n")
+    with pytest.raises(ValueError, match="expected columns"):
         import_mimic_cdm(source, tmp_path / "processed")
     assert not (tmp_path / "processed").exists()
