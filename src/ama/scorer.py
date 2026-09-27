@@ -139,4 +139,7 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
 
 
 
-REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored}
+from .importers.mimic_cdm import score_mimic_cdm
+
+REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored,
+            "mimic_cdm": score_mimic_cdm}

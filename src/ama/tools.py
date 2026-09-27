@@ -11,6 +11,8 @@ from typing import Callable
 
 from .model import image
 
+_MODULE_CACHE: dict[Path, object] = {}
+
 
 @dataclass
 class ToolResult:
@@ -43,16 +45,22 @@ class Tool:
         return ToolResult(result.text, [image(path)["path"] for path in result.images])
 
 
-def load_tools(path: str | Path | None) -> list[Tool]:
+def load_tools(path: str | Path | None, *, dataset_dir: Path | None = None,
+               episode_id: str | None = None) -> list[Tool]:
     if path is None:
         return []
-    spec = importlib.util.spec_from_file_location("_ama_user_tools", Path(path).resolve())
-    if spec is None or spec.loader is None:
-        raise ValueError(f"cannot load tools file: {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    tools = getattr(module, "TOOLS", None)
+    resolved = Path(path).resolve()
+    module = _MODULE_CACHE.get(resolved)
+    if module is None:
+        spec = importlib.util.spec_from_file_location("_ama_user_tools", resolved)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"cannot load tools file: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _MODULE_CACHE[resolved] = module
+    factory = getattr(module, "make_tools", None)
+    tools = factory(dataset_dir, episode_id) if callable(factory) else getattr(module, "TOOLS", None)
     if not isinstance(tools, list) or not all(isinstance(t, Tool) for t in tools):
         raise ValueError("tools file must export TOOLS: list[Tool]")
     return tools

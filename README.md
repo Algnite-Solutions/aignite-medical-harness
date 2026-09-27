@@ -79,8 +79,33 @@ ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --
 For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repeat
 `--episode ID` instead of `--split`. Use `--runs-root path` to choose the output parent.
 
-ROCOv2 is the only built-in importer/demo. Each image is one episode/turn; ordered multi-turn datasets
+ROCOv2 is the built-in `ama import` demo. Each image is one episode/turn; ordered multi-turn datasets
 also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
+
+### Credentialed MIMIC-CDM import
+
+The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and
+its existing dataset workflow stay small. Use a credentialed local source and restricted output:
+
+```bash
+PYTHONPATH=src python3 -m ama.importers.mimic_cdm \
+  --source /path/to/mimic-iv-ext-clinical-decision-making \
+  --out /path/to/processed
+ama run /path/to/processed/mimic_cdm_interactive --model MODEL --episode HADM_ID \
+  --tools src/ama/importers/mimic_cdm_tools.py --max-calls 24 --runs-root /path/to/restricted-runs
+ama run /path/to/processed/mimic_cdm_full_info --model MODEL --episode HADM_ID \
+  --runs-root /path/to/restricted-runs
+ama eval /path/to/restricted-runs/RUN_ID
+```
+
+The importer creates both 2,400-admission datasets and verifies the source checksums. Interactive
+episodes start with HPI; the trusted tool file binds examination, lab, microbiology, and imaging
+requests to the current admission. Full-information episodes present all those inputs together.
+Discharge outcomes remain evaluator-only. Both modes score four-way diagnosis; treatment plans are
+recorded for review. Tool results appear in event logs, but the current Decision citation check only
+accepts episode evidence IDs, so interactive answers may cite HPI or leave citations empty. The
+credentialed source and model transcripts should remain on restricted storage; importing itself does
+not call a model.
 
 Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
 `events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only

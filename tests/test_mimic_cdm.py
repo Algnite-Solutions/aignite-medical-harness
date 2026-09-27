@@ -1,0 +1,121 @@
+import csv
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from ama.data import load_dataset, validate_dataset
+from ama.importers.mimic_cdm import LAB_COLUMNS, TABLES, import_mimic_cdm, score_mimic_cdm
+from ama.runner import execute
+from ama.tools import load_tools
+from fakes import FakeModel, call, calls, decision
+
+
+def _csv(path, columns, rows):
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _source(root):
+    root.mkdir()
+    rows = {
+        "history_of_present_illness": [
+            {"hadm_id": "1", "hpi": "right lower quadrant pain"},
+            {"hadm_id": "2", "hpi": "right upper quadrant pain"}],
+        "physical_examination": [
+            {"hadm_id": "1", "pe": "tenderness A"},
+            {"hadm_id": "2", "pe": "tenderness B"}],
+        "laboratory_tests": [
+            {"hadm_id": "1", "itemid": "100", "valuestr": "12", "ref_range_lower": "4",
+             "ref_range_upper": "10"},
+            {"hadm_id": "2", "itemid": "100", "valuestr": "19", "ref_range_lower": "4",
+             "ref_range_upper": "10"}],
+        "microbiology": [{"hadm_id": "1", "test_itemid": "9", "valuestr": "none",
+                          "spec_itemid": "7"}],
+        "radiology_reports": [
+            {"hadm_id": "1", "note_id": "n1", "modality": "CT", "region": "Abdomen",
+             "exam_name": "CT abdomen", "text": "finding A"},
+            {"hadm_id": "2", "note_id": "n2", "modality": "CT", "region": "Abdomen",
+             "exam_name": "CT abdomen", "text": "finding B"}],
+        "discharge_diagnosis": [
+            {"hadm_id": "1", "discharge_diagnosis": "appendicitis"},
+            {"hadm_id": "2", "discharge_diagnosis": "cholecystitis"}],
+        "discharge_procedures": [{"hadm_id": "1", "discharge_procedure": "appendectomy"}],
+        "icd_diagnosis": [{"hadm_id": "1", "icd_diagnosis": "appendicitis"},
+                          {"hadm_id": "2", "icd_diagnosis": "cholecystitis"}],
+        "icd_procedures": [{"hadm_id": "1", "icd_code": "47", "icd_title": "appendectomy",
+                            "icd_version": "9"}],
+    }
+    for name, columns in TABLES.items():
+        _csv(root / f"{name}.csv", columns, rows[name])
+    _csv(root / "lab_test_mapping.csv", LAB_COLUMNS, [
+        {"itemid": "100", "label": "White blood cells", "fluid": "Blood",
+         "category": "Hematology", "count": "2", "corresponding_ids": "[100]"}])
+    (root / "pathology_ids.json").write_text(json.dumps({
+        "appendicitis": [1], "cholecystitis": [2], "diverticulitis": [], "pancreatitis": []}))
+    (root / "LICENSE.txt").write_text("credentialed test fixture")
+    names = ["LICENSE.txt", "pathology_ids.json", "lab_test_mapping.csv"] + [
+        f"{name}.csv" for name in TABLES]
+    (root / "SHA256SUMS.txt").write_text("".join(
+        f"{hashlib.sha256((root / name).read_bytes()).hexdigest()} {name}\n" for name in names))
+    return root
+
+
+def test_two_datasets_are_valid_and_targets_hidden(tmp_path):
+    source = _source(tmp_path / "source")
+    out = tmp_path / "processed"
+    report = import_mimic_cdm(source, out)
+    assert report["admissions"] == 2
+    for name in ("mimic_cdm_interactive", "mimic_cdm_full_info"):
+        folder = out / name
+        assert validate_dataset(folder) == []
+        ds = load_dataset(folder, with_targets=True)
+        assert len(ds.episodes) == 2 and len(ds.targets) == 2
+        assert "appendectomy" not in (folder / "episodes.jsonl").read_text()
+        assert "appendectomy" not in (folder / "cases.jsonl").read_text()
+    interactive = load_dataset(out / "mimic_cdm_interactive")
+    assert [e.id for e in interactive.episodes[0].turns[0].evidence] == ["hpi"]
+    full = load_dataset(out / "mimic_cdm_full_info")
+    assert len(full.episodes[0].turns[0].evidence) == 5
+    with pytest.raises(FileExistsError):
+        import_mimic_cdm(source, out)
+
+
+def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
+    out = tmp_path / "processed"
+    import_mimic_cdm(_source(tmp_path / "source"), out)
+    folder = out / "mimic_cdm_interactive"
+    tools_file = Path("src/ama/importers/mimic_cdm_tools.py")
+    tools1 = {t.name: t for t in load_tools(tools_file, dataset_dir=folder, episode_id="1")}
+    tools2 = {t.name: t for t in load_tools(tools_file, dataset_dir=folder, episode_id="2")}
+    assert "tenderness A" in tools1["physical_examination"].invoke("{}").text
+    assert "tenderness B" in tools2["physical_examination"].invoke("{}").text
+    assert "finding B" not in tools1["imaging"].invoke('{"modality":"CT","region":"Abdomen"}').text
+    assert "12" in tools1["laboratory_tests"].invoke('{"names":["White blood cells"]}').text
+    assert "19" not in tools1["laboratory_tests"].invoke('{"names":["White blood cells"]}').text
+
+    model = FakeModel(calls(call("physical_examination", "{}")),
+                      decision(answer={"diagnosis": "appendicitis", "treatment_plan": "surgery"},
+                               citations=["hpi"]))
+    run = execute(folder, model, episode_ids=["1"], tools_path=tools_file,
+                  runs_root=tmp_path / "runs")
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert "cases.jsonl" in manifest["dataset_sha256"]
+    assert "lab_mapping.json" in manifest["dataset_sha256"]
+    assert json.loads((run / "decisions.jsonl").read_text())["decision"]["answer"]["diagnosis"] \
+        == "appendicitis"
+    dataset = load_dataset(folder, with_targets=True)
+    dataset.episodes = dataset.select(episode_id="1")
+    rows = {"1": [json.loads((run / "decisions.jsonl").read_text())]}
+    assert score_mimic_cdm(dataset, rows)["aggregate"]["diagnosis_accuracy"]["value"] == 1
+
+
+def test_checksum_mismatch_fails_before_output(tmp_path):
+    source = _source(tmp_path / "source")
+    (source / "physical_examination.csv").write_text("modified")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        import_mimic_cdm(source, tmp_path / "processed")
+    assert not (tmp_path / "processed").exists()

@@ -25,6 +25,18 @@ class Recorder:
         # Only visible inputs: never even hash targets, eval rules or provenance here.
         files = {"dataset.json", "episodes.jsonl"}
         files.update(e.file for ep in episodes for t in ep.turns for e in t.evidence if e.file)
+        # Dataset-side files read by trusted tools are declared without executing dataset code.
+        tool_data_manifest = dataset.folder / "tool_data_files.json"
+        if tools_path and tool_data_manifest.exists():
+            files.add("tool_data_files.json")
+            for name in json.loads(tool_data_manifest.read_text(encoding="utf-8")):
+                if not isinstance(name, str):
+                    raise ValueError(f"unsafe tool data file: {name!r}")
+                candidate = (dataset.folder / name).resolve()
+                if dataset.folder.resolve() not in candidate.parents \
+                        or not candidate.is_file():
+                    raise ValueError(f"unsafe tool data file: {name!r}")
+                files.add(name)
         self.manifest = {
             "run_id": run_id, "mode": mode, "dataset_dir": str(dataset.folder.resolve()),
             "episode_ids": [ep.id for ep in episodes],

@@ -110,7 +110,9 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                         "decision": None, "termination": "not_executed", "error": "interrupted",
                         "model_calls": 0, "duration_ms": 0, "usage": None})
                 continue
-            agent = Agent(model, system=system, tools=load_tools(tools_path), max_calls=max_calls)
+            agent = Agent(model, system=system,
+                          tools=load_tools(tools_path, dataset_dir=dataset.folder, episode_id=episode.id),
+                          max_calls=max_calls)
             recorder.event("episode_start", episode_id=episode.id,
                            tools=[tool.definition() for tool in agent.tools.values()])
             recorder.history(agent, 0, source="system", episode_id=episode.id, turn_id=None)
