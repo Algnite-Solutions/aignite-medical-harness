@@ -1,0 +1,2 @@
+Predict the dataset disease label from the patient's symptom description.
+For a structured answer, use {"disease": "label"}.

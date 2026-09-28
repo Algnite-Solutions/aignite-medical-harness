@@ -1,4 +1,4 @@
-"""CLI wiring: run / chat / eval / import rocov2."""
+"""CLI wiring: run / chat / eval / dataset importers."""
 from __future__ import annotations
 
 import argparse
@@ -81,13 +81,9 @@ def main(argv=None):
     evaluate = sub.add_parser("eval", help="separate scoring; reads references only here")
     evaluate.add_argument("run_dir", type=Path)
     evaluate.add_argument("--scorer")
+    from .importers import register_importers
     importer = sub.add_parser("import")
-    importer.add_argument("kind", choices=["rocov2"])
-    importer.add_argument("--source", type=Path, required=True)
-    importer.add_argument("--out", type=Path, required=True)
-    importer.add_argument("--split", default="test")
-    importer.add_argument("--limit", type=int)
-    importer.add_argument("--id", action="append", dest="ids")
+    register_importers(importer.add_subparsers(dest="import_kind", required=True))
     args = parser.parse_args(argv)
     try:
         if args.command in ("run", "chat"):
@@ -103,8 +99,7 @@ def main(argv=None):
             return 0 if manifest["termination"] in {"completed", "quit", "eof"} else 1
         if args.command == "eval":
             return _eval_run(args.run_dir, args.scorer)
-        from .importers.rocov2 import import_rocov2
-        report = import_rocov2(args.source, args.out, split=args.split, limit=args.limit, ids=args.ids)
+        report = args.import_handler(args)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         print(f"imported -> {args.out}")
         return 0

@@ -76,6 +76,9 @@ ama run datasets/rocov2 --model qwen36 --split test
 
 也可用可重复的 `--episode ID` 替代 `--split`，`--runs-root 目录` 指定输出父目录。
 
+新增的文本数据集见 [Symptom2Disease demo 数据卡](datasets/symptom2disease_demo/DATASET_CARD.zh-CN.md)，
+其中包含导入、校验和运行方法。
+
 运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
 工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
 普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。
