@@ -78,7 +78,7 @@ def test_chat_followups_next_and_unscorable_without_hidden_reads(tmp_path, monke
     assert not (path / "metrics.json").exists() and not (path / "decisions.jsonl").exists()
 
 
-@pytest.mark.parametrize("reply", ["bad JSON", decision("wrong"), decision(citations=["lab"])])
+@pytest.mark.parametrize("reply", ["bad JSON", decision("wrong")])
 def test_invalid_decision_no_repair_then_next_turn(tmp_path, reply):
     model = FakeModel(reply, decision("t2", answer="answer", citations=["hpi", "lab"]))
     path = execute(dataset(tmp_path), model, runs_root=tmp_path / "runs")
@@ -205,6 +205,23 @@ def test_abstain_and_extra_fields():
     payload["state"] = "old field"
     with pytest.raises(ValueError):
         parse_decision(json.dumps(payload), "t1", set())
+
+
+def test_run_accepts_returned_tool_evidence_and_retains_raw_reply(tmp_path):
+    root = dataset(tmp_path)
+    tools = tmp_path / "tools.py"
+    tools.write_text('from ama.tools import Tool, ToolResult\n'
+                     'TOOLS = [Tool("lab", "lab", {"type":"object"}, '
+                     'lambda: ToolResult("12", evidence_ids=["lab-1"]))]\n')
+    raw = "Analysis first.\n" + decision(answer={"diagnosis": "pancreatitis"},
+                                          citations=["hpi", "lab-1"])
+    model = FakeModel(calls(call("lab", "{}")), raw, decision("t2"))
+    run = execute(root, model, tools_path=tools, runs_root=tmp_path / "runs")
+    first = rows(run)[0]
+    assert first["reply"] == raw
+    assert first["decision"]["citations"] == ["hpi", "lab-1"]
+    assert first["decision_format"] == "embedded"
+    assert first["termination"] == "completed"
 
 
 def test_bad_visible_data_rejected_before_inference(tmp_path):

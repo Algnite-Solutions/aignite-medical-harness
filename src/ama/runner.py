@@ -7,14 +7,21 @@ from pathlib import Path
 
 from .agent import Agent, CallLimitExceeded
 from .data import Decision, load_dataset, resolve_dataset_dir, validate_visible_files
+from .decisions import normalize_decision
 from .model import IMAGE_TYPES, ModelError, image
 from .recorder import Recorder
 from .tools import load_tools
 
-DECISION_PROMPT = '''For each observation, return exactly one JSON object, without Markdown:
-{"turn_id": "the current turn ID", "answer": <task answer>, "citations": ["evidence IDs"]}.
-Use only evidence released so far. Citations must identify released evidence.
-answer=null with citations=[] means abstention. Do not add other top-level fields.'''
+DECISION_PROMPT = '''After reviewing the evidence and using tools as needed, return one JSON object:
+{"turn_id": "current turn ID", "answer": {}, "citations": ["exact evidence IDs"],
+ "reasoning_summary": "A concise evidence-based explanation of the conclusion."}
+Replace answer with the task answer using the fields described by the dataset. Use exactly the four
+envelope fields shown. Use the actual turn ID and evidence IDs provided in the conversation.
+Write a 2–4 sentence reasoning summary connecting the conclusion to cited findings, not an internal
+reasoning transcript. Put it inside reasoning_summary, with no prose or code fences outside JSON.
+Cite only exact IDs released in observations or listed as citeable by successful tool results.
+An imaging catalog does not release report findings. Do not guess or abbreviate IDs.
+For abstention use answer=null, citations=[], and explain the uncertainty in reasoning_summary.'''
 
 
 def render(turn, folder: Path) -> list:
@@ -51,6 +58,7 @@ def parse_decision(reply: str, turn_id: str, visible: set[str]) -> dict:
 def exchange(agent, recorder, message, *, episode_id, turn_id, source):
     """Always persist the history produced so far, including on API error or Ctrl-C."""
     start, calls = len(agent.history), len(agent.calls)
+    releases = len(agent.evidence_releases)
     reply, reason, error = None, "completed", None
     try:
         reply = agent.chat(message)
@@ -64,6 +72,8 @@ def exchange(agent, recorder, message, *, episode_id, turn_id, source):
         reason, error = "error", f"{type(exc).__name__}: {exc}"
     finally:
         recorder.history(agent, start, source=source, episode_id=episode_id, turn_id=turn_id)
+        for release in agent.evidence_releases[releases:]:
+            recorder.event("evidence_release", episode_id=episode_id, turn_id=turn_id, **release)
         for call in agent.calls[calls:]:
             recorder.event("model_call", episode_id=episode_id, turn_id=turn_id, **call)
     new_calls = agent.calls[calls:]
@@ -128,17 +138,24 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                            "model_calls": 0, "duration_ms": 0, "usage": None}
                 else:
                     visible.update(e.id for e in turn.evidence)
-                    row = exchange(agent, recorder, render(turn, dataset.folder),
+                    message = render(turn, dataset.folder)
+                    message.append(f"Final Decision turn_id: {turn.id}. Currently citeable evidence IDs: "
+                                   + json.dumps(sorted(visible | agent.evidence_ids)))
+                    row = exchange(agent, recorder, message,
                                    episode_id=episode.id, turn_id=turn.id, source="dataset")
                     if row["termination"] == "completed":
                         try:
-                            row["decision"] = parse_decision(row["reply"], turn.id, visible)
+                            allowed = visible | agent.evidence_ids
+                            row["decision"], row["output_validation"] = normalize_decision(
+                                row["reply"], turn.id, allowed)
+                            row["decision_format"] = row["output_validation"]["format"]
                         except (ValueError, TypeError) as exc:
                             row.update(termination="invalid_decision", error=str(exc))
                     else:
                         stopped = row["termination"]
                     if row["termination"] != "completed":
                         termination = "completed_with_errors"
+                recorder.event("decision", **row)
                 recorder.append("decisions.jsonl", row)
             if stopped == "interrupted":
                 termination = "interrupted"

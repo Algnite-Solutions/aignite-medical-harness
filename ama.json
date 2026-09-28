@@ -1,6 +1,6 @@
 {
   "models": {
-    "glm-vision": {
+    "glm-5.3-flash": {
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
       "model": "glm-5.3-flash",
       "api_key_env": "GLM_API_KEY",

@@ -107,8 +107,10 @@ class Model:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             hint = ""
-            if any(m["role"] == "tool" for m in history) and any(
-                    isinstance(m.get("content"), list) for m in history):
+            if exc.code in {400, 415, 422} and any(m["role"] == "tool" for m in history) and any(
+                    isinstance(m.get("content"), list) and any(
+                        isinstance(part, dict) and part.get("type") == "image"
+                        for part in m["content"]) for m in history):
                 hint = "; request contains tools and images; check service support (history was not rewritten)"
             raise ModelError(f"model endpoint returned HTTP {exc.code}{hint}") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:

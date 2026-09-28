@@ -65,15 +65,27 @@ def test_bad_api_responses_raise(monkeypatch, body):
         model(monkeypatch).complete([])
 
 
-def test_http_tool_image_limit_is_explicit_no_rewrite_or_retry(monkeypatch):
+def test_http_tool_image_limit_is_explicit_no_rewrite_or_retry(monkeypatch, tmp_path):
     seen = []
+    path = tmp_path / "scan.jpg"
+    path.write_bytes(b"fixture")
     def fail(*a, **kw):
         seen.append(a)
         raise urllib.error.HTTPError("https://example.test", 400, "bad", {}, None)
     monkeypatch.setattr(urllib.request, "urlopen", fail)
     with pytest.raises(ModelError, match="history was not rewritten"):
-        model(monkeypatch).complete([{"role": "tool", "content": "image"}, {"role": "user", "content": []}])
+        model(monkeypatch).complete([{"role": "tool", "content": "image"},
+                                     {"role": "user", "content": [image(path)]}])
     assert len(seen) == 1
+
+
+def test_rate_limit_with_text_tools_has_no_image_hint(monkeypatch):
+    def fail(*a, **kw):
+        raise urllib.error.HTTPError("https://example.test", 429, "limited", {}, None)
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+    with pytest.raises(ModelError, match=r"^model endpoint returned HTTP 429$"):
+        model(monkeypatch).complete([{"role": "tool", "content": "result"},
+                                     {"role": "user", "content": [{"type": "text", "text": "text only"}]}])
 
 
 def test_registration_rejects_old_wire_and_missing_key(monkeypatch):

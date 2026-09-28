@@ -104,8 +104,8 @@ microbiology, and imaging to the current admission. Use `list_imaging` to see av
 then `imaging(report_id)` to read one. Existing processed datasets work with these tools without
 reimporting. Full-information episodes present all those inputs together.
 Discharge outcomes remain evaluator-only. Both modes score four-way diagnosis; treatment plans are
-recorded for review. Tool results appear in event logs, but the current Decision citation check only
-accepts episode evidence IDs, so interactive answers may cite HPI or leave citations empty. The
+recorded for review. Tool results appear in event logs; Decision citations can use episode evidence
+IDs or evidence IDs explicitly registered by successful tools. The
 credentialed source and model transcripts should remain on restricted storage; importing itself does
 not call a model.
 
@@ -113,10 +113,15 @@ Records include `manifest.json` (actual prompts, hashes, configuration and expec
 `events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
 `decisions.jsonl`. Images stay as paths in logs and are encoded only for requests.
 Invalid decisions are kept, without correction dialogues. Failed/missing turns remain in evaluation.
+Output contract v2 requests `answer`, `citations`, and a concise `reasoning_summary` alongside
+`turn_id`. Recoverable JSON answers are normalized without extra model calls; raw replies and
+format/citation/summary diagnostics remain available. Evaluation reports task accuracy separately
+from `aggregate.output_quality`. Empty citations do not count as valid supporting references.
 API/call-limit failures skip the rest of that episode and continue the batch; Ctrl-C stops the batch.
 Partial runs return a nonzero CLI status and remain independently evaluable.
 
 Only `eval` opens references/rules, producing `metrics.json`.
 It checks visible input hashes before scoring. Original answers remain in `decisions.jsonl`;
-references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy. Historical runs are preserved but must
-be rerun for this evaluator. Provenance never enters model input.
+references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy.
+Compatible historical runs remain evaluable; metrics absent from their output contract are null.
+Provenance never enters model input.

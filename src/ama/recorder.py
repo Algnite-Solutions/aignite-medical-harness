@@ -49,6 +49,8 @@ class Recorder:
             if tools_path else None,
             "termination": "running",
         }
+        if mode == "run":
+            self.manifest["output_contract_version"] = 2
         write_json(self.run_dir / "manifest.json", self.manifest)
         (self.run_dir / "events.jsonl").touch()
         if mode == "run":

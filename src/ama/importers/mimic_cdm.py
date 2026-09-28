@@ -113,20 +113,7 @@ def _write_dataset(folder: Path, *, mode: str, ids: list[str], cases: list[dict]
         _write_json(folder / "tool_data_files.json", ["cases.jsonl", "lab_mapping.json"])
     _write_jsonl(folder / "targets.jsonl", targets)
     _write_json(folder / "eval.json", {"scorer": "mimic_cdm"})
-    instruction = (
-        "You are reviewing a de-identified abdominal-pathology case for research evaluation. "
-        "Choose the most likely diagnosis from appendicitis, cholecystitis, diverticulitis, "
-        "and pancreatitis. This is not a live clinical decision.\n"
-        + ("Start with the HPI. Request physical examination and the complete laboratory results "
-           "through the available tools. List available imaging reports before requesting a report "
-           "by ID; request microbiology as needed. Finish with a JSON Decision "
-           "whose answer is {\"diagnosis\": \"one of four labels\", "
-           "\"treatment_plan\": \"concise free text\"}. Cite hpi if used; tool "
-           "responses are logged but cannot be cited by ID in this AMA version.\n"
-           if interactive else
-           "All extracted information is provided together. Finish with a JSON Decision "
-           "whose answer is {\"diagnosis\": \"one of four labels\"}.\n")
-    )
+    instruction = dataset_instructions(interactive)
     (folder / "instructions.txt").write_text(instruction, encoding="utf-8")
     report = {"source": SOURCE_URL, "source_dir": str(source.resolve()), "mode": mode,
               "admissions": len(ids), "source_row_counts": counts,
@@ -148,6 +135,19 @@ def _write_dataset(folder: Path, *, mode: str, ids: list[str], cases: list[dict]
         limitations_en="Diagnosis is scored as one of four selected pathologies. Treatment plans are recorded but not automatically scored. The source CSVs do not expose event timestamps; some extracted examination text may reflect later care. Full-information cases may exceed model context limits. Keep derived data and run logs on restricted storage.",
         limitations_zh="诊断按四种已筛选病种评分；治疗计划仅记录，不自动评分。源 CSV 不提供事件时间戳，部分查体文本可能反映后续诊疗。完整病例可能超过模型上下文限制。派生数据和运行日志须保存在受限存储中。",
     )
+
+
+def dataset_instructions(interactive: bool) -> str:
+    return (
+        "You are reviewing a de-identified abdominal-pathology case for research evaluation. "
+        "Choose the most likely diagnosis from appendicitis, cholecystitis, diverticulitis, "
+        "and pancreatitis. This is not a live clinical decision.\n"
+        + ("Start with the HPI. Request physical examination and complete laboratory results. "
+           "List available imaging reports before reading reports by ID; request microbiology as needed. "
+           "The task answer has fields diagnosis (one of the four labels) and treatment_plan "
+           "(a concise proposed plan).\n" if interactive else
+           "All extracted information is provided together. The task answer has one field, "
+           "diagnosis (one of the four labels).\n"))
 
 
 def import_mimic_cdm(source: Path, out: Path, *, limit: int | None = None,
@@ -238,7 +238,8 @@ def make_case_tools(data: dict, episode_id: str) -> list[Tool]:
     mapping = {row["itemid"]: row for row in data["mapping"] if row["itemid"]}
 
     def physical_examination() -> ToolResult:
-        return ToolResult(f"Physical examination:\n{case['pe']}")
+        return ToolResult(f"Physical examination:\n{case['pe']}",
+                          evidence_ids=["physical-examination"])
 
     def laboratory_results() -> ToolResult:
         results = []
@@ -250,12 +251,16 @@ def make_case_tools(data: dict, episode_id: str) -> list[Tool]:
                             "category": detail["category"], "value": row["valuestr"],
                             "ref_range_lower": row["ref_range_lower"],
                             "ref_range_upper": row["ref_range_upper"]})
-        return ToolResult(json.dumps({"results": results}, ensure_ascii=False))
+        return ToolResult(json.dumps({"evidence_id": "laboratory-tests", "results": results},
+                                     ensure_ascii=False),
+                          evidence_ids=["laboratory-tests", *[r["evidence_id"] for r in results]])
 
     def microbiology() -> ToolResult:
         if not case["microbiology"]:
-            return ToolResult("No microbiology results available for this admission.")
-        return ToolResult(json.dumps({"results": case["microbiology"]}, ensure_ascii=False))
+            return ToolResult("No microbiology results available for this admission.",
+                              evidence_ids=["microbiology"])
+        return ToolResult(json.dumps({"results": case["microbiology"]}, ensure_ascii=False),
+                          evidence_ids=["microbiology"])
 
     reports = {f"imaging-{index}": row for index, row in enumerate(case["imaging"], 1)}
 
@@ -269,9 +274,11 @@ def make_case_tools(data: dict, episode_id: str) -> list[Tool]:
         if report_id not in reports:
             raise ValueError("unknown imaging report ID; use list_imaging")
         row = reports[report_id]
-        return ToolResult(json.dumps({"report_id": report_id, "modality": row["modality"],
+        return ToolResult(json.dumps({"evidence_id": report_id, "report_id": report_id,
+                                      "modality": row["modality"],
                                       "region": row["region"], "exam_name": row["exam_name"],
-                                      "text": row["text"]}, ensure_ascii=False))
+                                      "text": row["text"]}, ensure_ascii=False),
+                          evidence_ids=[report_id])
 
     object_schema = {"type": "object", "properties": {}, "additionalProperties": False}
     return [
@@ -293,7 +300,7 @@ def score_mimic_cdm(dataset, decisions: dict[str, list[dict]]) -> dict:
     from ..scorer import expected_rows
 
     per_episode = {}
-    correct = completed = 0
+    correct = completed = answer_objects = 0
     per_pathology = {label: {"correct": 0, "total": 0} for label in PATHOLOGIES}
     for episode in dataset.episodes:
         target = dataset.targets.get(episode.id)
@@ -303,15 +310,18 @@ def score_mimic_cdm(dataset, decisions: dict[str, list[dict]]) -> dict:
             raise ValueError(f"missing or invalid pathology target: {episode.id}")
         row = expected_rows(episode, decisions)[0]
         answer = (row.get("decision") or {}).get("answer")
-        given = answer.get("diagnosis") if isinstance(answer, dict) else None
+        given = answer.get("diagnosis") if isinstance(answer, dict) else answer
         normalized = given.strip().casefold() if isinstance(given, str) else None
+        answer_is_object = isinstance(answer, dict)
         submitted = row.get("decision") is not None
         is_correct = normalized == wanted
         completed += int(submitted)
         correct += int(is_correct)
+        answer_objects += int(answer_is_object)
         per_pathology[wanted]["correct"] += int(is_correct)
         per_pathology[wanted]["total"] += 1
         per_episode[episode.id] = {"submitted": submitted, "correct": is_correct,
+                                   "answer_is_object": answer_is_object,
                                    "reference_pathology": wanted,
                                    "predicted_pathology": normalized,
                                    "termination": row["termination"]}
@@ -321,6 +331,8 @@ def score_mimic_cdm(dataset, decisions: dict[str, list[dict]]) -> dict:
                                                  "value": correct / total if total else None},
                           "completion": {"num": completed, "den": total,
                                          "value": completed / total if total else None},
+                          "answer_object_format": {"num": answer_objects, "den": total,
+                                                   "value": answer_objects / total if total else None},
                           "per_pathology": per_pathology,
                           "treatment_scored": False}}
 

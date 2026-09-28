@@ -89,15 +89,20 @@ def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
     assert set(tools1) == {"physical_examination", "laboratory_results", "microbiology",
                            "list_imaging", "imaging"}
     assert "tenderness A" in tools1["physical_examination"].invoke("{}").text
+    assert tools1["physical_examination"].invoke("{}").evidence_ids == ["physical-examination"]
     assert "tenderness B" in tools2["physical_examination"].invoke("{}").text
     labs = json.loads(tools1["laboratory_results"].invoke("{}").text)["results"]
+    assert tools1["laboratory_results"].invoke("{}").evidence_ids == ["laboratory-tests", "lab-100"]
     assert [(row["label"], row["value"], row["fluid"]) for row in labs] == [
         ("White blood cells", "12", "Blood")]
     catalog = json.loads(tools1["list_imaging"].invoke("{}").text)["reports"]
     assert catalog == [{"report_id": "imaging-1", "modality": "CT", "region": "Abdomen",
                         "exam_name": "CT abdomen"}]
     assert "finding" not in json.dumps(catalog)
-    assert "finding A" in tools1["imaging"].invoke('{"report_id":"imaging-1"}').text
+    assert tools1["list_imaging"].invoke("{}").evidence_ids == []
+    report = json.loads(tools1["imaging"].invoke('{"report_id":"imaging-1"}').text)
+    assert report["evidence_id"] == "imaging-1" and "finding A" in report["text"]
+    assert tools1["imaging"].invoke('{"report_id":"imaging-1"}').evidence_ids == ["imaging-1"]
     assert "finding B" not in tools1["imaging"].invoke('{"report_id":"imaging-1"}').text
     with pytest.raises(ValueError, match="unknown imaging report ID"):
         tools1["imaging"].invoke('{"report_id":"imaging-2"}')
@@ -116,6 +121,10 @@ def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
     dataset.episodes = dataset.select(episode_id="1")
     rows = {"1": [json.loads((run / "decisions.jsonl").read_text())]}
     assert score_mimic_cdm(dataset, rows)["aggregate"]["diagnosis_accuracy"]["value"] == 1
+    rows["1"][0]["decision"]["answer"] = "appendicitis"
+    aggregate = score_mimic_cdm(dataset, rows)["aggregate"]
+    assert aggregate["diagnosis_accuracy"]["value"] == 1
+    assert aggregate["answer_object_format"]["value"] == 0
 
 
 def test_checksum_manifest_is_not_required(tmp_path):

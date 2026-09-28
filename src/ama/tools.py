@@ -18,6 +18,7 @@ _MODULE_CACHE: dict[Path, object] = {}
 class ToolResult:
     text: str = ""
     images: list[str | Path] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -41,8 +42,12 @@ class Tool:
             result = ToolResult(result if isinstance(result, str) else json.dumps(result, ensure_ascii=False))
         if not isinstance(result.text, str):
             raise ValueError("ToolResult.text must be a string")
+        if not isinstance(result.evidence_ids, list) or not all(
+                isinstance(value, str) and value.strip() for value in result.evidence_ids):
+            raise ValueError("tool evidence IDs must be non-empty strings")
         # 在记为成功工具结果之前检查图像路径；错误可回传模型修正。
-        return ToolResult(result.text, [image(path)["path"] for path in result.images])
+        return ToolResult(result.text, [image(path)["path"] for path in result.images],
+                          list(dict.fromkeys(result.evidence_ids)))
 
 
 def load_tools(path: str | Path | None, *, dataset_dir: Path | None = None,

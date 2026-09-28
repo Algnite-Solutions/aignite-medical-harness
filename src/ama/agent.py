@@ -26,6 +26,8 @@ class Agent:
         self.calls: list[dict] = []
         self.failed = False
         self.on_event = on_event
+        self.evidence_ids: set[str] = set()
+        self.evidence_releases: list[dict] = []
 
     def _emit(self, kind: str, value=None) -> None:
         if self.on_event is not None:
@@ -86,6 +88,11 @@ class Agent:
                         text = result.text or "Image result attached."
                         for path in result.images:
                             attachments.extend([f"Tool image: call_id={request['id']}, name={name}", image(path)])
+                        if result.evidence_ids:
+                            text += "\nCiteable evidence IDs: " + json.dumps(result.evidence_ids)
+                            self.evidence_ids.update(result.evidence_ids)
+                            self.evidence_releases.append({"tool_call_id": request["id"],
+                                                           "name": name, "evidence_ids": result.evidence_ids})
                     except Exception as exc:
                         text = json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                     self.history.append({"role": "tool", "tool_call_id": request["id"], "content": text})

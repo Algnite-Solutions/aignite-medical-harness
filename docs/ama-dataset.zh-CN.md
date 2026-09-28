@@ -25,7 +25,7 @@ Evidence 的 `text` 与安全相对路径 `file` 至少有一个。`type`、`obs
 
 Decision：
 ```json
-{"turn_id":"t1","answer":{"caption":"A chest image.","cuis":[]},"citations":["scan"]}
+{"turn_id":"t1","answer":{"caption":"A chest image.","cuis":[]},"citations":["scan"],"reasoning_summary":"可见的解剖结构支持该描述。"}
 ```
 
 `answer` 是任务自定义 JSON，null 表示弃答且不能附引用。引用只能指向截至当前轮已展示的 Evidence。
@@ -37,9 +37,23 @@ ROCOv2 的 `targets.jsonl` 一行：
 
 `eval.json` 为 `{"scorer":"rocov2"}`。没有评分配置时，只记录完成情况。
 
-run 与 chat 共用 Agent。run 在 Agent 外解析 Decision，chat 允许自由追问且不可评分。
-`--tools file.py` 可选加载显式 TOOLS 列表。任务说明默认读取 instructions.txt，
-`--instruction-file ...` 可替换；记录保存实际提示、指令哈希、模型配置、预期轮次和可见数据哈希。
-数据检查自动执行，参考答案与规则仅在 eval 时打开。失败与缺失回答仍保留在评测分母中。
+run 与 chat 共用 Agent。runner 负责最终输出格式，数据集说明只描述任务及 answer 字段。
+run 要求 2–4 句基于证据的 reasoning_summary；chat 保持自由交流。
+
+输出协议 v2 保留原始回复，并在 Decision 旁记录 output_validation。完整 Decision 优先于
+重复的简短答案，允许 JSON 前后有解释。冲突结论和明确错误的 turn ID 会导致提取失败。
+仅含答案的 JSON 可以恢复，但缺少的引用与摘要仍标记为 missing。摘要只取显式字段或
+标有 Reasoning summary 的段落，不把任意分析文字当作摘要。不会增加模型调用。
+
+工具通过 ToolResult.evidence_ids 显式声明证据；只有成功调用才注册，并记录 evidence_release
+事件。工具正文或影像目录中仅提到的 ID 不会自动注册。未知引用原样保留并标记无效，
+不抹去已恢复的结论。解析后另记 decision 事件；exchange 仍是原始交互记录。
+
+ama eval 将任务得分与 aggregate.output_quality 分开：答案可恢复率、严格格式合规率、
+有效非空引用率、摘要存在率，分母均为预期轮次数。严格合规检查四字段 JSON 及类型，引用合法性
+单独检查。这些指标不代表医学依据正确或摘要质量。旧版本记录仍可读取，新指标显示 null。
+
+--instruction-file 可替换任务说明。manifest 记录实际提示、哈希、模型配置和协议版本。
+只有 eval 读取参考答案；失败与缺失回答仍计入评测分母。
 
 代码阅读与可执行例子见 [最小 Agent 导读](minimal-agent.zh-CN.md)。
