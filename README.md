@@ -82,6 +82,10 @@ For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repe
 ROCOv2 is the only built-in importer/demo. Each image is one episode/turn; ordered multi-turn datasets
 also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
 
+The later-added Symptom2Disease importer and text demo are documented in the
+[Symptom2Disease demo data card](datasets/symptom2disease_demo/DATASET_CARD.md),
+including import, validation, and run instructions.
+
 Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
 `events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
 `decisions.jsonl`. Images stay as paths in logs and are encoded only for requests.

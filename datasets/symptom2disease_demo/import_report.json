@@ -1,0 +1,39 @@
+{
+  "source_file": "Symptom2Disease.csv",
+  "source_sha256": "00c14a2f38c041179d24a91de80c4b3a9d105f58982aa52e96a7226ca994dba8",
+  "n_source_rows": 1200,
+  "n_eligible": 1200,
+  "n_imported": 6,
+  "n_not_selected_due_row_filter": 1194,
+  "n_not_selected_due_limit": 0,
+  "excluded": {},
+  "duplicate_text_in_selected": 0,
+  "label_counts_in_selected": {
+    "Chicken pox": 1,
+    "Dengue": 1,
+    "Impetigo": 1,
+    "Psoriasis": 1,
+    "Typhoid": 1,
+    "Varicose Veins": 1
+  },
+  "selection": {
+    "order": "source CSV order",
+    "limit": null,
+    "rows": [
+      2,
+      52,
+      102,
+      152,
+      202,
+      252
+    ]
+  },
+  "selected_source_rows": [
+    {"id": "s2d-000001", "source_row": 2},
+    {"id": "s2d-000051", "source_row": 52},
+    {"id": "s2d-000101", "source_row": 102},
+    {"id": "s2d-000151", "source_row": 152},
+    {"id": "s2d-000201", "source_row": 202},
+    {"id": "s2d-000251", "source_row": 252}
+  ]
+}

@@ -1,0 +1,6 @@
+{"id": "s2d-000001", "turns": {"t1": {"answer": {"disease": "Psoriasis"}, "required_evidence": ["symptoms"]}}}
+{"id": "s2d-000051", "turns": {"t1": {"answer": {"disease": "Varicose Veins"}, "required_evidence": ["symptoms"]}}}
+{"id": "s2d-000101", "turns": {"t1": {"answer": {"disease": "Typhoid"}, "required_evidence": ["symptoms"]}}}
+{"id": "s2d-000151", "turns": {"t1": {"answer": {"disease": "Chicken pox"}, "required_evidence": ["symptoms"]}}}
+{"id": "s2d-000201", "turns": {"t1": {"answer": {"disease": "Impetigo"}, "required_evidence": ["symptoms"]}}}
+{"id": "s2d-000251", "turns": {"t1": {"answer": {"disease": "Dengue"}, "required_evidence": ["symptoms"]}}}
