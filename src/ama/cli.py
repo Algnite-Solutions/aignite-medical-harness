@@ -82,7 +82,7 @@ def main(argv=None):
     evaluate.add_argument("run_dir", type=Path)
     evaluate.add_argument("--scorer")
     importer = sub.add_parser("import")
-    importer.add_argument("kind", choices=["rocov2"])
+    importer.add_argument("kind", choices=["rocov2", "icc-xlsx"])
     importer.add_argument("--source", type=Path, required=True)
     importer.add_argument("--out", type=Path, required=True)
     importer.add_argument("--split", default="test")
@@ -103,8 +103,12 @@ def main(argv=None):
             return 0 if manifest["termination"] in {"completed", "quit", "eof"} else 1
         if args.command == "eval":
             return _eval_run(args.run_dir, args.scorer)
-        from .importers.rocov2 import import_rocov2
-        report = import_rocov2(args.source, args.out, split=args.split, limit=args.limit, ids=args.ids)
+        if args.kind == "icc-xlsx":
+            from .importers.srrsh_icc import import_srrsh_icc
+            report = import_srrsh_icc(args.source, args.out, ids=args.ids)
+        else:
+            from .importers.rocov2 import import_rocov2
+            report = import_rocov2(args.source, args.out, split=args.split, limit=args.limit, ids=args.ids)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         print(f"imported -> {args.out}")
         return 0
