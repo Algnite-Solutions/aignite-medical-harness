@@ -72,9 +72,16 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 ```bash
 ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
 ama run datasets/rocov2 --model qwen36 --split test
+ama import icc-xlsx --source ICC临床数据.xlsx --out datasets/srrsh_icc [--id 患者ID ...]
 ```
 
 也可用可重复的 `--episode ID` 替代 `--split`，`--runs-root 目录` 指定输出父目录。
+
+`icc-xlsx` 将 SRRSH ICC 临床合并表逐行转为单轮 Episode × 5 条表格派生 Evidence
+（临床基线 / 血清 panel / 术前 TACE 史 / 手术记录 / 病理与分期）。Turn 仅为结构性容器；
+结局列（RFS/OS/随访）不读取，turn 划分与评测 target 属评测侧。逐条时间与缺失信息在
+`provenance.jsonl`（run loader 不读取）。⚠ 产物含真实患者数据（PHI）：
+`datasets/srrsh_icc*/` 已被 .gitignore 排除，脱敏前不得提交或外发。
 
 运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
 工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
