@@ -9,6 +9,8 @@ from ama.importers.mimic_cdm_benchmark import (
     build_benchmark, score_mimic_cdm_open, _diagnosis_label, _select_ids,
 )
 from ama.importers.mimic_cdm_compare import compare_runs
+from ama.importers.mimic_cdm_batch import PacedModel, merge_batch, run_batch
+from ama.model import Model, ModelError
 from ama.runner import execute
 from ama.scorer import REGISTRY
 from fakes import FakeModel, call, calls
@@ -57,6 +59,10 @@ def test_open_score_is_conservative_and_exposes_unmapped_answers(tmp_path):
     assert aggregate["review_episode_ids"] == ["2"]
     assert _diagnosis_label("No evidence of appendicitis") == (None, "ambiguous")
     assert _diagnosis_label("Acute pancreatitis without necrosis") == ("pancreatitis", "mapped")
+    decisions["1"][0]["decision"]["answer"] = "Acute appendicitis"
+    recovered = score_mimic_cdm_open(dataset, decisions)["aggregate"]
+    assert recovered["diagnosis_accuracy_auto"]["num"] == 1
+    assert recovered["answer_object_format"]["num"] == 1
 
 
 def test_mismatched_source_variant_fails_before_writing(tmp_path):
@@ -123,3 +129,91 @@ def test_paired_comparison_separates_model_and_tool_effects(tmp_path):
     history_file.write_text(json.dumps(histories))
     with pytest.raises(ValueError, match="actual system prompt"):
         compare_runs(matrix)
+
+
+def test_batch_merge_preserves_one_case_transcripts_and_scores(tmp_path):
+    processed = tmp_path / "processed"
+    import_mimic_cdm(_source(tmp_path / "source"), processed)
+    out = tmp_path / "benchmark"
+    build_benchmark(processed / "mimic_cdm_full_info",
+                    processed / "mimic_cdm_interactive", out, ids=["1", "2"])
+    folder = out / "mimic_cdm_open_hpi"
+    shards = {}
+    for case_id, diagnosis in (("1", "Acute appendicitis"), ("2", "Acute cholecystitis")):
+        model = FakeModel(json.dumps({"turn_id": "t1", "answer": diagnosis,
+                                      "citations": ["hpi"], "reasoning_summary": "Supported by HPI."}))
+        run = execute(folder, model, episode_ids=[case_id], runs_root=tmp_path / "shards")
+        shards[case_id] = str(run)
+    merged = merge_batch(tmp_path, {"episode_ids": ["1", "2"], "runs": shards})
+    assert set(json.loads((merged / "messages.json").read_text())) == {"1", "2"}
+    assert len((merged / "decisions.jsonl").read_text().splitlines()) == 2
+    aggregate = json.loads((merged / "metrics.json").read_text())["scored"]["aggregate"]
+    assert aggregate["diagnosis_accuracy_auto"]["num"] == 2
+    assert aggregate["answer_object_format"]["num"] == 0
+
+
+def test_paced_model_retries_only_rate_limits(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_BENCHMARK_KEY", "fixture")
+    model = PacedModel("fixture", {"base_url": "https://example.invalid/v1",
+                                   "model": "fixture", "api_key_env": "TEST_BENCHMARK_KEY"})
+    model.request_delay = 0
+    model.retry_log = tmp_path / "retries.jsonl"
+    monkeypatch.setattr("ama.importers.mimic_cdm_batch.time.sleep", lambda _: None)
+    attempts = []
+    def complete(self, history, tools=None):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ModelError("HTTP 429", http_status=429)
+        return {"role": "assistant", "content": "saved answer"}
+    monkeypatch.setattr(Model, "complete", complete)
+    assert model.complete([])["content"] == "saved answer"
+    assert len(attempts) == 2
+    assert json.loads(model.retry_log.read_text())["http_status"] == 429
+    attempts.clear()
+    def server_error(self, history, tools=None):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ModelError("HTTP 500", http_status=500)
+        return {"role": "assistant", "content": "saved answer"}
+    monkeypatch.setattr(Model, "complete", server_error)
+    assert model.complete([])["content"] == "saved answer"
+    assert len(attempts) == 2
+    def bad_request(self, history, tools=None):
+        attempts.append(1)
+        raise ModelError("HTTP 400", http_status=400)
+    monkeypatch.setattr(Model, "complete", bad_request)
+    attempts.clear()
+    with pytest.raises(ModelError):
+        model.complete([])
+    assert len(attempts) == 1
+
+
+def test_hundred_case_batch_merges_and_resumes_without_repeat_calls(tmp_path, monkeypatch, capsys):
+    folder = tmp_path / "mimic_cdm_open_hpi"
+    folder.mkdir()
+    ids = [str(index) for index in range(100)]
+    (folder / "dataset.json").write_text(json.dumps({
+        "schema": "ama-dataset", "name": folder.name, "splits": {"all": ids}}))
+    with (folder / "episodes.jsonl").open("w") as episodes, \
+            (folder / "targets.jsonl").open("w") as targets:
+        for case_id in ids:
+            episodes.write(json.dumps({"id": case_id, "turns": [{"id": "t1", "evidence": [
+                {"id": "hpi", "text": "RLQ pain"}]}]}) + "\n")
+            targets.write(json.dumps({"id": case_id, "turns": {"t1": {
+                "answer": {"diagnosis": "appendicitis"}}}}) + "\n")
+    (folder / "instructions.txt").write_text("Give a diagnosis.")
+    (folder / "eval.json").write_text('{"scorer":"mimic_cdm_open"}')
+    answer = json.dumps({"turn_id": "t1", "answer": "Acute appendicitis",
+                         "citations": ["hpi"], "reasoning_summary": "RLQ pain supports this."})
+    model = FakeModel(*([answer] * 100))
+    model.name = "fixture"
+    model.timeout = 120
+    monkeypatch.setattr(PacedModel, "from_config", lambda *args, **kwargs: model)
+    out = tmp_path / "batch"
+    merged = run_batch(folder, "fixture", out, delay=0)
+    assert json.loads((merged / "metrics.json").read_text())["scored"]["aggregate"][
+        "diagnosis_accuracy_auto"]["num"] == 100
+    assert len(model.requests) == 100
+    assert run_batch(folder, "fixture", out, delay=0) == merged
+    assert len(model.requests) == 100
+    assert len(json.loads((merged / "messages.json").read_text())) == 100

@@ -48,31 +48,35 @@ PYTHONPATH=src python3 -m ama.importers.mimic_cdm_benchmark \
 
 Use the same model configuration within each model's three runs. Set temperature 0,
 the same request timeout, and the same episode IDs and order. HPI and full-info have
-no tools; interactive uses the MIMIC adapter. Run each view with one worker and pace
-requests to stay below the endpoint's token quota. Give every run enough time to finish
-and evaluate it with `ama eval` before comparison. Example for one model:
+no tools; interactive uses the MIMIC adapter. The batch runner processes one case at
+a time, paces each request, retries HTTP 429 and transient HTTP 5xx with bounded backoff, saves each case,
+and can resume by repeating the same command. Example for one model:
 
 ```bash
-ama run /path/to/restricted/benchmark/mimic_cdm_open_hpi \
-  --model MODEL --split all --timeout 120 --max-calls 24 --runs-root runs
-ama run /path/to/restricted/benchmark/mimic_cdm_open_interactive \
-  --model MODEL --split all --timeout 120 --max-calls 24 \
-  --tools src/ama/importers/mimic_cdm_tools.py --runs-root runs
-ama run /path/to/restricted/benchmark/mimic_cdm_open_full_info \
-  --model MODEL --split all --timeout 120 --max-calls 24 --runs-root runs
-ama eval runs/HPI_RUN_ID
-ama eval runs/INTERACTIVE_RUN_ID
-ama eval runs/FULL_RUN_ID
+PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+  --dataset /path/to/restricted/benchmark/mimic_cdm_open_hpi \
+  --model MODEL --out runs/open100/MODEL/hpi --delay 3
+PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+  --dataset /path/to/restricted/benchmark/mimic_cdm_open_interactive \
+  --model MODEL --out runs/open100/MODEL/interactive --delay 3 \
+  --tools src/ama/importers/mimic_cdm_tools.py
+PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+  --dataset /path/to/restricted/benchmark/mimic_cdm_open_full_info \
+  --model MODEL --out runs/open100/MODEL/full_info --delay 3
 ```
 
-Repeat for the second model. `ama run` itself does not pace calls or retry 429s;
-do not treat transport failures as diagnostic mistakes. Report both accuracy over
-all selected cases and completion/transport failures. To aggregate completed runs:
+Repeat for the other models. Each batch writes `batch.json` and a standard evaluated
+run in `merged/`; raw one-case runs stay in `shards/`. Repeat a command to retry
+failed cases after a quota reset. Do not treat transport failures as diagnostic mistakes.
+Report both accuracy over all selected cases and completion/transport failures.
+To compare two completed models at a time:
 
 ```bash
 PYTHONPATH=src python3 -m ama.importers.mimic_cdm_compare \
-  --model MODEL_A runs/A_HPI runs/A_INTERACTIVE runs/A_FULL \
-  --model MODEL_B runs/B_HPI runs/B_INTERACTIVE runs/B_FULL \
+  --model MODEL_A runs/open100/MODEL_A/hpi/merged \
+    runs/open100/MODEL_A/interactive/merged runs/open100/MODEL_A/full_info/merged \
+  --model MODEL_B runs/open100/MODEL_B/hpi/merged \
+    runs/open100/MODEL_B/interactive/merged runs/open100/MODEL_B/full_info/merged \
   --out runs/paired-open-comparison.json
 ```
 
@@ -89,6 +93,8 @@ Also compare tool calls, model calls, tokens, citation validity, and output comp
 The automatic free-text scorer recognizes only conservative equivalents of the four
 source labels. It reports mapping coverage and lists ambiguous or unmapped answers
 for blinded clinical review; `diagnosis_accuracy_auto` is a lower bound until review.
+It scores a diagnosis string directly in `answer` when a model omits the requested
+`answer.diagnosis` object, and reports `answer_object_format` separately.
 Treatment quality and citation support are not automatically adjudicated.
 
 ## Validity checks before interpreting a model gap

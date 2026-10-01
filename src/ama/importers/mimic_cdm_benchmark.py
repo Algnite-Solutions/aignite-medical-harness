@@ -190,7 +190,7 @@ def score_mimic_cdm_open(dataset, decisions: dict[str, list[dict]]) -> dict:
     from ..scorer import expected_rows
 
     per_episode = {}
-    correct = mapped = submitted = 0
+    correct = mapped = submitted = answer_objects = 0
     review = []
     per_pathology = {label: {"correct": 0, "total": 0} for label in PATHOLOGIES}
     for episode in dataset.episodes:
@@ -201,17 +201,19 @@ def score_mimic_cdm_open(dataset, decisions: dict[str, list[dict]]) -> dict:
         row = expected_rows(episode, decisions)[0]
         decision = row.get("decision") or {}
         answer = decision.get("answer")
-        value = answer.get("diagnosis") if isinstance(answer, dict) else None
+        value = answer.get("diagnosis") if isinstance(answer, dict) else answer
         predicted, mapping = _diagnosis_label(value)
         is_correct = predicted == wanted
         correct += is_correct
         mapped += mapping == "mapped"
         submitted += row.get("decision") is not None
+        answer_objects += isinstance(answer, dict)
         per_pathology[wanted]["total"] += 1
         per_pathology[wanted]["correct"] += is_correct
         if mapping in {"ambiguous", "unmapped"}:
             review.append(episode.id)
         per_episode[episode.id] = {"submitted": row.get("decision") is not None,
+                                  "answer_is_object": isinstance(answer, dict),
                                   "diagnosis_text": value, "predicted_pathology": predicted,
                                   "mapping": mapping, "reference_pathology": wanted,
                                   "correct_auto": is_correct, "termination": row["termination"]}
@@ -220,6 +222,7 @@ def score_mimic_cdm_open(dataset, decisions: dict[str, list[dict]]) -> dict:
     return {"scorer": "mimic_cdm_open", "per_episode": per_episode,
             "aggregate": {"diagnosis_accuracy_auto": rate(correct),
                           "diagnosis_mapped": rate(mapped), "completion": rate(submitted),
+                          "answer_object_format": rate(answer_objects),
                           "needs_review": len(review), "review_episode_ids": review,
                           "per_pathology": per_pathology}}
 
