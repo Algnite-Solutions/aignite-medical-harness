@@ -109,6 +109,12 @@ IDs or evidence IDs explicitly registered by successful tools. The
 credentialed source and model transcripts should remain on restricted storage; importing itself does
 not call a model.
 
+For a controlled comparison of model diagnosis and tool use, the
+[matched open-answer protocol](docs/mimic-cdm-open-benchmark.md) builds HPI-only,
+interactive, and full-information views from the same admissions. It gives all views
+the same answer field and hides the four candidate labels from the prompt; source
+targets remain four-group, with conservative automatic mapping and a review queue.
+
 Records include `manifest.json` (model configuration, dataset, expected turns and status),
 `messages.json` (episode IDs mapped to ordered message arrays, including the actual system prompt),
 `diagnostics.jsonl` (tool definitions, model calls, evidence releases and errors), and for run only
