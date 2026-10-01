@@ -13,7 +13,11 @@ IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 class ModelError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, http_status: int | None = None,
+                 rate_limit_headers: dict[str, str] | None = None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.rate_limit_headers = rate_limit_headers or {}
 
 
 def image(path: str | Path) -> dict:
@@ -67,9 +71,11 @@ def wire_messages(history: list[dict]) -> list[dict]:
 
 class Model:
     def __init__(self, name: str, config: dict, timeout: float = 60):
-        allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs"}
+        allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser"}
         if set(config) - allowed:
             raise ValueError(f"unsupported model options: {sorted(set(config) - allowed)}")
+        if config.get("tool_call_parser") not in (None, "antangel"):
+            raise ValueError("unsupported tool_call_parser")
         for key in ("base_url", "model", "api_key_env"):
             if not config.get(key):
                 raise ValueError(f"missing model option: {key}")
@@ -97,6 +103,8 @@ class Model:
                 payload[key] = self.config[key]
         if tools:
             payload["tools"] = tools
+            if self.config.get("tool_call_parser") == "antangel":
+                payload["tool_choice"] = "none"
         request = urllib.request.Request(
             self.config["base_url"].rstrip("/") + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -112,7 +120,15 @@ class Model:
                         isinstance(part, dict) and part.get("type") == "image"
                         for part in m["content"]) for m in history):
                 hint = "; request contains tools and images; check service support (history was not rewritten)"
-            raise ModelError(f"model endpoint returned HTTP {exc.code}{hint}") from None
+            allowed = {"retry-after", "ratelimit-limit", "ratelimit-remaining", "ratelimit-reset",
+                       "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset",
+                       "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+                       "x-ratelimit-reset-requests", "x-ratelimit-limit-tokens",
+                       "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens"}
+            rate_headers = {name.lower(): value[:256] for name, value in exc.headers.items()
+                            if name.lower() in allowed and isinstance(value, str)} if exc.headers else {}
+            raise ModelError(f"model endpoint returned HTTP {exc.code}{hint}",
+                             http_status=exc.code, rate_limit_headers=rate_headers) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ModelError(f"model connection failed: {type(exc).__name__}") from None
         except (ValueError, UnicodeError):
@@ -122,6 +138,12 @@ class Model:
             message = data["choices"][0]["message"]
             if not isinstance(message, dict):
                 raise ValueError()
+            if tools and self.config.get("tool_call_parser") == "antangel":
+                from .antangel import parse_tool_calls
+                try:
+                    message = parse_tool_calls(message, tools)
+                except ValueError as exc:
+                    raise ModelError(f"invalid AntAngel tool call: {exc}") from None
             return message
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
             raise ModelError("model response has no assistant message") from None

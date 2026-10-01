@@ -21,7 +21,7 @@ def _load_dotenv(path=Path(".env")):
 
 def _eval_run(run_dir: Path, scorer_override=None):
     from .data import load_dataset, validate_dataset
-    from .recorder import sha256_file, write_json
+    from .recorder import write_json
     from .scorer import REGISTRY, expected_rows
     from .decisions import output_metrics
 
@@ -31,9 +31,6 @@ def _eval_run(run_dir: Path, scorer_override=None):
     if manifest.get("mode") != "run" or "expected_turns" not in manifest:
         raise ValueError("unsupported historical run; regenerate it with ama run")
     folder = Path(manifest["dataset_dir"])
-    for name, digest in manifest["dataset_sha256"].items():
-        if sha256_file(folder / name) != digest:
-            raise ValueError(f"dataset changed since inference: {name}")
     errors = validate_dataset(folder)
     if errors:
         raise ValueError("invalid evaluation dataset: " + "; ".join(errors))
@@ -58,8 +55,6 @@ def _eval_run(run_dir: Path, scorer_override=None):
     result["aggregate"]["output_quality"] = quality
     write_json(run_dir / "metrics.json", {
         "run_id": manifest["run_id"], "model": manifest["model"], "scorer": scorer,
-        "targets_sha256": sha256_file(folder / "targets.jsonl") if (folder / "targets.jsonl").exists() else None,
-        "eval_sha256": sha256_file(folder / "eval.json") if (folder / "eval.json").exists() else None,
         "scored": result,
     })
     print(json.dumps(result.get("aggregate"), ensure_ascii=False, indent=2))

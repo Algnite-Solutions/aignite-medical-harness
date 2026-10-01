@@ -42,7 +42,7 @@ class Agent:
             for _ in range(self.max_calls):
                 # 1. 原样发出历史；记录每次调用，包括失败和中断。
                 started = time.monotonic()
-                call = {"usage": None, "error": None}
+                call = {"message_index": len(self.history), "usage": None, "error": None}
                 try:
                     self._emit("model_start")
                     reply = self.model.complete(self.history, tools=definitions or None)
@@ -53,6 +53,10 @@ class Agent:
                     self.history.append(reply)
                 except BaseException as exc:
                     call["error"] = f"{type(exc).__name__}: {exc}"
+                    if isinstance(exc, ModelError) and exc.http_status is not None:
+                        call["http_status"] = exc.http_status
+                        if exc.rate_limit_headers:
+                            call["rate_limit_headers"] = exc.rate_limit_headers
                     raise
                 finally:
                     call["duration_ms"] = int((time.monotonic() - started) * 1000)

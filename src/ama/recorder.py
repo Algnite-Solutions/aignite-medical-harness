@@ -1,58 +1,43 @@
-"""Append-only experiment records. Messages keep paths; never encode images here."""
+"""Run configuration, atomic conversation snapshots, and append-only diagnostics."""
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def write_json(path: Path, value) -> None:
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class Recorder:
-    def __init__(self, root: Path, *, dataset, episodes, mode, model, instruction, system,
+    def __init__(self, root: Path, *, dataset, episodes, mode, model,
                  max_calls, tools_path=None):
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]
         self.run_dir = Path(root).resolve() / run_id
         self.run_dir.mkdir(parents=True)
-        # Only visible inputs: never even hash targets, eval rules or provenance here.
-        files = {"dataset.json", "episodes.jsonl"}
-        files.update(e.file for ep in episodes for t in ep.turns for e in t.evidence if e.file)
-        # Dataset-side files read by trusted tools are declared without executing dataset code.
-        tool_data_manifest = dataset.folder / "tool_data_files.json"
-        if tools_path and tool_data_manifest.exists():
-            files.add("tool_data_files.json")
-            for name in json.loads(tool_data_manifest.read_text(encoding="utf-8")):
-                if not isinstance(name, str):
-                    raise ValueError(f"unsafe tool data file: {name!r}")
-                candidate = (dataset.folder / name).resolve()
-                if dataset.folder.resolve() not in candidate.parents \
-                        or not candidate.is_file():
-                    raise ValueError(f"unsafe tool data file: {name!r}")
-                files.add(name)
         self.manifest = {
             "run_id": run_id, "mode": mode, "dataset_dir": str(dataset.folder.resolve()),
             "episode_ids": [ep.id for ep in episodes],
             "expected_turns": {ep.id: [t.id for t in ep.turns] for ep in episodes},
-            "dataset_sha256": {f: sha256_file(dataset.folder / f) for f in sorted(files)},
             "model": model.name, "model_config": model.config, "timeout": model.timeout,
-            "max_calls": max_calls, "instruction": instruction, "system": system,
-            "instruction_sha256": hashlib.sha256(instruction.encode()).hexdigest(),
-            "tools": {"file": str(Path(tools_path).resolve()), "sha256": sha256_file(Path(tools_path))}
-            if tools_path else None,
+            "max_calls": max_calls,
+            "tools": str(Path(tools_path).resolve()) if tools_path else None,
             "termination": "running",
         }
         if mode == "run":
             self.manifest["output_contract_version"] = 2
+        self.manifest["log_schema_version"] = 3
         write_json(self.run_dir / "manifest.json", self.manifest)
-        (self.run_dir / "events.jsonl").touch()
+        self.messages: dict[str, list[dict]] = {}
+        write_json(self.run_dir / "messages.json", self.messages)
+        (self.run_dir / "diagnostics.jsonl").touch()
         if mode == "run":
             (self.run_dir / "decisions.jsonl").touch()
 
@@ -61,16 +46,11 @@ class Recorder:
             stream.write(json.dumps(value, ensure_ascii=False) + "\n")
 
     def event(self, kind, **fields):
-        self.append("events.jsonl", {"kind": kind, **fields})
+        self.append("diagnostics.jsonl", {"kind": kind, **fields})
 
-    def history(self, agent, start, *, source, episode_id, turn_id):
-        for index in range(start, len(agent.history)):
-            message = agent.history[index]
-            origin = source if index == start and message["role"] == "user" else {
-                "assistant": "model", "system": "system", "tool": "tool", "user": "tool",
-            }.get(message["role"], "model")
-            self.event("message", episode_id=episode_id, turn_id=turn_id,
-                       index=index, source=origin, message=message)
+    def history(self, agent, *, episode_id):
+        self.messages[episode_id] = agent.history
+        write_json(self.run_dir / "messages.json", self.messages)
 
     def finish(self, termination):
         self.manifest["termination"] = termination

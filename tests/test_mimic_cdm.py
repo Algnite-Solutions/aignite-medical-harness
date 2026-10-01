@@ -113,8 +113,8 @@ def test_episode_tools_are_bound_and_tool_data_hashed(tmp_path):
     run = execute(folder, model, episode_ids=["1"], tools_path=tools_file,
                   runs_root=tmp_path / "runs")
     manifest = json.loads((run / "manifest.json").read_text())
-    assert "cases.jsonl" in manifest["dataset_sha256"]
-    assert "lab_mapping.json" in manifest["dataset_sha256"]
+    assert "dataset_sha256" not in manifest
+    assert manifest["tools"] == str(tools_file.resolve())
     assert json.loads((run / "decisions.jsonl").read_text())["decision"]["answer"]["diagnosis"] \
         == "appendicitis"
     dataset = load_dataset(folder, with_targets=True)

@@ -81,11 +81,16 @@ def test_http_tool_image_limit_is_explicit_no_rewrite_or_retry(monkeypatch, tmp_
 
 def test_rate_limit_with_text_tools_has_no_image_hint(monkeypatch):
     def fail(*a, **kw):
-        raise urllib.error.HTTPError("https://example.test", 429, "limited", {}, None)
+        raise urllib.error.HTTPError("https://example.test", 429, "limited",
+                                     {"Retry-After": "30", "X-RateLimit-Remaining-Tokens": "0",
+                                      "Authorization": "secret-not-logged"}, None)
     monkeypatch.setattr(urllib.request, "urlopen", fail)
-    with pytest.raises(ModelError, match=r"^model endpoint returned HTTP 429$"):
+    with pytest.raises(ModelError, match=r"^model endpoint returned HTTP 429$") as raised:
         model(monkeypatch).complete([{"role": "tool", "content": "result"},
                                      {"role": "user", "content": [{"type": "text", "text": "text only"}]}])
+    assert raised.value.http_status == 429
+    assert raised.value.rate_limit_headers == {"retry-after": "30", "x-ratelimit-remaining-tokens": "0"}
+    assert "secret-not-logged" not in str(raised.value.rate_limit_headers)
 
 
 def test_registration_rejects_old_wire_and_missing_key(monkeypatch):
@@ -96,3 +101,19 @@ def test_registration_rejects_old_wire_and_missing_key(monkeypatch):
         Model.from_config("qwen36")
     with pytest.raises(ValueError, match="unknown model"):
         Model.from_config("not-registered")
+
+
+def test_antangel_parser_is_explicit_and_preserves_raw_response(monkeypatch):
+    raw = '<tool_call>lookup\n<arg_key>key</arg_key><arg_value>alpha</arg_value>\n</tool_call>'
+    requests = []
+    def respond(request, timeout):
+        requests.append(json.loads(request.data))
+        return Response(json.dumps({'choices':[{'message':{'role':'assistant','content':raw}}]}).encode())
+    monkeypatch.setattr(urllib.request, 'urlopen', respond)
+    tools = [{'type':'function','function':{'name':'lookup','parameters':{'properties':{'key':{'type':'string'}}}}}]
+    result = model(monkeypatch, tool_call_parser='antangel').complete([], tools)
+    assert requests[-1]['tools'] == tools and requests[-1]['tool_choice'] == 'none'
+    assert result['content'] == raw
+    assert json.loads(result['tool_calls'][0]['function']['arguments']) == {'key':'alpha'}
+    result = model(monkeypatch).complete([], tools)
+    assert 'tool_choice' not in requests[-1] and 'tool_calls' not in result

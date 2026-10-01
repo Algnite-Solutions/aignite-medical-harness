@@ -109,9 +109,20 @@ IDs or evidence IDs explicitly registered by successful tools. The
 credentialed source and model transcripts should remain on restricted storage; importing itself does
 not call a model.
 
-Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
-`events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
-`decisions.jsonl`. Images stay as paths in logs and are encoded only for requests.
+Records include `manifest.json` (model configuration, dataset, expected turns and status),
+`messages.json` (episode IDs mapped to ordered message arrays, including the actual system prompt),
+`diagnostics.jsonl` (tool definitions, model calls, evidence releases and errors), and for run only
+`decisions.jsonl` (parsed answers, validation, turn status and totals). No SHA fingerprints are recorded
+or checked. New runs use log schema v3; historical logs are not rewritten.
+Messages retain their protocol fields without per-message episode/source metadata. Images stay as paths.
+Each decision's `message_range: [start, end]` selects its messages by zero-based indices with an exclusive
+end in `messages.json[episode_id]`. Model-call diagnostics use `message_index` for the assistant response
+position; failed calls may have no response at that position. Raw replies are stored only in the transcript.
+Conversation snapshots are replaced atomically after each exchange, including caught errors and Ctrl-C.
+A hard process kill during an exchange may lose that exchange, but leaves the preceding snapshot readable.
+Final-answer extraction ignores marked `<think>...</think>` blocks, including JSON drafts inside them,
+while retaining the raw transcript and recording how many blocks were excluded. Such replies still
+fail strict JSON compliance; malformed thinking markers are rejected and citation IDs are not rewritten.
 Invalid decisions are kept, without correction dialogues. Failed/missing turns remain in evaluation.
 Output contract v2 requests `answer`, `citations`, and a concise `reasoning_summary` alongside
 `turn_id`. Recoverable JSON answers are normalized without extra model calls; raw replies and
@@ -121,7 +132,14 @@ API/call-limit failures skip the rest of that episode and continue the batch; Ct
 Partial runs return a nonzero CLI status and remain independently evaluable.
 
 Only `eval` opens references/rules, producing `metrics.json`.
-It checks visible input hashes before scoring. Original answers remain in `decisions.jsonl`;
+It checks that selected episodes and expected turns still match. Original replies remain in `messages.json`;
 references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy.
 Compatible historical runs remain evaluable; metrics absent from their output contract are null.
 Provenance never enters model input.
+
+AntAngelMed2 endpoints without a server tool parser can opt into
+`"tool_call_parser": "antangel"` in their model configuration. This sends tool definitions with
+`tool_choice: "none"` (verified on the configured AntAngel endpoint) and parses the model's raw
+`<tool_call>` / `<arg_key>` / `<arg_value>` output into standard tool calls. Raw assistant content
+is retained. It adds no prompts or model calls and does not alter final answers. This is an explicit
+endpoint compatibility mode, not a general fallback for providers that honor `none` by disabling tools.

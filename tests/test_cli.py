@@ -33,6 +33,14 @@ def rows(path, file="decisions.jsonl"):
     return [json.loads(line) for line in (path / file).read_text().splitlines()]
 
 
+def messages(path, episode_id="ep"):
+    return json.loads((path / "messages.json").read_text())[episode_id]
+
+
+def raw_reply(path, row):
+    return messages(path, row["episode_id"])[row["message_range"][1] - 1]["content"]
+
+
 def test_run_context_isolation_and_no_hidden_reads(tmp_path, monkeypatch):
     root = dataset(tmp_path, two=True)
     original = Path.open
@@ -50,6 +58,15 @@ def test_run_context_isolation_and_no_hidden_reads(tmp_path, monkeypatch):
     assert "WBC" not in json.dumps(model.requests[0])
     assert "WBC" in json.dumps(model.requests[1])
     assert all(r["decision"]["answer"] is None for r in rows(path))
+    histories = json.loads((path / "messages.json").read_text())
+    assert set(histories) == {"ep", "other"}
+    for index, episode_id in enumerate(histories):
+        assert histories[episode_id][:-1] == model.requests[index * 2 + 1][0]
+    for row in rows(path):
+        start, end = row["message_range"]
+        assert [m["role"] for m in histories[row["episode_id"]][start:end]] == ["user", "assistant"]
+        assert "reply" not in row
+    assert not (path / "events.jsonl").exists()
 
 
 def test_chat_followups_next_and_unscorable_without_hidden_reads(tmp_path, monkeypatch, capsys):
@@ -66,9 +83,10 @@ def test_chat_followups_next_and_unscorable_without_hidden_reads(tmp_path, monke
     assert len(model.requests) == 4
     assert "WBC" not in json.dumps(model.requests[1])
     assert "WBC" in json.dumps(model.requests[2])
-    messages = [r for r in rows(path, "events.jsonl") if r["kind"] == "message" and r["message"]["role"] == "user"]
-    assert [r["source"] for r in messages] == ["dataset", "human", "dataset", "human"]
-    assert [r["turn_id"] for r in messages] == ["t1", "t1", "t2", "t2"]
+    history = messages(path)
+    assert [r["role"] for r in history] == ["system"] + ["user", "assistant"] * 4
+    assert history[3]["content"] == "why?"
+    assert history[7]["content"] == "explain again"
     output = capsys.readouterr().out
     assert "没有后续材料" in output
     assert output.count("[dataset] Observation") == 2
@@ -83,7 +101,7 @@ def test_invalid_decision_no_repair_then_next_turn(tmp_path, reply):
     model = FakeModel(reply, decision("t2", answer="answer", citations=["hpi", "lab"]))
     path = execute(dataset(tmp_path), model, runs_root=tmp_path / "runs")
     result = rows(path)
-    assert result[0]["termination"] == "invalid_decision" and result[0]["reply"] == reply
+    assert result[0]["termination"] == "invalid_decision" and raw_reply(path, result[0]) == reply
     assert result[1]["termination"] == "completed"
     assert len(model.requests) == 2
 
@@ -94,7 +112,7 @@ def test_api_error_aborts_episode_but_continues_batch(tmp_path):
     path = execute(root, model, runs_root=tmp_path / "runs")
     assert [r["termination"] for r in rows(path)] == ["api_error", "not_executed", "completed", "completed"]
     assert len(model.requests[1][0]) == 2
-    assert any(r["kind"] == "model_call" and r["error"] for r in rows(path, "events.jsonl"))
+    assert any(r["kind"] == "model_call" and r["error"] for r in rows(path, "diagnostics.jsonl"))
     assert _eval_run(path) == 0
     metrics = json.loads((path / "metrics.json").read_text())["scored"]
     assert metrics["aggregate"]["caption_token_recall"]["den"] == 4
@@ -103,15 +121,25 @@ def test_api_error_aborts_episode_but_continues_batch(tmp_path):
     assert not (path / "report.md").exists()
 
 
+def test_http_rate_metadata_is_kept_out_of_message_history(tmp_path):
+    model = FakeModel(ModelError("model endpoint returned HTTP 429", http_status=429,
+                                 rate_limit_headers={"retry-after": "30"}))
+    path = execute(dataset(tmp_path), model, runs_root=tmp_path / "runs")
+    calls = [r for r in rows(path, "diagnostics.jsonl") if r["kind"] == "model_call"]
+    assert calls[0]["http_status"] == 429
+    assert calls[0]["rate_limit_headers"] == {"retry-after": "30"}
+    assert all("http_status" not in r for r in messages(path))
+
+
 @pytest.mark.parametrize("failure", [KeyboardInterrupt(), calls(call())])
 def test_interrupt_and_call_limit_keep_history(tmp_path, failure):
     model = FakeModel(failure)
     path = execute(dataset(tmp_path), model, runs_root=tmp_path / "runs", max_calls=1)
     assert rows(path)[0]["termination"] in {"interrupted", "call_limit"}
     assert rows(path)[1]["termination"] == "not_executed"
-    assert any(r["kind"] == "message" and r["source"] == "dataset" for r in rows(path, "events.jsonl"))
+    assert any(r["role"] == "user" for r in messages(path))
     if isinstance(failure, dict):
-        assert any(r.get("message", {}).get("role") == "tool" for r in rows(path, "events.jsonl"))
+        assert any(r["role"] == "tool" for r in messages(path))
 
 
 def test_missing_rows_still_scored(tmp_path):
@@ -132,7 +160,8 @@ def test_cli_instruction_override_selection_and_tools(tmp_path, monkeypatch):
     path = next((tmp_path / "runs").iterdir())
     manifest = json.loads((path / "manifest.json").read_text())
     assert manifest["episode_ids"] == ["other"]
-    assert manifest["instruction"] == "REPLACEMENT" and manifest["tools"]["sha256"]
+    assert messages(path, "other")[0]["content"].startswith("REPLACEMENT\n")
+    assert manifest["tools"] == str(Path("examples/tools.py").resolve())
     assert model.requests[0][1][0]["function"]["name"] == "add"
     assert main(["eval", str(path)]) == 0
 
@@ -149,13 +178,62 @@ def test_chat_cli_requires_episode_and_records_eof(tmp_path, monkeypatch):
     assert main(["eval", str(path)]) == 1
 
 
-def test_eval_detects_changed_dataset(tmp_path):
+def test_eval_accepts_whitespace_changes_without_hashes(tmp_path):
     root = dataset(tmp_path)
     path = execute(root, FakeModel(decision(), decision("t2")), runs_root=tmp_path / "runs")
     with (root / "episodes.jsonl").open("a") as stream:
         stream.write("\n")
-    with pytest.raises(ValueError, match="dataset changed"):
+    assert _eval_run(path) == 0
+    assert "sha256" not in (path / "manifest.json").read_text()
+    assert "sha256" not in (path / "metrics.json").read_text()
+
+
+def test_legacy_manifest_and_decisions_remain_evaluable(tmp_path):
+    path = execute(dataset(tmp_path), FakeModel(decision(), decision("t2")),
+                   runs_root=tmp_path / "runs")
+    manifest_path = path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("log_schema_version")
+    manifest["dataset_sha256"] = {"dataset.json": "legacy fingerprint"}
+    manifest_path.write_text(json.dumps(manifest))
+    records = rows(path)
+    for row in records:
+        row["reply"] = raw_reply(path, row)
+        row.pop("message_range")
+    (path / "decisions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in records))
+    (path / "messages.json").unlink()
+    assert _eval_run(path) == 0
+
+
+def test_eval_still_rejects_changed_turns(tmp_path):
+    path = execute(dataset(tmp_path), FakeModel(decision(), decision("t2")),
+                   runs_root=tmp_path / "runs")
+    manifest_path = path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["expected_turns"]["ep"].append("t3")
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="expected turns"):
         _eval_run(path)
+
+
+def test_atomic_json_failure_preserves_previous_snapshot(tmp_path, monkeypatch):
+    from ama.recorder import write_json
+
+    path = tmp_path / "messages.json"
+    write_json(path, {"ep": [{"role": "user", "content": "saved"}]})
+    previous = path.read_bytes()
+    replace = Path.replace
+
+    def fail_replace(source, target):
+        if target == path:
+            raise OSError("replacement failed")
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="replacement failed"):
+        write_json(path, {"ep": []})
+    assert path.read_bytes() == previous
+    assert not path.with_name("messages.json.tmp").exists()
 
 
 def test_interrupt_does_not_start_later_episodes(tmp_path):
@@ -173,7 +251,7 @@ def test_chat_interrupt_while_waiting_preserves_answer(tmp_path):
     path = execute(dataset(tmp_path), FakeModel("answer"), mode="chat", episode_ids=["ep"],
                    runs_root=tmp_path / "runs", input_fn=stop)
     assert json.loads((path / "manifest.json").read_text())["termination"] == "interrupted"
-    assert any(r.get("message", {}).get("content") == "answer" for r in rows(path, "events.jsonl"))
+    assert any(r.get("content") == "answer" for r in messages(path))
 
 
 def test_tool_image_source_and_log_has_no_base64(tmp_path, capsys):
@@ -186,10 +264,13 @@ def test_tool_image_source_and_log_has_no_base64(tmp_path, capsys):
     model = FakeModel(calls(call("scan", "{}", "image-call")), "seen")
     path = execute(root, model, mode="chat", episode_ids=["ep"], tools_path=tools,
                    runs_root=tmp_path / "runs", input_fn=lambda _: "/quit")
-    messages = [r for r in rows(path, "events.jsonl") if r["kind"] == "message"]
-    assert [r["source"] for r in messages] == ["system", "dataset", "model", "tool", "tool", "model"]
-    assert messages[3]["message"]["tool_call_id"] == "image-call"
-    assert "base64" not in (path / "events.jsonl").read_text()
+    assert json.loads((path / "manifest.json").read_text())["log_schema_version"] == 3
+    history = messages(path)
+    assert [r["role"] for r in history] == ["system", "user", "assistant", "tool", "user", "assistant"]
+    assert history[3]["tool_call_id"] == "image-call"
+    assert history[2]["tool_calls"][0]["function"]["name"] == "scan"
+    assert all("kind" not in row and "message" not in row for row in history)
+    assert "base64" not in (path / "messages.json").read_text()
     output = capsys.readouterr().out
     assert "[tool call] scan {}" in output
     assert "[tool result] scan" in output
@@ -218,9 +299,9 @@ def test_run_accepts_returned_tool_evidence_and_retains_raw_reply(tmp_path):
     model = FakeModel(calls(call("lab", "{}")), raw, decision("t2"))
     run = execute(root, model, tools_path=tools, runs_root=tmp_path / "runs")
     first = rows(run)[0]
-    assert first["reply"] == raw
+    assert raw_reply(run, first) == raw
     assert first["decision"]["citations"] == ["hpi", "lab-1"]
-    assert first["decision_format"] == "embedded"
+    assert first["output_validation"]["format"] == "embedded"
     assert first["termination"] == "completed"
 
 
