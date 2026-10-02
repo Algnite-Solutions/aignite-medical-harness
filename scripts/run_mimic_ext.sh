@@ -18,9 +18,11 @@ Only import needs the raw/ directory under AMA_DATA_PATH.
 Set BENCHMARK_DIR, RUNS_DIR, or PYTHON_BIN to override the output paths or Python.
 For a fresh repeat, use new BENCHMARK_DIR and RUNS_DIR paths; sample will not overwrite a cohort.
 
-Reviewer quick start using existing processed data:
-  MIMIC_PROCESSED_DIR=/path/to/processed/mimic-iv-ext-clinical-decision-making BENCHMARK_DIR=runs/reviewer-open100 bash scripts/run_mimic_ext.sh sample
-  BENCHMARK_DIR=runs/reviewer-open100 RUNS_DIR=runs/reviewer-runs bash scripts/run_mimic_ext.sh run glm-5.3-flash interactive
+One-episode reviewer check using processed interactive data (no sampling or batch):
+  ama run /path/to/processed/mimic-iv-ext-clinical-decision-making/mimic_cdm_interactive \
+    --model antangelmed2 --episode 26053830 \
+    --tools src/ama/importers/mimic_cdm_tools.py \
+    --max-calls 24 --timeout 120 --runs-root runs/reviewer-runs
 
 Reproduce the seed-42, 100-case experiment (25 cases per source group):
   AMA_DATA_PATH=/path/to/data bash scripts/run_mimic_ext.sh sample
@@ -31,7 +33,8 @@ Reproduce the seed-42, 100-case experiment (25 cases per source group):
   bash scripts/run_mimic_ext.sh compare antangelmed2 glm-5.3-flash
   bash scripts/run_mimic_ext.sh compare deepseek-v4-flash glm-5.3-flash
 
-The run command evaluates each merged view. Repeating it resumes failed cases.
+This script's run command evaluates a 100-case batch, not one episode.
+Repeating it resumes failed cases.
 Run the models sequentially if they share an endpoint or quota.
 EOF
 }
