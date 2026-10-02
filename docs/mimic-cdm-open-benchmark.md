@@ -44,14 +44,16 @@ PYTHONPATH=src python3 -m ama.importers.mimic_cdm_benchmark \
   --exclude-benchmark /path/to/restricted/benchmark/benchmark.json
 ```
 
-## Run the two-model, three-view matrix
+## Run the multi-model, three-view matrix
 
 Use the same model configuration within each model's three runs. Set temperature 0,
 the same request timeout, and the same episode IDs and order. HPI and full-info have
 no tools; interactive uses the MIMIC adapter. The batch runner processes one case at
 a time, paces each request, retries HTTP 429, transient HTTP 5xx, and connection
 timeouts with bounded backoff, saves each case,
-and can resume by repeating the same command. Example for one model:
+and can resume by repeating the same command. `scripts/run_mimic_ext.sh` also
+provides the sampling, run, evaluation, and pairwise comparison commands used
+for the pilot below. Example for one model:
 
 ```bash
 PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
@@ -97,6 +99,37 @@ for blinded clinical review; `diagnosis_accuracy_auto` is a lower bound until re
 It scores a diagnosis string directly in `answer` when a model omits the requested
 `answer.diagnosis` object, and reports `answer_object_format` separately.
 Treatment quality and citation support are not automatically adjudicated.
+
+## Seed-42 pilot results (100 admissions, 2026-10-02)
+
+The fixed cohort has 25 admissions from each of four source pathology groups.
+All three models saw the same admissions in the same order across HPI,
+interactive, and full-info views. Temperature was 0; batches used a 120-second
+request timeout, 24 model calls per case, and a 3-second request delay. All nine
+views finished with 100/100 completed decisions after bounded transport retries.
+
+| Model | HPI correct | Interactive correct | Full-info correct | Interactive tool calls | Interactive reported tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| AntAngelMed2 | 55/100 | 81/100 | 83/100 | 478 | 1,480,834 |
+| DeepSeek-v4-flash | 60/100 | 85/100 | 87/100 | 562 | 1,822,718 |
+| GLM-5.3-flash | 51/100 | 84/100 | 88/100 | 574 | 1,993,335 |
+
+Scores are conservative automatic matches to the source group. Interactive
+access improved the score over HPI by 26, 25, and 33 cases respectively;
+providing all information directly improved it by another 2, 2, and 4 cases.
+The one-case full-info difference between DeepSeek and GLM does not establish a
+model ranking. In full-info, 13 AntAngel, 8 DeepSeek, and 9 GLM answers still
+need blinded review because they are ambiguous or outside the lexical mapping.
+
+Formatting is a separate result. In the interactive view, strict JSON envelope
+compliance was 100/100 for AntAngel, 0/100 for DeepSeek, and 39/100 for GLM.
+DeepSeek's 100 interactive decisions were nevertheless recoverable from JSON
+following prose. The requested `answer.diagnosis` object appeared in 0/100
+AntAngel interactive answers and 100/100 for each other model. All interactive
+citations used released IDs, but their support for clinical claims was not
+adjudicated. The local comparison report is
+`runs/mimic-cdm-open-v1-100-live/review.md`; credentialed case content and raw
+run logs are not included in this repository.
 
 ## Validity checks before interpreting a model gap
 
