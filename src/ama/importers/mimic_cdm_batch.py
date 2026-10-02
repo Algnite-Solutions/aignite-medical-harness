@@ -14,7 +14,7 @@ from ..runner import execute
 
 
 class PacedModel(Model):
-    """Retry rate limits and transient server failures; never revise an answer."""
+    """Retry transport failures only; never revise a model answer."""
 
     def complete(self, history, tools=None):
         for attempt in range(6):
@@ -22,8 +22,10 @@ class PacedModel(Model):
             try:
                 return super().complete(history, tools)
             except ModelError as exc:
-                if exc.http_status not in {429, 500, 502, 503, 504}:
+                connection = str(exc).startswith("model connection failed:")
+                if exc.http_status not in {429, 500, 502, 503, 504} and not connection:
                     raise
+                max_attempts = 6 if exc.http_status == 429 else 3
                 retry_after = (exc.rate_limit_headers or {}).get("retry-after")
                 try:
                     wait = max(0, min(float(retry_after), 240)) if retry_after else None
@@ -34,9 +36,10 @@ class PacedModel(Model):
                             else min(5 * 2 ** attempt, 60))
                 with self.retry_log.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps({"at": time.time(), "attempt": attempt + 1,
-                                             "wait_seconds": wait if attempt < 5 else 0,
-                                             "http_status": exc.http_status}) + "\n")
-                if attempt == 5:
+                                             "wait_seconds": wait if attempt + 1 < max_attempts else 0,
+                                             "http_status": exc.http_status,
+                                             "connection_error": connection}) + "\n")
+                if attempt + 1 == max_attempts:
                     raise
                 time.sleep(wait)
         raise AssertionError("unreachable")

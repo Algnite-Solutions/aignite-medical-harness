@@ -49,7 +49,8 @@ PYTHONPATH=src python3 -m ama.importers.mimic_cdm_benchmark \
 Use the same model configuration within each model's three runs. Set temperature 0,
 the same request timeout, and the same episode IDs and order. HPI and full-info have
 no tools; interactive uses the MIMIC adapter. The batch runner processes one case at
-a time, paces each request, retries HTTP 429 and transient HTTP 5xx with bounded backoff, saves each case,
+a time, paces each request, retries HTTP 429, transient HTTP 5xx, and connection
+timeouts with bounded backoff, saves each case,
 and can resume by repeating the same command. Example for one model:
 
 ```bash

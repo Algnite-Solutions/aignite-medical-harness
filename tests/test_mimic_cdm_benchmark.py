@@ -178,6 +178,15 @@ def test_paced_model_retries_only_rate_limits(tmp_path, monkeypatch):
     monkeypatch.setattr(Model, "complete", server_error)
     assert model.complete([])["content"] == "saved answer"
     assert len(attempts) == 2
+    attempts.clear()
+    def connection_error(self, history, tools=None):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ModelError("model connection failed: TimeoutError")
+        return {"role": "assistant", "content": "saved answer"}
+    monkeypatch.setattr(Model, "complete", connection_error)
+    assert model.complete([])["content"] == "saved answer"
+    assert len(attempts) == 2
     def bad_request(self, history, tools=None):
         attempts.append(1)
         raise ModelError("HTTP 400", http_status=400)
