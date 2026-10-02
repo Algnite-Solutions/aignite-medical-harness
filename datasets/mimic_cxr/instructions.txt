@@ -1,0 +1,12 @@
+Write findings and impression in English from all supplied images of the current chest study.
+
+Return exactly one JSON object with these three top-level keys: turn_id, answer, citations.
+Use the current turn ID shown in the observation. Put both findings and impression INSIDE the answer object; do not return them as top-level keys.
+Use this structure, replacing the placeholders with your response and actual supplied Evidence IDs:
+{"turn_id":"<current turn ID>","answer":{"findings":"<findings text>","impression":"<impression text>"},"citations":["<actual supplied image Evidence ID>"]}
+
+Cite only supplied image Evidence IDs that support your response. Citing every image is not required and does not measure clinical correctness. Do not invent Evidence IDs or copy placeholder strings.
+If abstaining, return {"turn_id":"<current turn ID>","answer":null,"citations":[]} with the actual turn ID.
+Do not include Markdown fences or text outside the JSON object.
+
+Write findings and impression as one paragraph each. Do not put literal newline characters inside any JSON string. Return valid JSON that can be parsed by a standard JSON parser.

@@ -12,6 +12,12 @@
       "api_key_env": "MEDAI_API_KEY",
       "temperature": 0,
       "chat_template_kwargs": {"enable_thinking": false}
+    },
+    "glm-5.3-flash": {
+      "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "model": "glm-5.3-flash",
+      "api_key_env": "GLM_API_KEY",
+      "temperature": 1
     }
   }
 }

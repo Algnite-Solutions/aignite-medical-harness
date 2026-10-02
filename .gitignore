@@ -10,3 +10,6 @@ runs/
 **/provenance.jsonl
 dist/
 .DS_Store
+
+# Controlled local MIMIC images, reports and individual provenance
+local_data/
