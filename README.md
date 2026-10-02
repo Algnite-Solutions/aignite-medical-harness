@@ -82,7 +82,7 @@ For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repe
 Built-in importers support ROCOv2 and MIMIC-CXR. The public ROCOv2 demo uses one image per
 episode/turn; ordered multi-turn datasets also work. MIMIC-CXR uses one study per episode,
 with all current-study images and evaluator-only report targets; its scorer is currently `unscored`.
-See the [MIMIC-CXR setup guide (Chinese)](docs/mimic-cxr-onboarding.zh-CN.md),
+See the [MIMIC-CXR data card](datasets/mimic_cxr/DATASET_CARD.md),
 [format](docs/ama-dataset.md), and [ROCOv2 data card](datasets/rocov2_demo/DATASET_CARD.md).
 
 Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
