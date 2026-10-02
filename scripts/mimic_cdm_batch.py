@@ -6,11 +6,11 @@ import json
 import time
 from pathlib import Path
 
-from ..cli import _eval_run, _load_dotenv
-from ..data import load_dataset
-from ..model import Model, ModelError
-from ..recorder import write_json
-from ..runner import execute
+from ama.cli import _eval_run, _load_dotenv
+from ama.data import load_dataset
+from ama.model import Model, ModelError
+from ama.recorder import write_json
+from ama.runner import execute
 
 
 class PacedModel(Model):

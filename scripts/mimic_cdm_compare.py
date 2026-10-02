@@ -5,8 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
-from ..runner import DECISION_PROMPT
-from .mimic_cdm_benchmark import INSTRUCTIONS, VARIANTS
+from ama.runner import DECISION_PROMPT
+from ama.importers.mimic_cdm_benchmark import INSTRUCTIONS, VARIANTS
 
 
 def _read(path: Path) -> dict:

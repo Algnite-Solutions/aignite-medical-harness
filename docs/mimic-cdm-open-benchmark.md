@@ -56,14 +56,14 @@ provides the sampling, run, evaluation, and pairwise comparison commands used
 for the pilot below. Example for one model:
 
 ```bash
-PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+PYTHONPATH=src python3 -m scripts.mimic_cdm_batch \
   --dataset /path/to/restricted/benchmark/mimic_cdm_open_hpi \
   --model MODEL --out runs/open100/MODEL/hpi --delay 3
-PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+PYTHONPATH=src python3 -m scripts.mimic_cdm_batch \
   --dataset /path/to/restricted/benchmark/mimic_cdm_open_interactive \
   --model MODEL --out runs/open100/MODEL/interactive --delay 3 \
   --tools src/ama/importers/mimic_cdm_tools.py
-PYTHONPATH=src python3 -m ama.importers.mimic_cdm_batch \
+PYTHONPATH=src python3 -m scripts.mimic_cdm_batch \
   --dataset /path/to/restricted/benchmark/mimic_cdm_open_full_info \
   --model MODEL --out runs/open100/MODEL/full_info --delay 3
 ```
@@ -75,7 +75,7 @@ Report both accuracy over all selected cases and completion/transport failures.
 To compare two completed models at a time:
 
 ```bash
-PYTHONPATH=src python3 -m ama.importers.mimic_cdm_compare \
+PYTHONPATH=src python3 -m scripts.mimic_cdm_compare \
   --model MODEL_A runs/open100/MODEL_A/hpi/merged \
     runs/open100/MODEL_A/interactive/merged runs/open100/MODEL_A/full_info/merged \
   --model MODEL_B runs/open100/MODEL_B/hpi/merged \

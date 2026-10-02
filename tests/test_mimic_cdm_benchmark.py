@@ -8,8 +8,8 @@ from ama.importers.mimic_cdm import import_mimic_cdm
 from ama.importers.mimic_cdm_benchmark import (
     build_benchmark, score_mimic_cdm_open, _diagnosis_label, _select_ids,
 )
-from ama.importers.mimic_cdm_compare import compare_runs
-from ama.importers.mimic_cdm_batch import PacedModel, merge_batch, run_batch
+from scripts.mimic_cdm_compare import compare_runs
+from scripts.mimic_cdm_batch import PacedModel, merge_batch, run_batch
 from ama.model import Model, ModelError
 from ama.runner import execute
 from ama.scorer import REGISTRY
@@ -158,7 +158,7 @@ def test_paced_model_retries_only_rate_limits(tmp_path, monkeypatch):
                                    "model": "fixture", "api_key_env": "TEST_BENCHMARK_KEY"})
     model.request_delay = 0
     model.retry_log = tmp_path / "retries.jsonl"
-    monkeypatch.setattr("ama.importers.mimic_cdm_batch.time.sleep", lambda _: None)
+    monkeypatch.setattr("scripts.mimic_cdm_batch.time.sleep", lambda _: None)
     attempts = []
     def complete(self, history, tools=None):
         attempts.append(1)

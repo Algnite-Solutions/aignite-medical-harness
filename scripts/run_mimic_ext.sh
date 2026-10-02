@@ -59,7 +59,7 @@ case ${1:-} in
       if [[ $view == interactive ]]; then
         args+=(--tools "$TOOL_ADAPTER")
       fi
-      PYTHONPATH=src "$PYTHON_BIN" -m ama.importers.mimic_cdm_batch "${args[@]}"
+      PYTHONPATH=src "$PYTHON_BIN" -m scripts.mimic_cdm_batch "${args[@]}"
       PYTHONPATH=src "$PYTHON_BIN" -m ama.cli eval "$RUNS_DIR/$model/$view/merged"
       status=$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
         "$RUNS_DIR/$model/$view/batch.json")
@@ -78,7 +78,7 @@ case ${1:-} in
   compare)
     model_a=${2:?Provide the first model key}
     model_b=${3:?Provide the second model key}
-    PYTHONPATH=src "$PYTHON_BIN" -m ama.importers.mimic_cdm_compare \
+    PYTHONPATH=src "$PYTHON_BIN" -m scripts.mimic_cdm_compare \
       --model "$model_a" "$RUNS_DIR/$model_a/hpi/merged" \
         "$RUNS_DIR/$model_a/interactive/merged" "$RUNS_DIR/$model_a/full_info/merged" \
       --model "$model_b" "$RUNS_DIR/$model_b/hpi/merged" \
