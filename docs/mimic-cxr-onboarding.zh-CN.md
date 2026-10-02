@@ -5,9 +5,11 @@ study 的全部图片及已有视角，输出为 findings / impression。已完�
 raw 准备、AMA importer、合成测试及三例真实模型运行。评分器仍为 `unscored`，
 尚无报告质量分数或公开基线数值复现。
 
-- [任务协议与限制](mimic-cxr-protocol.md)
-- [验证记录](mimic-cxr-ac-validation.zh-CN.md)
-- [聚合源数据审计](mimic-cxr-audit-2026-10-01.json)
+保留官方 train / validate / test 划分。自动选择先取 study_id 数值顺序中首个
+合格单图和多图 study，再按数值顺序补足；该顺序不表示检查时间顺序。
+报告使用自定义 `explicit-sections-v1` 规则，仅接受明确的 findings / impression
+标题，要求两部分均非空；未提取到章节不代表临床内容确实缺失，也不等同于
+官方 parser 的筛选结果。当前任务不提供既往图片或报告，尚未对齐公开基线输入。
 
 ## 1. 安装与源数据
 
@@ -102,7 +104,8 @@ ama eval local_data/mimic_cxr/runs/<运行目录>
 ## 数据与提交边界
 
 真实 JPG、报告、逐例来源和模型 trace 保留在 Git 忽略的 `local_data/`。仓库提交
-代码、合成测试、通用提示词、文档和聚合审计，不提供真实病例 demo。
+代码、合成测试、通用提示词和使用说明，不提供真实病例 demo。审计结果与开发记录
+保留本地。
 `ama.json` 中的个人模型配置与 `.env` 密钥分别由使用者管理。
 
 审计脚本还需要 CheXpert、NegBio 和 2.1.0 人工标签 CSV。它只统计全量 CSV、
