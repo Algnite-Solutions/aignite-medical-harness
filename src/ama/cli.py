@@ -82,12 +82,13 @@ def main(argv=None):
     evaluate.add_argument("run_dir", type=Path)
     evaluate.add_argument("--scorer")
     importer = sub.add_parser("import")
-    importer.add_argument("kind", choices=["rocov2"])
+    importer.add_argument("kind", choices=["rocov2", "mimic-cxr"])
     importer.add_argument("--source", type=Path, required=True)
     importer.add_argument("--out", type=Path, required=True)
-    importer.add_argument("--split", default="test")
+    importer.add_argument("--split", help="defaults: rocov2=test, mimic-cxr=validate")
     importer.add_argument("--limit", type=int)
     importer.add_argument("--id", action="append", dest="ids")
+    importer.add_argument("--study-id", action="append", dest="study_ids")
     args = parser.parse_args(argv)
     try:
         if args.command in ("run", "chat"):
@@ -103,9 +104,18 @@ def main(argv=None):
             return 0 if manifest["termination"] in {"completed", "quit", "eof"} else 1
         if args.command == "eval":
             return _eval_run(args.run_dir, args.scorer)
-        from .importers.rocov2 import import_rocov2
-        report = import_rocov2(args.source, args.out, split=args.split, limit=args.limit, ids=args.ids)
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if args.kind == "mimic-cxr":
+            if args.ids:
+                raise ValueError("use --study-id for mimic-cxr")
+            from .importers.mimic_cxr import import_mimic_cxr
+            report = import_mimic_cxr(args.source, args.out, split=args.split or "validate",
+                                      limit=args.limit, ids=args.study_ids)
+        else:
+            if args.study_ids:
+                raise ValueError("--study-id is only for mimic-cxr")
+            from .importers.rocov2 import import_rocov2
+            report = import_rocov2(args.source, args.out, split=args.split or "test", limit=args.limit, ids=args.ids)
+        print(json.dumps({k: v for k, v in report.items() if k != "selected_study_ids"}, ensure_ascii=False, indent=2))
         print(f"imported -> {args.out}")
         return 0
     except (OSError, ValueError, KeyError, ImportError) as exc:

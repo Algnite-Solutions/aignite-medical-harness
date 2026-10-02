@@ -1,0 +1,202 @@
+{
+  "audit_version": 1,
+  "labels": {
+    "mimic-cxr-2.0.0-chexpert.csv.gz": {
+      "columns": [
+        "subject_id",
+        "study_id",
+        "Atelectasis",
+        "Cardiomegaly",
+        "Consolidation",
+        "Edema",
+        "Enlarged Cardiomediastinum",
+        "Fracture",
+        "Lung Lesion",
+        "Lung Opacity",
+        "No Finding",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Pneumonia",
+        "Pneumothorax",
+        "Support Devices"
+      ],
+      "duplicate_study_ids": 0,
+      "label_values": {
+        "": 2532881,
+        "-1.0": 75018,
+        "0.0": 158614,
+        "1.0": 423065
+      },
+      "rows": 227827,
+      "split_rows": {
+        "test": 3269,
+        "train": 222750,
+        "validate": 1808
+      },
+      "unique_studies": 227827
+    },
+    "mimic-cxr-2.0.0-negbio.csv.gz": {
+      "columns": [
+        "subject_id",
+        "study_id",
+        "Atelectasis",
+        "Cardiomegaly",
+        "Consolidation",
+        "Edema",
+        "Enlarged Cardiomediastinum",
+        "Fracture",
+        "Lung Lesion",
+        "Lung Opacity",
+        "No Finding",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Pneumonia",
+        "Pneumothorax",
+        "Support Devices"
+      ],
+      "duplicate_study_ids": 0,
+      "label_values": {
+        "": 2529978,
+        "-1.0": 78859,
+        "0.0": 164721,
+        "1.0": 416020
+      },
+      "rows": 227827,
+      "split_rows": {
+        "test": 3269,
+        "train": 222750,
+        "validate": 1808
+      },
+      "unique_studies": 227827
+    },
+    "mimic-cxr-2.1.0-test-set-labeled.csv": {
+      "columns": [
+        "study_id",
+        "No Finding",
+        "Enlarged Cardiomediastinum",
+        "Cardiomegaly",
+        "Lung Lesion",
+        "Airspace Opacity",
+        "Edema",
+        "Consolidation",
+        "Pneumonia",
+        "Atelectasis",
+        "Pneumothorax",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Fracture",
+        "Support Devices"
+      ],
+      "duplicate_study_ids": 0,
+      "label_values": {
+        "": 7138,
+        "-1.0": 318,
+        "0.0": 662,
+        "1.0": 1500
+      },
+      "rows": 687,
+      "split_rows": {
+        "test": 676,
+        "unmatched": 2,
+        "validate": 9
+      },
+      "unique_studies": 687
+    }
+  },
+  "metadata": {
+    "duplicate_image_ids": 0,
+    "rows": 377110,
+    "split_images_missing_metadata": 0,
+    "unique_images": 377110,
+    "views": {
+      "AP": 147173,
+      "AP AXIAL": 2,
+      "AP LLD": 2,
+      "AP RLD": 2,
+      "LAO": 3,
+      "LATERAL": 82853,
+      "LL": 35133,
+      "LPO": 1,
+      "PA": 96161,
+      "PA LLD": 4,
+      "PA RLD": 1,
+      "RAO": 3,
+      "SWIMMERS": 1,
+      "XTABLE LATERAL": 2,
+      "missing": 15769
+    }
+  },
+  "reports": {
+    "duplicate_study_ids": 0,
+    "report_entries": 227835,
+    "studies_not_in_split": 0,
+    "unique_studies": 227835,
+    "zip_members": 293234
+  },
+  "sampled_images": {
+    "test": {
+      "checked": 20,
+      "missing": 0,
+      "present": 20
+    },
+    "train": {
+      "checked": 20,
+      "missing": 0,
+      "present": 20
+    },
+    "validate": {
+      "checked": 20,
+      "missing": 0,
+      "present": 20
+    }
+  },
+  "scope": {
+    "csvs": "all rows",
+    "images": "first N split-CSV rows per split; existence only",
+    "not_verified": [
+      "full image inventory",
+      "image decoding",
+      "report contents and ZIP CRC",
+      "published source checksums"
+    ],
+    "reports": "ZIP member names only",
+    "sample_per_split": 20
+  },
+  "source_directory": "/Volumes/data/incoming/mimic-cxr-jpg-2.1.0",
+  "source_sha256": {
+    "mimic-cxr-2.0.0-chexpert.csv.gz": "8a827c9adfd17dc4c94b129b6a007e55d4f75af6e7686441eb386c5ff6d1ddde",
+    "mimic-cxr-2.0.0-metadata.csv.gz": "6a3748ce77724c0dfe7d2def8f47643e989e3bbf0795bc13b89c1578e1649d6b",
+    "mimic-cxr-2.0.0-negbio.csv.gz": "22000d42f7b75aad764e87c129b4395804b25e340cc0d643d9f29b60dc404623",
+    "mimic-cxr-2.0.0-split.csv.gz": "515997bd6649045d7443d60c59a4ce9f6cca6c478871b8f2fb13454462bedb2f",
+    "mimic-cxr-2.1.0-test-set-labeled.csv": "9bf491397a2cb2bff79803e7d77be8b820328b82684638db236be86a8bafa061"
+  },
+  "split_checks": {
+    "duplicate_image_ids": 0,
+    "studies_in_multiple_splits": 0
+  },
+  "splits": {
+    "test": {
+      "image_rows": 5159,
+      "studies": 3269,
+      "studies_missing_report": 0,
+      "subjects": 293
+    },
+    "train": {
+      "image_rows": 368960,
+      "studies": 222758,
+      "studies_missing_report": 0,
+      "subjects": 64586
+    },
+    "validate": {
+      "image_rows": 2991,
+      "studies": 1808,
+      "studies_missing_report": 0,
+      "subjects": 500
+    }
+  },
+  "subject_overlap": {
+    "train/test": 0,
+    "train/validate": 0,
+    "validate/test": 0
+  }
+}

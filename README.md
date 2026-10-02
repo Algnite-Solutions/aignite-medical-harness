@@ -79,8 +79,11 @@ ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --
 For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repeat
 `--episode ID` instead of `--split`. Use `--runs-root path` to choose the output parent.
 
-ROCOv2 is the only built-in importer/demo. Each image is one episode/turn; ordered multi-turn datasets
-also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
+Built-in importers support ROCOv2 and MIMIC-CXR. The public ROCOv2 demo uses one image per
+episode/turn; ordered multi-turn datasets also work. MIMIC-CXR uses one study per episode,
+with all current-study images and evaluator-only report targets; its scorer is currently `unscored`.
+See the [MIMIC-CXR setup guide (Chinese)](docs/mimic-cxr-onboarding.zh-CN.md),
+[format](docs/ama-dataset.md), and [ROCOv2 data card](datasets/rocov2_demo/DATASET_CARD.md).
 
 Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
 `events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
