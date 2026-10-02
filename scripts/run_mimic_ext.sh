@@ -11,11 +11,16 @@ VIEWS=(hpi interactive full_info)
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_mimic_ext.sh {import|sample|run MODEL|eval MODEL|compare MODEL_A MODEL_B}
+Usage: bash scripts/run_mimic_ext.sh {import|sample|run MODEL [VIEW]|eval MODEL [VIEW]|compare MODEL_A MODEL_B}
 
-Set AMA_DATA_PATH to the directory containing raw/ and processed/ for import or sample.
+Set MIMIC_PROCESSED_DIR directly for sample, or set AMA_DATA_PATH to the data root.
+Only import needs the raw/ directory under AMA_DATA_PATH.
 Set BENCHMARK_DIR, RUNS_DIR, or PYTHON_BIN to override the output paths or Python.
 For a fresh repeat, use new BENCHMARK_DIR and RUNS_DIR paths; sample will not overwrite a cohort.
+
+Reviewer quick start using existing processed data:
+  MIMIC_PROCESSED_DIR=/path/to/processed/mimic-iv-ext-clinical-decision-making BENCHMARK_DIR=runs/reviewer-open100 bash scripts/run_mimic_ext.sh sample
+  BENCHMARK_DIR=runs/reviewer-open100 RUNS_DIR=runs/reviewer-runs bash scripts/run_mimic_ext.sh run glm-5.3-flash interactive
 
 Reproduce the seed-42, 100-case experiment (25 cases per source group):
   AMA_DATA_PATH=/path/to/data bash scripts/run_mimic_ext.sh sample
@@ -32,8 +37,21 @@ EOF
 }
 
 processed_dir() {
-  : "${AMA_DATA_PATH:?Set AMA_DATA_PATH to the directory containing raw/ and processed/}"
-  printf '%s\n' "$AMA_DATA_PATH/processed/mimic-iv-ext-clinical-decision-making"
+  if [[ -n ${MIMIC_PROCESSED_DIR:-} ]]; then
+    printf '%s\n' "$MIMIC_PROCESSED_DIR"
+  else
+    : "${AMA_DATA_PATH:?Set MIMIC_PROCESSED_DIR or AMA_DATA_PATH for sampling}"
+    printf '%s\n' "$AMA_DATA_PATH/processed/mimic-iv-ext-clinical-decision-making"
+  fi
+}
+
+select_views() {
+  if [[ -n ${1:-} ]]; then
+    case $1 in
+      hpi|interactive|full_info) VIEWS=("$1") ;;
+      *) echo "Unknown view: $1 (expected hpi, interactive, or full_info)" >&2; exit 2 ;;
+    esac
+  fi
 }
 
 case ${1:-} in
@@ -52,6 +70,7 @@ case ${1:-} in
     ;;
   run)
     model=${2:?Provide a model key from ama.json}
+    select_views "${3:-}"
     for view in "${VIEWS[@]}"; do
       args=(--dataset "$BENCHMARK_DIR/mimic_cdm_open_$view" \
         --model "$model" --out "$RUNS_DIR/$model/$view" \
@@ -71,6 +90,7 @@ case ${1:-} in
     ;;
   eval)
     model=${2:?Provide a model key from ama.json}
+    select_views "${3:-}"
     for view in "${VIEWS[@]}"; do
       PYTHONPATH=src "$PYTHON_BIN" -m ama.cli eval "$RUNS_DIR/$model/$view/merged"
     done
