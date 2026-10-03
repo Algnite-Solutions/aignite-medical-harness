@@ -79,17 +79,73 @@ ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --
 For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repeat
 `--episode ID` instead of `--split`. Use `--runs-root path` to choose the output parent.
 
-ROCOv2 is the only built-in importer/demo. Each image is one episode/turn; ordered multi-turn datasets
+ROCOv2 is the built-in `ama import` demo. Each image is one episode/turn; ordered multi-turn datasets
 also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
 
-Records include `manifest.json` (actual prompts, hashes, configuration and expected turns),
-`events.jsonl` (message roles/sources, raw replies, tool results, calls), and for run only
-`decisions.jsonl`. Images stay as paths in logs and are encoded only for requests.
+### Credentialed MIMIC-CDM import
+
+The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and
+its existing dataset workflow stay small. Use a credentialed local source and restricted output:
+
+```bash
+PYTHONPATH=src python3 -m ama.importers.mimic_cdm \
+  --source /path/to/mimic-iv-ext-clinical-decision-making \
+  --out /path/to/processed
+ama run /path/to/processed/mimic_cdm_interactive --model MODEL --episode HADM_ID \
+  --tools src/ama/importers/mimic_cdm_tools.py --max-calls 24 --runs-root /path/to/restricted-runs
+ama run /path/to/processed/mimic_cdm_full_info --model MODEL --episode HADM_ID \
+  --runs-root /path/to/restricted-runs
+ama eval /path/to/restricted-runs/RUN_ID
+```
+
+The importer creates both 2,400-admission datasets and validates source structure. Interactive
+episodes start with HPI; the trusted tool file binds examination, complete laboratory results,
+microbiology, and imaging to the current admission. Use `list_imaging` to see available reports,
+then `imaging(report_id)` to read one. Existing processed datasets work with these tools without
+reimporting. Full-information episodes present all those inputs together.
+Discharge outcomes remain evaluator-only. Both modes score four-way diagnosis; treatment plans are
+recorded for review. Tool results appear in event logs; Decision citations can use episode evidence
+IDs or evidence IDs explicitly registered by successful tools. The
+credentialed source and model transcripts should remain on restricted storage; importing itself does
+not call a model.
+
+For a controlled comparison of model diagnosis and tool use, the
+[matched open-answer protocol](docs/mimic-cdm-open-benchmark.md) builds HPI-only,
+interactive, and full-information views from the same admissions. It gives all views
+the same answer field and hides the four candidate labels from the prompt; source
+targets remain four-group, with conservative automatic mapping and a review queue.
+
+Records include `manifest.json` (model configuration, dataset, expected turns and status),
+`messages.json` (episode IDs mapped to ordered message arrays, including the actual system prompt),
+`diagnostics.jsonl` (tool definitions, model calls, evidence releases and errors), and for run only
+`decisions.jsonl` (parsed answers, validation, turn status and totals). No SHA fingerprints are recorded
+or checked. New runs use log schema v3; historical logs are not rewritten.
+Messages retain their protocol fields without per-message episode/source metadata. Images stay as paths.
+Each decision's `message_range: [start, end]` selects its messages by zero-based indices with an exclusive
+end in `messages.json[episode_id]`. Model-call diagnostics use `message_index` for the assistant response
+position; failed calls may have no response at that position. Raw replies are stored only in the transcript.
+Conversation snapshots are replaced atomically after each exchange, including caught errors and Ctrl-C.
+A hard process kill during an exchange may lose that exchange, but leaves the preceding snapshot readable.
+Final-answer extraction ignores marked `<think>...</think>` blocks, including JSON drafts inside them,
+while retaining the raw transcript and recording how many blocks were excluded. Such replies still
+fail strict JSON compliance; malformed thinking markers are rejected and citation IDs are not rewritten.
 Invalid decisions are kept, without correction dialogues. Failed/missing turns remain in evaluation.
+Output contract v2 requests `answer`, `citations`, and a concise `reasoning_summary` alongside
+`turn_id`. Recoverable JSON answers are normalized without extra model calls; raw replies and
+format/citation/summary diagnostics remain available. Evaluation reports task accuracy separately
+from `aggregate.output_quality`. Empty citations do not count as valid supporting references.
 API/call-limit failures skip the rest of that episode and continue the batch; Ctrl-C stops the batch.
 Partial runs return a nonzero CLI status and remain independently evaluable.
 
 Only `eval` opens references/rules, producing `metrics.json`.
-It checks visible input hashes before scoring. Original answers remain in `decisions.jsonl`;
-references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy. Historical runs are preserved but must
-be rerun for this evaluator. Provenance never enters model input.
+It checks that selected episodes and expected turns still match. Original replies remain in `messages.json`;
+references stay in the dataset's `targets.jsonl`. Caption-word and concept-ID overlap are not clinical accuracy.
+Compatible historical runs remain evaluable; metrics absent from their output contract are null.
+Provenance never enters model input.
+
+AntAngelMed2 endpoints without a server tool parser can opt into
+`"tool_call_parser": "antangel"` in their model configuration. This sends tool definitions with
+`tool_choice: "none"` (verified on the configured AntAngel endpoint) and parses the model's raw
+`<tool_call>` / `<arg_key>` / `<arg_value>` output into standard tool calls. Raw assistant content
+is retained. It adds no prompts or model calls and does not alter final answers. This is an explicit
+endpoint compatibility mode, not a general fallback for providers that honor `none` by disabling tools.

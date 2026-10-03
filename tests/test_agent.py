@@ -33,6 +33,20 @@ def test_multiple_tools_order_ids_and_json():
     assert len(agent.calls) == 2
 
 
+def test_tool_events_arrive_before_next_model_request():
+    events = []
+
+    class CheckingModel(FakeModel):
+        def complete(self, history, tools=None):
+            if self.requests:
+                assert events == ["model_start", "tool_call", "tool_result", "model_start"]
+            return super().complete(history, tools)
+
+    agent = Agent(CheckingModel(calls(call()), "done"), tools=[addition()],
+                  on_event=lambda kind, _: events.append(kind))
+    assert agent.chat("calculate") == "done"
+
+
 @pytest.mark.parametrize("bad", [call(name="unknown"), call(arguments="invalid"), call(arguments="[]"),
                                  call(arguments='{"wrong":1}')])
 def test_tool_error_can_be_corrected(bad):

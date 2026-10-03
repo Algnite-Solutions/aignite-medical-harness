@@ -100,14 +100,15 @@ python3 -m pytest tests/test_rocov2.py -k import_run_eval -q
 
 ## 如何审阅一次实验
 
-- manifest.json：mode、完整任务/系统提示、模型配置、预算、数据与工具文件哈希、预期轮次。
-- events.jsonl：逐条消息（episode_id、turn_id、source、原始 message）、工具定义、调用统计、错误。
-- decisions.jsonl：只在 run 中存在，保留 reply、decision 或失败原因；未执行轮次也有记录。
+- manifest.json：模式、模型配置、数据集、预算、工具路径、预期轮次和运行状态。
+- messages.json：以 episode ID 为 key 的有序消息数组，包含实际 system 提示及完整对话。
+- diagnostics.jsonl：工具定义、调用统计、证据释放及错误；历史运行仍使用旧版 events.jsonl。
+- decisions.jsonl：只在 run 中存在，保留解析结果、验证、轮次统计和 message_range；未执行轮次也有记录。
 - metrics.json：只在独立 eval 后生成；逐例结果与汇总分数均保存在这里，不再生成报告文件。
 
-`source=dataset` 与 `source=human` 都以 user 角色发给模型；来源标签仅在日志中。
+数据集输入与人工追问都以 user 角色发给模型。message_range 是零起始、右端不含的消息索引范围。
 eval 按预期轮次遍历，即使某一条 Decision 记录缺失，也按缺失回答处理。
-它先核对数据哈希，避免把改变后的数据当成原实验。
+不再计算或核对 SHA；仍检查病例和预期轮次一致性。数据内容变化不再自动检测。
 targets.jsonl、eval.json 只在 eval 阶段打开，provenance.jsonl 始终不参与推理与评分。
 
 建议学生每次只改一个问题：先写一个小测试证明预期，再改相应函数；
