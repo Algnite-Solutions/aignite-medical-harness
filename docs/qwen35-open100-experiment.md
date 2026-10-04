@@ -89,3 +89,39 @@ On 2026-10-04: 105 offline tests passed; the cohort checker verified all three
 100-case views against the existing PR13 cohort. No new provider requests were
 made. `git diff --check` passed. Validation used Python 3.12 from the existing
 local environment with pytest API tests excluded.
+
+## Budgeted execution follow-up
+
+A subsequent execution request specifies the same 100 cases and three views,
+with a CNY 35 ceiling. `scripts/qwen35_open100_budgeted.py` reuses the PR13
+Agent, tool adapter, decision normalization, merger and scorer unchanged.
+It makes one encounter per case per view, including unsuccessful encounters;
+failed answers are not automatically resubmitted. Temperature 0, non-thinking,
+4096 output tokens, 24 logical calls and timeout 120 s remain frozen.
+
+The single-process ledger reserves 260096 input tokens plus the configured
+maximum output for every HTTP attempt, before dispatch. Official Beijing
+prices, checked on 2026-10-04, are input CNY 1.8/M and output CNY 10.8/M.
+See [the model specification and prices](https://help.aliyun.com/zh/model-studio/qwen3-6-35b-a3b).
+A successful response with valid usage refunds the unused reservation; failures,
+unknown usage and crash-in-flight reservations remain charged conservatively.
+All retries reserve separately, with at most three transport attempts. A new
+request is refused if its reservation could exceed CNY 35. API usage outside
+this runner is not part of its ledger. Model identity mismatch or exhausted
+transport retries stop the batch. Interrupted runs preserve their records.
+
+Budget fixtures verify crash persistence, refunds, malformed/unknown usage,
+pre-dispatch refusal and retry accounting. The full offline suite now passes
+110 tests. Execution outputs use owner-only file permissions and a process lock.
+
+The first two launch requests were rejected by automatic approval review;
+no synthetic or patient requests were sent. The second rejection states that
+the specific payload, destination and cap in cross-thread transcript evidence
+are not accepted as trusted authorization. Execution awaits explicit approval
+in this thread. The command below remains pending:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python3.12 \
+  scripts/qwen35_open100_budgeted.py --cohort runs/reviewer-open100 \
+  --out '/Users/bran/Documents/Projects/medical model training/runs/qwen35_open100_execution/v1'
+```
