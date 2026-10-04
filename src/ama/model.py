@@ -71,11 +71,17 @@ def wire_messages(history: list[dict]) -> list[dict]:
 
 class Model:
     def __init__(self, name: str, config: dict, timeout: float = 60):
-        allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser"}
+        allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser",
+                   "enable_thinking", "require_response_model"}
         if set(config) - allowed:
             raise ValueError(f"unsupported model options: {sorted(set(config) - allowed)}")
         if config.get("tool_call_parser") not in (None, "antangel"):
             raise ValueError("unsupported tool_call_parser")
+        for key in ("enable_thinking", "require_response_model"):
+            if key in config and not isinstance(config[key], bool):
+                raise ValueError(f"{key} must be a boolean")
+        if "enable_thinking" in config and "enable_thinking" in config.get("chat_template_kwargs", {}):
+            raise ValueError("configure enable_thinking at only one request location")
         for key in ("base_url", "model", "api_key_env"):
             if not config.get(key):
                 raise ValueError(f"missing model option: {key}")
@@ -83,6 +89,7 @@ class Model:
             raise ValueError("timeout must be positive")
         self.name, self.config, self.timeout = name, dict(config), timeout
         self.last_usage = None
+        self.last_response_metadata = None
         self._key = os.environ.get(config["api_key_env"])
         if not self._key:
             raise ValueError(f"missing API key environment variable: {config['api_key_env']}")
@@ -96,9 +103,10 @@ class Model:
 
     def complete(self, history: list[dict], tools: list[dict] | None = None) -> dict:
         self.last_usage = None
+        self.last_response_metadata = None
         payload = {"model": self.config["model"], "messages": wire_messages(history),
                    "temperature": self.config.get("temperature", 0)}
-        for key in ("max_tokens", "chat_template_kwargs"):
+        for key in ("max_tokens", "chat_template_kwargs", "enable_thinking"):
             if key in self.config:
                 payload[key] = self.config[key]
         if tools:
@@ -135,7 +143,15 @@ class Model:
             raise ModelError("model endpoint returned invalid JSON") from None
         try:
             self.last_usage = data.get("usage")
-            message = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            self.last_response_metadata = {
+                "model": data.get("model"), "id": data.get("id"),
+                "finish_reason": choice.get("finish_reason"),
+                "logprobs_available": choice.get("logprobs") is not None,
+            }
+            if self.config.get("require_response_model") and data.get("model") != self.config["model"]:
+                raise ModelError("response model does not match configured model")
+            message = choice["message"]
             if not isinstance(message, dict):
                 raise ValueError()
             if tools and self.config.get("tool_call_parser") == "antangel":

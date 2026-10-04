@@ -61,6 +61,9 @@ class Agent:
                 finally:
                     call["duration_ms"] = int((time.monotonic() - started) * 1000)
                     call["usage"] = getattr(self.model, "last_usage", None)
+                    metadata = getattr(self.model, "last_response_metadata", None)
+                    if metadata is not None:
+                        call["response_metadata"] = copy.deepcopy(metadata)
                     self.calls.append(call)
 
                 # 2. 没有工具调用，就是本次 chat 的最终回答。
