@@ -125,3 +125,14 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python3.12 \
   scripts/qwen35_open100_budgeted.py --cohort runs/reviewer-open100 \
   --out '/Users/bran/Documents/Projects/medical model training/runs/qwen35_open100_execution/v1'
 ```
+
+## Authorized execution started
+
+The user directly supplied the complete payload/destination/three-view/CNY35
+authorization in this thread. The subsequent launch passed approval review.
+The existing research-workspace credential is named `dashscope_api`; the
+budgeted runner maps it to `DASHSCOPE_API_KEY` in process memory only.
+A synthetic smoke returned the exact wire model `qwen3.6-35b-a3b`; clinical
+execution then started in the fresh `runs/qwen35_open100_execution/v1` output
+directory of the separate research workspace. Prior approval failures made no
+requests. The execution artifacts, not this static note, are the live status.

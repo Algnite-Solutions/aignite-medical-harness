@@ -174,6 +174,8 @@ def main():
         _load_dotenv()
         if not os.environ.get('DASHSCOPE_API_KEY'):
             _load_dotenv(Path('/Users/bran/Documents/Projects/medical model training/.env'))
+        if not os.environ.get('DASHSCOPE_API_KEY') and os.environ.get('dashscope_api'):
+            os.environ['DASHSCOPE_API_KEY'] = os.environ['dashscope_api']
         config = json.loads(Path('ama.json').read_text())['models'][ALIAS]
         ledger = Ledger(root / 'budget.json')
         model = BudgetModel(ALIAS, config, ledger)
