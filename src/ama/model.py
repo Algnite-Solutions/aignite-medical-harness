@@ -72,7 +72,7 @@ def wire_messages(history: list[dict]) -> list[dict]:
 class Model:
     def __init__(self, name: str, config: dict, timeout: float = 60):
         allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser",
-                   "enable_thinking", "require_response_model"}
+                   "enable_thinking", "thinking_budget", "require_response_model"}
         if set(config) - allowed:
             raise ValueError(f"unsupported model options: {sorted(set(config) - allowed)}")
         if config.get("tool_call_parser") not in (None, "antangel"):
@@ -82,6 +82,12 @@ class Model:
                 raise ValueError(f"{key} must be a boolean")
         if "enable_thinking" in config and "enable_thinking" in config.get("chat_template_kwargs", {}):
             raise ValueError("configure enable_thinking at only one request location")
+        if "thinking_budget" in config:
+            budget = config["thinking_budget"]
+            if type(budget) is not int or budget < 1:
+                raise ValueError("thinking_budget must be a positive integer")
+            if config.get("enable_thinking") is not True:
+                raise ValueError("thinking_budget requires top-level enable_thinking=true")
         for key in ("base_url", "model", "api_key_env"):
             if not config.get(key):
                 raise ValueError(f"missing model option: {key}")
@@ -106,7 +112,7 @@ class Model:
         self.last_response_metadata = None
         payload = {"model": self.config["model"], "messages": wire_messages(history),
                    "temperature": self.config.get("temperature", 0)}
-        for key in ("max_tokens", "chat_template_kwargs", "enable_thinking"):
+        for key in ("max_tokens", "chat_template_kwargs", "enable_thinking", "thinking_budget"):
             if key in self.config:
                 payload[key] = self.config[key]
         if tools:

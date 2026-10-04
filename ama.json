@@ -11,7 +11,9 @@
       "model": "Qwen3.6-27B",
       "api_key_env": "MEDAI_API_KEY",
       "temperature": 0,
-      "chat_template_kwargs": {"enable_thinking": true}
+      "chat_template_kwargs": {
+        "enable_thinking": true
+      }
     },
     "deepseek-v4-flash": {
       "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
@@ -34,6 +36,35 @@
       "max_tokens": 4096,
       "enable_thinking": false,
       "require_response_model": true
+    },
+    "qwen36-35b-a3b-bailian-thinking": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen3.6-35b-a3b",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "temperature": 0,
+      "max_tokens": 4096,
+      "enable_thinking": true,
+      "require_response_model": true,
+      "thinking_budget": 2048
+    },
+    "qwen36-27b-bailian": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen3.6-27b",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "temperature": 0,
+      "max_tokens": 4096,
+      "enable_thinking": false,
+      "require_response_model": true
+    },
+    "qwen36-27b-bailian-thinking": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen3.6-27b",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "temperature": 0,
+      "max_tokens": 4096,
+      "enable_thinking": true,
+      "require_response_model": true,
+      "thinking_budget": 2048
     }
   }
 }

@@ -109,3 +109,51 @@ def test_tool_round_trip_preserves_evidence_and_nested_confidence(monkeypatch):
     assert all(c["response_metadata"]["model"] == WIRE_MODEL for c in agent.calls)
     assert agent.evidence_releases == [{"tool_call_id": "fixture-call", "name": "lookup", "evidence_ids": ["lab-1"]}]
     assert agent.history == history
+
+
+@pytest.mark.parametrize("alias,wire", [
+    ("qwen36-35b-a3b-bailian-thinking", WIRE_MODEL),
+    ("qwen36-27b-bailian-thinking", "qwen3.6-27b"),
+])
+def test_thinking_alias_round_trip(monkeypatch, alias, wire):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "offline-fixture-key")
+    payloads = []
+    tool_call = {"id": "bounded-thinking-call", "type": "function",
+                 "function": {"name": "lookup", "arguments": "{}"}}
+    def respond(request, timeout):
+        payload = json.loads(request.data)
+        payloads.append(payload)
+        assert payload["model"] == wire
+        assert payload["enable_thinking"] is True
+        assert payload["thinking_budget"] == 2048
+        assert payload["max_tokens"] == 4096
+        assert "chat_template_kwargs" not in payload
+        if len(payloads) == 1:
+            msg = {"role": "assistant", "content": "", "reasoning_content": "Synthetic reasoning.",
+                   "tool_calls": [tool_call]}
+        else:
+            assert payload["messages"][2]["tool_calls"] == [tool_call]
+            assert payload["messages"][3]["tool_call_id"] == tool_call["id"]
+            assert "SECRET_SYNTH_91" in payload["messages"][3]["content"]
+            msg = {"role": "assistant", "content": "SECRET_SYNTH_91"}
+        return response(msg, model=wire, usage={"prompt_tokens": 10, "completion_tokens": 15,
+            "completion_tokens_details": {"reasoning_tokens": 8}})
+    monkeypatch.setattr(urllib.request, "urlopen", respond)
+    tool = Tool("lookup", "Synthetic lookup", {}, lambda: ToolResult("SECRET_SYNTH_91"))
+    agent = Agent(Model.from_config(alias), system="Synthetic tool test.", tools=[tool])
+    assert agent.chat("Retrieve the hidden marker.") == "SECRET_SYNTH_91"
+    assert len(agent.calls) == 2
+    assert agent.calls[0]["usage"]["completion_tokens_details"]["reasoning_tokens"] == 8
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 1.5, "2048"])
+def test_invalid_thinking_budget_rejected(budget):
+    with pytest.raises(ValueError, match="positive integer"):
+        Model("fixture", {"base_url": "https://example.test", "model": "fixture",
+            "api_key_env": "TEST_KEY", "enable_thinking": True, "thinking_budget": budget})
+
+
+def test_thinking_budget_requires_explicit_mode():
+    with pytest.raises(ValueError, match="requires top-level"):
+        Model("fixture", {"base_url": "https://example.test", "model": "fixture",
+            "api_key_env": "TEST_KEY", "enable_thinking": False, "thinking_budget": 2048})
