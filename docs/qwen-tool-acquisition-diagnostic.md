@@ -3,17 +3,17 @@
 ## Material Passport
 
 - Material type: exploratory validation report; ARS experiment-agent, validate workflow, inline execution.
-- Verification status: ANALYZED. Synthetic API behavior observed; clinical correction not yet verified.
+- Verification status: ANALYZED. Synthetic and fixed-case API behavior observed; clinical contrast completed; no population or AUC claim.
 - Date: 2026-10-04, Asia/Shanghai.
-- Inputs: preserved PR13 open100 Qwen35 baseline; actual native API requests/responses from authored laboratory-marker fixtures.
-- New scope: 84 synthetic HTTP requests, 0 patient requests. No gold labels or previous model answers in inference payloads.
-- Evidence: `analysis.json`, `v1/`, `repeat2_nonthinking/`, `repeat2_thinking/`, `repeat3_nonthinking/`, `repeat3_thinking/`, `medai_named8/`.
+- Inputs: preserved PR13 open100 Qwen35 baseline; captured native API requests/responses from authored laboratory-marker fixtures and the authorized fixed 12-case clinical contrast.
+- New scope: 84 synthetic HTTP requests; subsequent authorized 48-case-configuration clinical diagnostic (168 HTTP attempts, including one same-encounter continuation). No gold labels or previous model answers in inference payloads.
+- Private research-workspace evidence (not committed): `analysis.json`, `v1/`, `repeat2_nonthinking/`, `repeat2_thinking/`, `repeat3_nonthinking/`, `repeat3_thinking/`, `medai_named8/`.
 
 ## Current conclusion
 
 **53/100 HPI versus 28/100 interactive is a deployment-process anomaly that must be explained before attributing it to medical knowledge.** Of the 100 interactive cases, 89 never called a tool and 58 issued valid but diagnosis-less final answers before any tool call. Parsing a prior tool result cannot account for those 58 cases.
 
-The live comparison establishes a failure of automatic evidence acquisition under the original medical prompt and the tested Bailian non-thinking configurations. Enabling thinking with a bounded budget restores acquisition in synthetic tasks. The client preserves native calls and tool-result IDs. This does not yet certify clinical recovery, nor isolate the server-side template, weights, or decoding mechanism.
+The synthetic comparison identified prompt/configuration-dependent automatic acquisition failures. The subsequent fixed clinical contrast found Bailian27 non-thinking acquired evidence in 9/12 cases, and thinking in 12/12; automatic diagnosis matches increased from 7/12 to 10/12. Bailian35 thinking improved from the same-case original interactive 6/12 to 10/12. The client preserved all 251 clinical tool results. These observations support an acquisition/final-output process explanation within this subset; they neither certify general clinical reliability nor isolate server-side templates, weights, or decoding.
 
 ## Matched synthetic evidence
 
@@ -64,20 +64,27 @@ A new local audit of the preserved clinical baseline (`clinical_gap_local_audit.
 
 This also holds descriptively across source groups: HPI versus interactive correct counts are diverticulitis 9 versus 1, cholecystitis 6 versus 6, appendicitis 23 versus 11, and pancreatitis 15 versus 10, each out of 25. There is no group in which the overall degradation is reversed into an interactive advantage. These counts do not identify a causal knowledge deficit.
 
-## Prepared clinical diagnostic — not executed
+## Fixed clinical diagnostic — subsequently authorized and completed
 
 Select positions 0–2, 25–27, 50–52, and 75–77 from the frozen cohort, without selecting by model outcomes. The source groups are 2 appendicitis, 3 cholecystitis, 3 diverticulitis, and 4 pancreatitis; the positions are not disease blocks. Compare the same 12 cases under four configurations: Bailian35 thinking, Bailian27 non-thinking, Bailian27 thinking, and MEDAI27 non-thinking. Existing Qwen35 HPI/interactive/full-info results on those IDs provide reference observations without new baseline calls.
 
-Primary diagnostic endpoint: proportion acquiring evidence through native tools. Secondary endpoints: presence of a final diagnosis and unchanged PR13 automatic diagnosis score. Keep every attempted case, including failures. Targets are loaded for local scoring only after all inference. These 48 proposed encounters are an exploratory mechanism check; they are not an independent benchmark or AUC estimate.
+Primary diagnostic endpoint: proportion acquiring evidence through native tools. Secondary endpoints: presence of a final diagnosis and unchanged PR13 automatic diagnosis score. Keep every attempted case, including failures. Targets are loaded for local scoring only after all inference. These 48 completed encounters are an exploratory mechanism check; they are not an independent benchmark or AUC estimate.
 
-The API launch was rejected by automatic approval because real case HPI/evidence would be exported to MEDAI and Bailian Qwen27, while the earlier explicit payload authorization named Bailian Qwen35. The broader all-API authorization was not accepted as destination-specific patient-content permission. No patient request was sent, and no workaround was attempted. A precise authorization question is pending.
+The API launch was rejected by automatic approval because real case HPI/evidence would be exported to MEDAI and Bailian Qwen27, while the earlier explicit payload authorization named Bailian Qwen35. The broader all-API authorization was not accepted as destination-specific patient-content permission. No patient request was sent, and no workaround was attempted. The human subsequently replied “我授权” to the precise question. The planned comparison was accepted and completed; the historical rejection above did not trigger any bypass.
 
 ## Cost and interpretation limits
 
-The new 84 requests comprise 45 Bailian and 39 MEDAI requests. New Bailian list-price estimate: CNY0.2290590; cumulative Bailian accounted estimate including the original experiment and earlier diagnostics: CNY1.8886914. Full-context reservations precede each Bailian request and the CNY35 ceiling remains. MEDAI tariffs are unavailable; actual usage is saved and no fee is imputed. These are price-based estimates, not billing-statement reconciliation.
+The new 84 requests comprise 45 Bailian and 39 MEDAI requests. New Bailian list-price estimate: CNY0.2290590; cumulative Bailian accounted estimate before the clinical follow-up: CNY1.8886914; after the follow-up: CNY7.087854. Full-context reservations precede each Bailian request and the CNY35 ceiling remains. MEDAI tariffs are unavailable; actual usage is saved and no fee is imputed. These are price-based estimates, not billing-statement reconciliation.
 
-The evidence supports an operational acquisition failure and a synthetic configuration remedy. It does not demonstrate that clinical accuracy improves, that MEDAI serves identical weights, or that a general medical training deficit exists. No confidence or complete diagnosis-token logprobs were collected; diagnosis accuracy is not the paper's AUC.
+The evidence supports operational acquisition/final-output failures and an observed automatic-score improvement in the fixed 12-case subset. It does not establish population accuracy gains, identical MEDAI/Bailian weights, or a general medical training deficit. No confidence or complete diagnosis-token logprobs were collected; diagnosis accuracy is not the paper's AUC.
 
 ## Statistical interpretation check
 
 11/11 fallacy types checked, with individual dispositions in `analysis.json`: Simpson's paradox, ecological fallacy, Berkson selection, collider bias, base-rate neglect, regression to the mean, survivorship, look-elsewhere, forking paths, correlation/causation, and reverse causality. No population inference or significance test is claimed. Engineered fixtures, exploratory prompt changes, endpoint confounding, unequal clinical-subset groups, and retained call-limit failures remain visible.
+
+
+## Completed clinical follow-up
+
+The four approved configurations completed all 48 encounters. Primary automatic matches were Bailian35 thinking 10/12, Bailian27 non-thinking 7/12, Bailian27 thinking 10/12, MEDAI27 non-thinking 5/12. An exact same-request HTTP429 continuation changes MEDAI sensitivity to 6/12 while retaining primary 5/12. All 251 tool-result texts and IDs were preserved, including one properly returned unknown-imaging-ID error. Qwen27 thinking incurred 68 repeated function/argument calls across 7 cases; it is not a complete reliability remedy.
+
+The initial synthetic claim is deliberately limited: Bailian27 non-thinking used tools in 9/12 real cases, so its synthetic marker failure is not a universal inability. The clinical diagnostic is complete, with all failures retained, raw records protected and the baseline unchanged. See [full clinical follow-up](qwen-tool-acquisition-clinical12.md) for scores, strict-format/citation checks, cost and interpretation limits. Cumulative Bailian estimate is now CNY7.087854; MEDAI fee remains unknown.
