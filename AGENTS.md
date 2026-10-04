@@ -2,7 +2,7 @@
 
 用户于 2026-10-04 明确要求：以后做实验都使用 AMA harness。
 
-- 模型实验统一通过 `aignite-medical-harness` 的标准执行入口运行；现有 benchmark 使用 `ama eval`。
+- 模型实验统一通过 `aignite-medical-harness` 的标准执行入口运行；现有 benchmark 使用 `ama run` 执行推理，再使用 `ama eval` 读取标准产物并评分；`ama eval` 本身不执行模型推理。
 - 日志、费用上限、模型适配或新实验设置需要额外支持时，先接入 harness，再从标准入口执行。
 - 不另建直接调用模型、手动循环 Agent 并评分的专用 runner 来代替标准实验流程；仅复用底层组件不等于使用标准入口。
 - 离线统计、审计和绘图可使用分析脚本，读取 harness 保存的实验产物，不替代其推理或评分流程。

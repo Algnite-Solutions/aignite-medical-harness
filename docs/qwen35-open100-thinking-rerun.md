@@ -8,6 +8,13 @@
 - 范围：全部原100例，新会话各一次；原基线保留，失败例不剔除，无自动重试或答案替换。
 - 原始证据：研究工作区interactive100_thinking_v1/private/中保存请求、响应、工具历史、决策和评分。仅汇总结果进入Git。
 
+## 实际执行入口（历史记录）
+
+- 推理与主评分实际命令：在研究工作区执行 `/Users/bran/anaconda3/bin/python3.12 runs/qwen_tool_rootcause/rerun_interactive100.py`。
+- 执行方式：自定义runner调用Agent、normalize_decision和score_mimic_cdm_open；本轮没有执行`ama run`或`ama eval` CLI。
+- 离线核验/报告命令：`/Users/bran/anaconda3/bin/python3.12 runs/qwen_tool_rootcause/report_interactive100.py`，没有API调用。
+- 此批结果在用户明确标准入口约定之前已完成。之后的实验必须通过`ama run`推理、`ama eval`评分；费用或日志支持先接入harness。此记录不将历史运行改称标准CLI运行。
+
 ## 主结果
 
 | 配置 | PR13自动评分匹配 | 有诊断字段 | 使用工具 |
