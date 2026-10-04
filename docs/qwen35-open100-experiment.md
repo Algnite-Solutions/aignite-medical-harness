@@ -136,3 +136,31 @@ A synthetic smoke returned the exact wire model `qwen3.6-35b-a3b`; clinical
 execution then started in the fresh `runs/qwen35_open100_execution/v1` output
 directory of the separate research workspace. Prior approval failures made no
 requests. The execution artifacts, not this static note, are the live status.
+
+## Completed single-pass result
+
+All 300 planned encounters ran. Automatic diagnosis scores are HPI 53/100,
+interactive 28/100 and full_info 85/100. There were 328 HTTP attempts including
+one synthetic smoke, no transport failures, and one invalid decision caused by
+an incorrect turn_id. Reported usage is 669740 input and 40347 output tokens;
+the price-based total estimate is CNY 1.6412796 including the smoke.
+
+The interactive view used tools in 11/100 cases. Its 72 noncorrect scores include
+17 explicit abstentions, 41 other answers lacking a scorer-readable diagnosis,
+9 unmapped answers, 4 different mapped source groups and 1 invalid decision.
+Full_info has 10 unmapped answers and 5 different mapped source groups. These
+are automatic mapping outcomes, not confirmed clinical error adjudications.
+The scorer retains string answers; 57 full_info answers are strings rather than
+nested answer.diagnosis objects. This does not change the archived primary score.
+
+Local analysis is reproducible without API calls:
+
+```bash
+python3.12 scripts/analyze_qwen35_open100.py \
+  --run '/Users/bran/Documents/Projects/medical model training/runs/qwen35_open100_execution/v1'
+```
+
+See report.md, analysis.json, budget.json and private/errors.json in that output.
+No confidence AUC or repeated-generation consistency AUC is estimated by this
+single-pass deployment baseline. No model superiority or training benefit is
+established. Raw runs and failures were preserved without answer replacement.
