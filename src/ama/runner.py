@@ -7,14 +7,21 @@ from pathlib import Path
 
 from .agent import Agent, CallLimitExceeded
 from .data import Decision, load_dataset, resolve_dataset_dir, validate_visible_files
+from .decisions import normalize_decision
 from .model import IMAGE_TYPES, ModelError, image
 from .recorder import Recorder
 from .tools import load_tools
 
-DECISION_PROMPT = '''For each observation, return exactly one JSON object, without Markdown:
-{"turn_id": "the current turn ID", "answer": <task answer>, "citations": ["evidence IDs"]}.
-Use only evidence released so far. Citations must identify released evidence.
-answer=null with citations=[] means abstention. Do not add other top-level fields.'''
+DECISION_PROMPT = '''After reviewing the evidence and using tools as needed, return one JSON object:
+{"turn_id": "current turn ID", "answer": {}, "citations": ["exact evidence IDs"],
+ "reasoning_summary": "A concise evidence-based explanation of the conclusion."}
+Replace answer with the task answer using the fields described by the dataset. Use exactly the four
+envelope fields shown. Use the actual turn ID and evidence IDs provided in the conversation.
+Write a 2–4 sentence reasoning summary connecting the conclusion to cited findings, not an internal
+reasoning transcript. Put it inside reasoning_summary, with no prose or code fences outside JSON.
+Cite only exact IDs released in observations or listed as citeable by successful tool results.
+An imaging catalog does not release report findings. Do not guess or abbreviate IDs.
+For abstention use answer=null, citations=[], and explain the uncertainty in reasoning_summary.'''
 
 
 def render(turn, folder: Path) -> list:
@@ -48,9 +55,10 @@ def parse_decision(reply: str, turn_id: str, visible: set[str]) -> dict:
     return decision.model_dump(mode="json")
 
 
-def exchange(agent, recorder, message, *, episode_id, turn_id, source):
+def exchange(agent, recorder, message, *, episode_id, turn_id):
     """Always persist the history produced so far, including on API error or Ctrl-C."""
     start, calls = len(agent.history), len(agent.calls)
+    releases = len(agent.evidence_releases)
     reply, reason, error = None, "completed", None
     try:
         reply = agent.chat(message)
@@ -63,7 +71,9 @@ def exchange(agent, recorder, message, *, episode_id, turn_id, source):
     except Exception as exc:
         reason, error = "error", f"{type(exc).__name__}: {exc}"
     finally:
-        recorder.history(agent, start, source=source, episode_id=episode_id, turn_id=turn_id)
+        recorder.history(agent, episode_id=episode_id)
+        for release in agent.evidence_releases[releases:]:
+            recorder.event("evidence_release", episode_id=episode_id, turn_id=turn_id, **release)
         for call in agent.calls[calls:]:
             recorder.event("model_call", episode_id=episode_id, turn_id=turn_id, **call)
     new_calls = agent.calls[calls:]
@@ -73,7 +83,10 @@ def exchange(agent, recorder, message, *, episode_id, turn_id, source):
            "duration_ms": sum(c["duration_ms"] for c in new_calls),
            "usage": {k: sum(u.get(k, 0) for u in usage) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
            if usage else None}
-    recorder.event("exchange", source=source, **row)
+    row["message_range"] = [start, len(agent.history)]
+    if error:
+        recorder.event("error", episode_id=episode_id, turn_id=turn_id,
+                       termination=reason, error=error)
     return row
 
 
@@ -97,7 +110,7 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
         "This is exploratory chat. Respond naturally; JSON decisions are not required. "
         "Use only observations released so far; a follow-up is not a new dataset turn.")
     recorder = Recorder(runs_root, dataset=dataset, episodes=episodes, mode=mode, model=model,
-                        instruction=instruction, system=system, max_calls=max_calls, tools_path=tools_path)
+                        max_calls=max_calls, tools_path=tools_path)
     print(f"records: {recorder.run_dir}", flush=True)
     termination = "completed"
     interrupted = False
@@ -106,14 +119,16 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
             if interrupted:
                 for turn in episode.turns:
                     recorder.append("decisions.jsonl", {
-                        "episode_id": episode.id, "turn_id": turn.id, "reply": None,
+                        "episode_id": episode.id, "turn_id": turn.id,
                         "decision": None, "termination": "not_executed", "error": "interrupted",
                         "model_calls": 0, "duration_ms": 0, "usage": None})
                 continue
-            agent = Agent(model, system=system, tools=load_tools(tools_path), max_calls=max_calls)
+            agent = Agent(model, system=system,
+                          tools=load_tools(tools_path, dataset_dir=dataset.folder, episode_id=episode.id),
+                          max_calls=max_calls)
             recorder.event("episode_start", episode_id=episode.id,
                            tools=[tool.definition() for tool in agent.tools.values()])
-            recorder.history(agent, 0, source="system", episode_id=episode.id, turn_id=None)
+            recorder.history(agent, episode_id=episode.id)
             if mode == "chat":
                 termination = explore(dataset, episode, agent, recorder, input_fn or input)
                 break
@@ -121,23 +136,28 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
             stopped = None
             for turn in episode.turns:
                 if stopped:
-                    row = {"episode_id": episode.id, "turn_id": turn.id, "reply": None,
+                    row = {"episode_id": episode.id, "turn_id": turn.id,
                            "decision": None, "termination": "not_executed", "error": stopped,
                            "model_calls": 0, "duration_ms": 0, "usage": None}
                 else:
                     visible.update(e.id for e in turn.evidence)
-                    row = exchange(agent, recorder, render(turn, dataset.folder),
-                                   episode_id=episode.id, turn_id=turn.id, source="dataset")
+                    message = render(turn, dataset.folder)
+                    message.append(f"Final Decision turn_id: {turn.id}. Currently citeable evidence IDs: "
+                                   + json.dumps(sorted(visible | agent.evidence_ids)))
+                    row = exchange(agent, recorder, message,
+                                   episode_id=episode.id, turn_id=turn.id)
                     if row["termination"] == "completed":
                         try:
-                            row["decision"] = parse_decision(row["reply"], turn.id, visible)
+                            allowed = visible | agent.evidence_ids
+                            row["decision"], row["output_validation"] = normalize_decision(
+                                row["reply"], turn.id, allowed)
                         except (ValueError, TypeError) as exc:
                             row.update(termination="invalid_decision", error=str(exc))
                     else:
                         stopped = row["termination"]
                     if row["termination"] != "completed":
                         termination = "completed_with_errors"
-                recorder.append("decisions.jsonl", row)
+                recorder.append("decisions.jsonl", {k: v for k, v in row.items() if k != "reply"})
             if stopped == "interrupted":
                 termination = "interrupted"
                 interrupted = True
@@ -153,6 +173,15 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
 
 
 def explore(dataset, episode, agent, recorder, input_fn):
+    def show_activity(kind, value):
+        if kind == "model_start":
+            print("\n[model] waiting for response...", flush=True)
+        elif kind == "tool_call":
+            print(f"\n[tool call] {value.get('name', '?')} {value.get('arguments', '{}')}", flush=True)
+        elif kind == "tool_result":
+            print(f"[tool result] {value}", flush=True)
+
+    agent.on_event = show_activity
     index = 0
     source = "dataset"
     message = render(episode.turns[index], dataset.folder)
@@ -162,7 +191,7 @@ def explore(dataset, episode, agent, recorder, input_fn):
             print(f"\n[dataset] Observation {index + 1}/{len(episode.turns)}: {turn.id}")
             for part in message:
                 print(part if isinstance(part, str) else f"[image] {part['path']}")
-        row = exchange(agent, recorder, message, episode_id=episode.id, turn_id=turn.id, source=source)
+        row = exchange(agent, recorder, message, episode_id=episode.id, turn_id=turn.id)
         if row["termination"] != "completed":
             print(f"Stopped: {row['termination']}: {row['error']}")
             return row["termination"]
