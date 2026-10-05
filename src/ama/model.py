@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import mimetypes
 import os
@@ -72,7 +73,7 @@ def wire_messages(history: list[dict]) -> list[dict]:
 class Model:
     def __init__(self, name: str, config: dict, timeout: float = 60):
         allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser",
-                   "enable_thinking", "thinking_budget", "require_response_model"}
+                   "enable_thinking", "thinking_budget", "require_response_model", "logprobs", "top_logprobs", "reasoning_effort"}
         if set(config) - allowed:
             raise ValueError(f"unsupported model options: {sorted(set(config) - allowed)}")
         if config.get("tool_call_parser") not in (None, "antangel"):
@@ -80,6 +81,17 @@ class Model:
         for key in ("enable_thinking", "require_response_model"):
             if key in config and not isinstance(config[key], bool):
                 raise ValueError(f"{key} must be a boolean")
+        if "logprobs" in config and type(config["logprobs"]) is not bool:
+            raise ValueError("logprobs must be a boolean")
+        if "top_logprobs" in config:
+            top = config["top_logprobs"]
+            if type(top) is not int or not 0 <= top <= 20:
+                raise ValueError("top_logprobs must be an integer from 0 to 20")
+            if config.get("logprobs") is not True:
+                raise ValueError("top_logprobs requires logprobs=true")
+        if "reasoning_effort" in config and config["reasoning_effort"] not in (
+                "none", "minimal", "low", "medium", "high", "xhigh", "max"):
+            raise ValueError("unsupported reasoning_effort")
         if "enable_thinking" in config and "enable_thinking" in config.get("chat_template_kwargs", {}):
             raise ValueError("configure enable_thinking at only one request location")
         if "thinking_budget" in config:
@@ -112,7 +124,8 @@ class Model:
         self.last_response_metadata = None
         payload = {"model": self.config["model"], "messages": wire_messages(history),
                    "temperature": self.config.get("temperature", 0)}
-        for key in ("max_tokens", "chat_template_kwargs", "enable_thinking", "thinking_budget"):
+        for key in ("max_tokens", "chat_template_kwargs", "enable_thinking", "thinking_budget",
+                    "logprobs", "top_logprobs", "reasoning_effort"):
             if key in self.config:
                 payload[key] = self.config[key]
         if tools:
@@ -157,6 +170,11 @@ class Model:
             }
             if self.config.get("require_response_model") and data.get("model") != self.config["model"]:
                 raise ModelError("response model does not match configured model")
+            if self.config.get("logprobs") is True:
+                # Preserve the provider's exact chosen-token stream, even if incomplete or absent.
+                # Recorder persists this metadata through the standard ama run path.
+                self.last_response_metadata["logprobs"] = copy.deepcopy(choice.get("logprobs"))
+                self.last_response_metadata["logprob_content"] = choice["message"].get("content")
             message = choice["message"]
             if not isinstance(message, dict):
                 raise ValueError()
