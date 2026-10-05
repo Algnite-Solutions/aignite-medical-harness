@@ -129,3 +129,14 @@ def test_changed_source_rejected_before_request(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='source changed'):
         execute_probing(data, Model('test', config), planfile, runs_root=tmp_path/'runs')
     assert not requests
+
+
+@pytest.mark.parametrize('reply,token,valid', [('A\nReasoning follows', 'A', True), ('**A**', '**', False), ('{"answer":"A"}', '{', False), ('Appendicitis', 'A', False)])
+def test_first_complete_label_reader_retains_format_diagnostics(reply, token, valid):
+    from ama.original_agent_probing import original_label_probability
+    result = original_label_probability(metadata(text=reply, token=token), 'first_complete_label')
+    assert result['valid'] == valid
+    if valid:
+        assert result['p_ab'] == pytest.approx(7/9)
+        assert result['single_label_format_compliant'] is False
+        assert result['trailing_output_present'] is True

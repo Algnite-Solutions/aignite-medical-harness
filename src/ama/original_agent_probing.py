@@ -100,6 +100,28 @@ def job_list(snapshots, sources, base_config, plan):
     return jobs, missing
 
 
+def original_label_probability(metadata, readout='single_label'):
+    if readout == 'single_label':
+        return binary_probability(metadata)
+    if readout != 'first_complete_label':
+        raise ValueError('unsupported original-agent label readout')
+    text = (metadata or {}).get('logprob_content')
+    records = ((metadata or {}).get('logprobs') or {}).get('content') or []
+    try:
+        first = bytes(records[0]['bytes']).decode()
+    except (IndexError, KeyError, TypeError, ValueError, UnicodeError):
+        return {'valid': False, 'reason': 'missing_first_token_bytes', 'p_ab': None}
+    if not isinstance(text, str) or first.strip() not in {'A', 'B'} or not text.startswith(first) or (len(text) > len(first) and not text[len(first)].isspace()):
+        return {'valid': False, 'reason': 'first_token_not_complete_binary_label', 'p_ab': None}
+    isolated = copy.deepcopy(metadata)
+    isolated['logprob_content'] = first
+    result = binary_probability(isolated)
+    result.update(single_label_format_compliant=text.strip() in {'A', 'B'},
+                  probability_readout='first_complete_label',
+                  trailing_output_present=bool(text[len(first):].strip()))
+    return result
+
+
 def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
     validate_visible_files(dataset)
@@ -158,7 +180,7 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
                 raise ValueError('cannot reuse older rediagnosis experiment')
             for row in read_rows(Path(previous)/'probe_calls.jsonl'):
                 identity = identities.get(row['job_id'])
-                if identity and all(row.get(k) == v for k, v in identity.items()) and not row.get('error') and binary_probability(row.get('response_metadata'))['valid'] and row['job_id'] not in completed:
+                if identity and all(row.get(k) == v for k, v in identity.items()) and not row.get('error') and original_label_probability(row.get('response_metadata'), plan.get('label_readout', 'single_label'))['valid'] and row['job_id'] not in completed:
                     write_json(root/'requests'/(row['request_sha256']+'.json'), next(j['_history'] for j in jobs if j['job_id'] == row['job_id']))
                     row = {**row, 'reused_from': str(previous)}
                     completed[row['job_id']] = row
@@ -192,7 +214,7 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
                        'expected_missing_candidates': len(missing), 'termination': 'running'})
             if error:
                 raise ModelError(error)
-            bp = binary_probability(row['response_metadata'])
+            bp = original_label_probability(row['response_metadata'], plan.get('label_readout', 'single_label'))
             if not bp['valid']:
                 raise ModelError('binary coverage failed; stopped before next request: '+str(bp['reason']))
             if row['response_metadata'].get('model') != model.config['model']:
@@ -262,7 +284,7 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
                 raise ValueError('probe identity/candidate/config changed')
             if r and json.loads((run_dir/'requests'/(j['request_sha256']+'.json')).read_text()) != j['_history']:
                 raise ValueError('saved request differs from frozen native prefix')
-            bp = binary_probability(r.get('response_metadata'))
+            bp = original_label_probability(r.get('response_metadata'), plan.get('label_readout', 'single_label'))
             if r.get('error') or (r.get('response_metadata') or {}).get('model') != manifest['model_config']['model']:
                 bp.update(valid=False, reason='missing_or_failed_or_model_mismatch', p_ab=None)
             entry['probes'][j['kind']+'/'+j['target']] = {**bp, 'candidate': j['candidate'], 'job_id': j['job_id']}
@@ -282,6 +304,7 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
                   'admissions': len(ids), 'prefixes': len(snapshots), 'expected_probes': len(expected_jobs),
                   'recorded_probes': len(rows), 'valid_probes': sum(p['valid'] for p in probes),
                   'invalid_probes': sum(not p['valid'] for p in probes), 'missing_original_candidates': len(missing),
+                  'noncompliant_single_label_replies': sum(p.get('trailing_output_present', False) for p in probes),
                   'api_errors': sum(bool(r.get('error')) for r in rows), 'reused_jobs': sum(bool(r.get('reused_from')) for r in rows),
                   'new_http_attempts': sum(r.get('http_attempts', 0) for r in rows if not r.get('reused_from')),
                   'total_tokens': sum(u.get('total_tokens', 0) for u in usage),
