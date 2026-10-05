@@ -250,6 +250,9 @@ def probe_config(base, plan, job_id, kind):
 
 def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     import fcntl
+    if json.loads(Path(plan_path).read_text()).get('schema') == 'ama-original-agent-probing-v1':
+        from .original_agent_probing import execute_original_agent_probing
+        return execute_original_agent_probing(dataset_dir, model, plan_path, runs_root=runs_root, resume=resume)
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
     validate_visible_files(dataset)
     plan = json.loads(Path(plan_path).read_text())
@@ -497,6 +500,9 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
 
 
 def evaluate_probing(run_dir, dataset, manifest, decisions, scorer_override=None):
+    if manifest.get('output_contract_version') == 'original-agent-probing-v1':
+        from .original_agent_probing import evaluate_original_agent_probing
+        return evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override)
     if scorer_override not in (None, 'interactive_probing'):
         raise ValueError('probing runs require interactive_probing scorer')
     plan = json.loads(Path(manifest['probing_plan']).read_text())
