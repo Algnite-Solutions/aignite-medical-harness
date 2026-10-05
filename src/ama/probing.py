@@ -535,6 +535,12 @@ def evaluate_probing(run_dir, dataset, manifest, decisions, scorer_override=None
                     'model_config': r['model_config'], 'finish_reason': metadata.get('finish_reason')}
             target = dataset.targets.get(s['episode_id'])
             entry['target'] = target.turns.get(s['turn_id']) if target else None
+            # Frozen benchmark mapper, evaluator-only; never feed labels to a probe.
+            from .importers.mimic_cdm_benchmark import _diagnosis_label
+            predicted, mapping = _diagnosis_label(diagnosis)
+            wanted = (entry['target'] or {}).get('answer', {}).get('diagnosis')
+            entry['diagnosis_assessment'] = {'predicted_pathology': predicted, 'mapping': mapping,
+                'reference_pathology': wanted, 'correct_auto': predicted == wanted if wanted is not None else None}
             features.append(entry)
     usage = [r['usage'] for r in rows if not r.get('reused_from') and isinstance(r.get('usage'), dict)]
     probes = [p for f in features for p in f['probes'].values()]
@@ -555,7 +561,26 @@ def evaluate_probing(run_dir, dataset, manifest, decisions, scorer_override=None
             for feature in features: feature['semantic_embedding_consistency'] = None
     else:
         for feature in features: feature['semantic_embedding_consistency'] = None
-    result = {'scorer': 'interactive_probing', 'per_prefix': features, 'aggregate': {
+    endpoints = []
+    grouped_real = {}
+    for f in features:
+        if f['variant'] == 'real': grouped_real.setdefault(f['episode_id'], []).append(f)
+    for ep, values in grouped_real.items():
+        values = sorted(values, key=lambda f: f['step'])
+        first, final = values[0], values[-1]
+        a, b = first['diagnosis_assessment'], final['diagnosis_assessment']
+        agreement = ('consistent' if a['predicted_pathology'] == b['predicted_pathology'] else 'inconsistent') if a['mapping'] == b['mapping'] == 'mapped' else 'unresolved'
+        endpoints.append({'episode_id': ep, 'first_turn_id': first['turn_id'], 'final_turn_id': final['turn_id'],
+            'agreement': agreement, 'agreement_rule': 'same frozen unambiguous pathology mapping; unresolved otherwise',
+            'exact_text_agreement': bool(first['normalized_diagnosis']) and first['normalized_diagnosis'] == final['normalized_diagnosis'],
+            'hpi': a, 'final_prefix': b})
+    endpoint_summary = {'admissions': len(endpoints), 'hpi_accuracy': None, 'final_prefix_accuracy': None,
+                        'endpoint_label_coverage': sum(e['hpi']['correct_auto'] is not None and e['final_prefix']['correct_auto'] is not None for e in endpoints)}
+    if endpoint_summary['endpoint_label_coverage'] == len(endpoints) and endpoints:
+        endpoint_summary.update(hpi_accuracy=sum(e['hpi']['correct_auto'] for e in endpoints)/len(endpoints),
+                                final_prefix_accuracy=sum(e['final_prefix']['correct_auto'] for e in endpoints)/len(endpoints))
+    result = {'scorer': 'interactive_probing', 'per_prefix': features, 'endpoints': endpoints,
+              'endpoint_summary': endpoint_summary, 'aggregate': {
         'patients': len(dataset.episodes), 'prefixes': len(snapshots), 'calls': len(rows),
         'new_http_attempts': sum(r.get('http_attempts', r.get('model_calls', 0)) for r in rows if not r.get('reused_from')),
         'reused_jobs': sum(bool(r.get('reused_from')) for r in rows),
