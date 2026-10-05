@@ -23,6 +23,27 @@ MODE_EXCEPTION = ('\n\nMeasurement mode exception, applicable only to the follow
     'This measurement is separate from the original clinical submission.')
 TARGETS = [('sufficient', 'original_hpi'), ('sufficient', 'original_final_hindsight'),
            ('true', 'original_final_hindsight')]
+POST_SUBMISSION_REQUEST = ('This is an additional measurement after your completed clinical '
+    'submission. Keep that original submission fixed; do not revise the diagnosis, '
+    'request tools, or emit another clinical Decision JSON. For this measurement only, '
+    'answer the following question with exactly one uppercase letter A or B, '
+    'without explanation or formatting.\n\n')
+
+
+def measurement_snapshots(histories, design='evidence_prefix'):
+    if design == 'evidence_prefix':
+        return extract_snapshots(histories['interactive'])
+    if design != 'post_submission':
+        raise ValueError('unsupported measurement design')
+    snapshots = []
+    for step, view in enumerate(['hpi', 'interactive']):
+        history = histories[view]
+        if not history or history[-1].get('role') != 'assistant' or history[-1].get('tool_calls'):
+            raise ValueError('post-submission history must end with the original assistant submission')
+        snapshots.append({'history': copy.deepcopy(history), 'step': step,
+                          'kind': 'post_submission', 'source_view': view,
+                          'prefix_sha256': digest(history)})
+    return snapshots
 
 
 def file_hash(path):
@@ -72,9 +93,13 @@ def probe_history(snapshot, kind, diagnosis):
         raise ValueError('original system message is required')
     # Only the measurement fork receives this declared exception; all original
     # non-system messages, including tool-call IDs, are copied unchanged.
-    history[0]['content'] += MODE_EXCEPTION
+    post_submission = snapshot.get('kind') == 'post_submission'
+    if not post_submission:
+        history[0]['content'] += MODE_EXCEPTION
     template = SUFFICIENT if kind == 'sufficient' else PTRUE
     prompt = template.format(question='', answer=diagnosis).strip()
+    if post_submission:
+        prompt = POST_SUBMISSION_REQUEST + prompt
     return history + [{'role': 'user', 'content': prompt}]
 
 
@@ -83,8 +108,13 @@ def job_list(snapshots, sources, base_config, plan):
     cfg = dict(base_config, logprobs=True, top_logprobs=plan['top_logprobs'],
                max_tokens=plan.get('max_probe_tokens', 32))
     for s in snapshots:
-        for kind, target in TARGETS:
-            view = 'hpi' if target == 'original_hpi' else 'interactive'
+        post_submission = plan.get('measurement_design', 'evidence_prefix') == 'post_submission'
+        if post_submission != (s.get('kind') == 'post_submission'):
+            raise ValueError('snapshot and measurement design differ')
+        targets = ([(k, 'original_hpi' if s['source_view'] == 'hpi' else 'original_final')
+                    for k in ['sufficient', 'true']] if post_submission else TARGETS)
+        for kind, target in targets:
+            view = s['source_view'] if post_submission else ('hpi' if target == 'original_hpi' else 'interactive')
             diagnosis = candidate(sources[view]['rows'][s['episode_id']])
             if diagnosis is None:
                 missing.append({'episode_id': s['episode_id'], 'turn_id': s['turn_id'],
@@ -95,7 +125,7 @@ def job_list(snapshots, sources, base_config, plan):
             identity.update(kind=kind, target=target, candidate=diagnosis,
                             request_sha256=digest(history), model_config=cfg,
                             source_decision_sha256=digest(sources[view]['rows'][s['episode_id']]),
-                            measurement_mode_sha256=digest(MODE_EXCEPTION))
+                            measurement_mode_sha256=digest(POST_SUBMISSION_REQUEST if post_submission else MODE_EXCEPTION))
             jobs.append({**identity, 'job_id': digest(identity), '_history': history})
     return jobs, missing
 
@@ -135,12 +165,15 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
         raise ValueError('snapshot IDs do not match expected turns')
     for ep in {s['episode_id'] for s in snapshots}:
         actual = sorted([s for s in snapshots if s['episode_id'] == ep], key=lambda s: s['step'])
-        frozen = extract_snapshots(sources['interactive']['histories'][ep])
+        frozen = measurement_snapshots({v: sources[v]['histories'][ep] for v in sources},
+                                       plan.get('measurement_design', 'evidence_prefix'))
         if len(actual) != len(frozen):
             raise ValueError('prefix count differs from original AMA history')
         for a, b in zip(actual, frozen):
             if a['history'] != b['history'] or a['prefix_sha256'] != digest(b['history']):
                 raise ValueError('prefix is not the original native AMA history')
+            if plan.get('measurement_design') == 'post_submission' and any(a.get(k) != b[k] for k in ['step', 'kind', 'source_view']):
+                raise ValueError('post-submission source view changed')
     jobs, missing = job_list(snapshots, sources, model.config, plan)
     if resume:
         root = Path(resume)
@@ -276,7 +309,8 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
                                        'original_decisions_reused': True, 'scored': result, 'full_cohort_accuracy': full['aggregate']['diagnosis_accuracy_auto']})
     features = []
     for s in snapshots:
-        entry = {k: s[k] for k in ['episode_id', 'turn_id', 'step', 'progress', 'prefix_sha256']}
+        entry = {k: s[k] for k in ['episode_id', 'turn_id', 'step', 'prefix_sha256']}
+        entry.update({k: s[k] for k in ['progress', 'kind', 'source_view'] if k in s})
         entry.update(probes={})
         for j in [j for j in expected_jobs if j['episode_id'] == s['episode_id'] and j['turn_id'] == s['turn_id']]:
             r = indexed.get(j['job_id'], {})
@@ -298,7 +332,7 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
                           'first_turn_id': ep_features[0]['turn_id'], 'final_turn_id': ep_features[-1]['turn_id']})
     probes = [p for f in features for p in f['probes'].values()]
     usage = [r['usage'] for r in rows if not r.get('reused_from') and isinstance(r.get('usage'), dict)]
-    result = {'scorer': 'original_agent_probing', 'original_ama_eval': source_scores,
+    result = {'scorer': 'original_agent_probing', 'measurement_design': plan.get('measurement_design', 'evidence_prefix'), 'original_ama_eval': source_scores,
               'historical_comparison': comparison, 'per_prefix': features, 'endpoints': endpoints,
               'missing_original_candidates': missing, 'aggregate': {
                   'admissions': len(ids), 'prefixes': len(snapshots), 'expected_probes': len(expected_jobs),

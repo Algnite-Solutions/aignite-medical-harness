@@ -131,6 +131,58 @@ def test_changed_source_rejected_before_request(tmp_path, monkeypatch):
     assert not requests
 
 
+def post_submission_fixture(tmp_path, **kwargs):
+    from ama.original_agent_probing import measurement_snapshots
+    data, planfile, config, _ = fixture(tmp_path, **kwargs)
+    plan = json.loads(planfile.read_text())
+    histories = {v: json.loads((Path(source['run'])/'messages.json').read_text())['ep']
+                 for v, source in plan['original_sources'].items()}
+    snaps = measurement_snapshots(histories, 'post_submission')
+    for s in snaps:
+        s.update(episode_id='ep', turn_id='s'+str(s['step']))
+    path = Path(plan['snapshots_file'])
+    path.write_text(''.join(json.dumps(s)+'\n' for s in snaps))
+    plan.update(measurement_design='post_submission', snapshots_sha256=file_hash(path))
+    planfile.write_text(json.dumps(plan))
+    return data, planfile, config, snaps
+
+
+@pytest.mark.parametrize('abstains, expected', [(False, 4), (True, 2)])
+def test_post_submission_exact_full_history_and_original_eval(tmp_path, monkeypatch, abstains, expected):
+    data, planfile, config, snaps = post_submission_fixture(tmp_path, hpi_abstains=abstains)
+    requests = []; fake_transport(monkeypatch, config, requests)
+    run = execute_probing(data, Model('test', config), planfile, runs_root=tmp_path/'runs')
+    assert len(requests) == expected
+    for request in requests:
+        source = snaps[1 if abstains or requests.index(request) >= 2 else 0]['history']
+        assert request[:-1] == source  # including unchanged system AND final assistant
+        assert request[-1]['role'] == 'user'
+        assert 'additional measurement after' in request[-1]['content']
+        assert MODE_EXCEPTION not in request[0]['content']
+    assert _eval_run(run) == 0
+    assert len(requests) == expected  # eval is offline
+    score = json.loads((run/'metrics.json').read_text())['scored']
+    assert score['measurement_design'] == 'post_submission'
+    assert score['aggregate']['valid_probes'] == expected
+    assert all(v['exact_historical_match'] for v in score['historical_comparison'].values())
+    assert score['original_ama_eval']['hpi']['aggregate']['diagnosis_accuracy_auto']['value'] == (0 if abstains else 1)
+    assert (run/'decisions.jsonl').read_text() == ''
+    for view in ['hpi', 'interactive']:
+        assert (run/'original_submissions'/view/'decisions.jsonl').read_bytes() == (tmp_path/view/'decisions.jsonl').read_bytes()
+
+
+def test_post_submission_wrong_view_rejected_without_api(tmp_path, monkeypatch):
+    data, planfile, config, snaps = post_submission_fixture(tmp_path)
+    plan = json.loads(planfile.read_text())
+    snaps[0]['source_view'] = 'interactive'
+    path = Path(plan['snapshots_file']); path.write_text(''.join(json.dumps(s)+'\n' for s in snaps))
+    plan['snapshots_sha256'] = file_hash(path); planfile.write_text(json.dumps(plan))
+    requests = []; fake_transport(monkeypatch, config, requests)
+    with pytest.raises(ValueError, match='source view changed'):
+        execute_probing(data, Model('test', config), planfile, runs_root=tmp_path/'runs')
+    assert not requests
+
+
 @pytest.mark.parametrize('reply,token,valid', [('A\nReasoning follows', 'A', True), ('**A**', '**', False), ('{"answer":"A"}', '{', False), ('Appendicitis', 'A', False)])
 def test_first_complete_label_reader_retains_format_diagnostics(reply, token, valid):
     from ama.original_agent_probing import original_label_probability
