@@ -15,7 +15,7 @@ class CallLimitExceeded(RuntimeError):
 
 class Agent:
     def __init__(self, model, system: str = "", tools: list[Tool] | None = None, max_calls: int = 8,
-                 on_event=None):
+                 on_event=None, on_prefix=None):
         if max_calls < 1:
             raise ValueError("max_calls must be positive")
         self.model, self.max_calls = model, max_calls
@@ -26,6 +26,7 @@ class Agent:
         self.calls: list[dict] = []
         self.failed = False
         self.on_event = on_event
+        self.on_prefix = on_prefix
         self.evidence_ids: set[str] = set()
         self.evidence_releases: list[dict] = []
 
@@ -44,6 +45,8 @@ class Agent:
                 started = time.monotonic()
                 call = {"message_index": len(self.history), "usage": None, "error": None}
                 try:
+                    if self.on_prefix is not None:
+                        self.on_prefix({"kind": "before_model", "history": copy.deepcopy(self.history), "evidence_ids": sorted(self.evidence_ids)})
                     self._emit("model_start")
                     reply = self.model.complete(self.history, tools=definitions or None)
                     if not isinstance(reply, dict):
@@ -106,6 +109,8 @@ class Agent:
                     self._emit("tool_result", text)
                 if attachments:
                     self.history.append({"role": "user", "content": content(attachments)})
+                if self.on_prefix is not None:
+                    self.on_prefix({"kind": "after_tool_batch", "history": copy.deepcopy(self.history), "evidence_ids": sorted(self.evidence_ids)})
             raise CallLimitExceeded(f"maximum model calls per chat reached: {self.max_calls}")
         except BaseException:
             self.failed = True

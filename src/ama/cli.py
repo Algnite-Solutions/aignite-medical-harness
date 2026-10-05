@@ -43,10 +43,16 @@ def _eval_run(run_dir: Path, scorer_override=None):
         if line.strip():
             row = json.loads(line)
             decisions.setdefault(row["episode_id"], []).append(row)
+    if manifest.get("probing_plan"):
+        from .probing import evaluate_probing
+        return evaluate_probing(run_dir, dataset, manifest, decisions, scorer_override)
     scorer = scorer_override or (dataset.eval_config.scorer if dataset.eval_config else "unscored")
     if scorer not in REGISTRY:
         raise ValueError(f"unknown scorer: {scorer}")
     result = REGISTRY[scorer](dataset, decisions)
+    if manifest.get("output_format") == "binary-label":
+        from .probing import binary_run_metrics
+        result["binary_probe"] = binary_run_metrics(run_dir)
     quality = output_metrics([row for episode in dataset.episodes
                               for row in expected_rows(episode, decisions)],
                              manifest.get("output_contract_version"))
@@ -75,6 +81,9 @@ def main(argv=None):
                              required=mode == "chat")
         if mode == "run":
             command.add_argument("--split")
+            command.add_argument("--output-format", choices=["decision", "text", "binary-label"], default="decision")
+            command.add_argument("--probing-plan", type=Path)
+            command.add_argument("--resume", type=Path)
         command.add_argument("--runs-root", type=Path, default=Path("runs"))
         command.add_argument("--instruction-file", type=Path)
         command.add_argument("--tools", type=Path, help="trusted Python file exporting TOOLS")
@@ -94,10 +103,15 @@ def main(argv=None):
     try:
         if args.command in ("run", "chat"):
             model = Model.from_config(args.model, args.config, timeout=args.timeout)
-            path = execute(args.dataset_dir, model, mode=args.command,
+            if getattr(args, "probing_plan", None):
+                from .probing import execute_probing
+                path = execute_probing(args.dataset_dir, model, args.probing_plan, runs_root=args.runs_root, resume=args.resume)
+            else:
+                path = execute(args.dataset_dir, model, mode=args.command,
                            episode_ids=[args.episode] if args.command == "chat" else args.episode,
                            split=getattr(args, "split", None), runs_root=args.runs_root,
-                           instruction_file=args.instruction_file, tools_path=args.tools, max_calls=args.max_calls)
+                           instruction_file=args.instruction_file, tools_path=args.tools, max_calls=args.max_calls,
+                           output_format=getattr(args, "output_format", "decision"))
             manifest = json.loads((path / "manifest.json").read_text())
             print(f"{args.command}: {manifest['termination']} — {path}")
             if args.command == "run":

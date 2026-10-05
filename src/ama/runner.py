@@ -91,7 +91,11 @@ def exchange(agent, recorder, message, *, episode_id, turn_id):
 
 
 def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, runs_root=Path("runs"),
-            instruction_file=None, tools_path=None, max_calls=8, input_fn=None) -> Path:
+            instruction_file=None, tools_path=None, max_calls=8, input_fn=None, output_format="decision") -> Path:
+    if output_format not in {"decision", "text", "binary-label"}:
+        raise ValueError("unsupported output format")
+    if output_format != "decision" and (mode != "run" or tools_path):
+        raise ValueError("text/binary-label runs require run mode without tools")
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
     validate_visible_files(dataset)
     if episode_ids and split:
@@ -109,8 +113,14 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
     system = instruction + "\n\n" + (DECISION_PROMPT if mode == "run" else
         "This is exploratory chat. Respond naturally; JSON decisions are not required. "
         "Use only observations released so far; a follow-up is not a new dataset turn.")
+    if output_format != "decision":
+        system = instruction
     recorder = Recorder(runs_root, dataset=dataset, episodes=episodes, mode=mode, model=model,
                         max_calls=max_calls, tools_path=tools_path)
+    recorder.manifest["output_format"] = output_format
+    if output_format != "decision":
+        recorder.manifest["output_contract_version"] = "probe-v1"
+    recorder.finish("running")
     print(f"records: {recorder.run_dir}", flush=True)
     termination = "completed"
     interrupted = False
@@ -125,7 +135,8 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                 continue
             agent = Agent(model, system=system,
                           tools=load_tools(tools_path, dataset_dir=dataset.folder, episode_id=episode.id),
-                          max_calls=max_calls)
+                          max_calls=max_calls, on_prefix=lambda value: recorder.append(
+                              "prefixes.jsonl", {"episode_id": episode.id, **value}))
             recorder.event("episode_start", episode_id=episode.id,
                            tools=[tool.definition() for tool in agent.tools.values()])
             recorder.history(agent, episode_id=episode.id)
@@ -142,15 +153,22 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                 else:
                     visible.update(e.id for e in turn.evidence)
                     message = render(turn, dataset.folder)
-                    message.append(f"Final Decision turn_id: {turn.id}. Currently citeable evidence IDs: "
-                                   + json.dumps(sorted(visible | agent.evidence_ids)))
+                    if output_format == "decision":
+                        message.append(f"Final Decision turn_id: {turn.id}. Currently citeable evidence IDs: "
+                                       + json.dumps(sorted(visible | agent.evidence_ids)))
                     row = exchange(agent, recorder, message,
                                    episode_id=episode.id, turn_id=turn.id)
                     if row["termination"] == "completed":
                         try:
                             allowed = visible | agent.evidence_ids
-                            row["decision"], row["output_validation"] = normalize_decision(
-                                row["reply"], turn.id, allowed)
+                            if output_format == "decision":
+                                row["decision"], row["output_validation"] = normalize_decision(
+                                    row["reply"], turn.id, allowed)
+                            else:
+                                answer = row["reply"].strip()
+                                if not answer or (output_format == "binary-label" and answer not in {"A", "B"}):
+                                    raise ValueError("expected a single uppercase A/B label" if output_format == "binary-label" else "empty text answer")
+                                row["decision"] = {"turn_id": turn.id, "answer": answer, "citations": [], "reasoning_summary": ""}
                         except (ValueError, TypeError) as exc:
                             row.update(termination="invalid_decision", error=str(exc))
                     else:

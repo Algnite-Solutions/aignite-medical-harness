@@ -73,7 +73,7 @@ def wire_messages(history: list[dict]) -> list[dict]:
 class Model:
     def __init__(self, name: str, config: dict, timeout: float = 60):
         allowed = {"base_url", "model", "api_key_env", "temperature", "max_tokens", "chat_template_kwargs", "tool_call_parser",
-                   "enable_thinking", "thinking_budget", "require_response_model", "logprobs", "top_logprobs", "reasoning_effort"}
+                   "enable_thinking", "thinking_budget", "require_response_model", "logprobs", "top_logprobs", "reasoning_effort", "seed", "top_p", "n"}
         if set(config) - allowed:
             raise ValueError(f"unsupported model options: {sorted(set(config) - allowed)}")
         if config.get("tool_call_parser") not in (None, "antangel"):
@@ -89,6 +89,12 @@ class Model:
                 raise ValueError("top_logprobs must be an integer from 0 to 20")
             if config.get("logprobs") is not True:
                 raise ValueError("top_logprobs requires logprobs=true")
+        if "n" in config and (type(config["n"]) is not int or not 1 <= config["n"] <= 20):
+            raise ValueError("n must be an integer from 1 to 20")
+        if "seed" in config and (type(config["seed"]) is not int or config["seed"] < 0):
+            raise ValueError("seed must be a nonnegative integer")
+        if "top_p" in config and (type(config["top_p"]) not in (int, float) or not 0 < config["top_p"] <= 1):
+            raise ValueError("top_p must be in (0, 1]")
         if "reasoning_effort" in config and config["reasoning_effort"] not in (
                 "none", "minimal", "low", "medium", "high", "xhigh", "max"):
             raise ValueError("unsupported reasoning_effort")
@@ -125,7 +131,7 @@ class Model:
         payload = {"model": self.config["model"], "messages": wire_messages(history),
                    "temperature": self.config.get("temperature", 0)}
         for key in ("max_tokens", "chat_template_kwargs", "enable_thinking", "thinking_budget",
-                    "logprobs", "top_logprobs", "reasoning_effort"):
+                    "logprobs", "top_logprobs", "reasoning_effort", "seed", "top_p", "n"):
             if key in self.config:
                 payload[key] = self.config[key]
         if tools:
@@ -154,6 +160,11 @@ class Model:
                        "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens"}
             rate_headers = {name.lower(): value[:256] for name, value in exc.headers.items()
                             if name.lower() in allowed and isinstance(value, str)} if exc.headers else {}
+            try:
+                error_body = exc.read(4096).decode("utf-8", errors="replace").replace(self._key, "<redacted>")
+            except Exception:
+                error_body = "unavailable"
+            self.last_response_metadata = {"http_status": exc.code, "provider_error": error_body}
             raise ModelError(f"model endpoint returned HTTP {exc.code}{hint}",
                              http_status=exc.code, rate_limit_headers=rate_headers) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -162,12 +173,18 @@ class Model:
             raise ModelError("model endpoint returned invalid JSON") from None
         try:
             self.last_usage = data.get("usage")
+            if self.config.get("n", 1) > 1:
+                choices = data["choices"]
+                if len(choices) != self.config["n"] or {c.get("index") for c in choices} != set(range(self.config["n"])):
+                    raise ModelError("response does not contain the requested independent choice count")
             choice = data["choices"][0]
             self.last_response_metadata = {
                 "model": data.get("model"), "id": data.get("id"),
                 "finish_reason": choice.get("finish_reason"),
                 "logprobs_available": choice.get("logprobs") is not None,
             }
+            if self.config.get("n", 1) > 1:
+                self.last_response_metadata["choices"] = copy.deepcopy(data["choices"])
             if self.config.get("require_response_model") and data.get("model") != self.config["model"]:
                 raise ModelError("response model does not match configured model")
             if self.config.get("logprobs") is True:
