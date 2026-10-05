@@ -117,3 +117,12 @@ def test_native_core_then_consistency_reuses_jobs_and_preserves_sc20(tmp_path, m
     aggregate=json.loads((nested/'metrics.json').read_text())['scored']['aggregate']
     assert aggregate['new_http_attempts']==0 and aggregate['reused_jobs']==12
     assert aggregate['sc_complete_contexts']==2
+    # A format instruction is still a changed model input: never reuse its old
+    # probabilities. Identical diagnosis/P(True) jobs may still be reused.
+    monkeypatch.setitem(probing.TEMPLATES,'sufficient',probing.SUFFICIENT+'\nPlain A/B only.')
+    plan.update(job_scope='core',reuse_runs=[str(core)])
+    planfile=tmp_path/'changed_prompt.json';planfile.write_text(json.dumps(plan))
+    changed=execute_probing(data,model,planfile,runs_root=tmp_path/'runs')
+    assert len(requests)==before+4 and _eval_run(changed)==0
+    aggregate=json.loads((changed/'metrics.json').read_text())['scored']['aggregate']
+    assert aggregate['new_http_attempts']==4 and aggregate['reused_jobs']==4

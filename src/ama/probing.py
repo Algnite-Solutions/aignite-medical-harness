@@ -25,22 +25,24 @@ SUFFICIENT = '''{question}
 Based only on the information and hints provided above, does that information sufficiently entail that the correct answer is exactly {answer}?
 A. Yes — the information is sufficient to conclude {answer}.
 B. No — the information is insufficient, allows alternatives, or contradicts {answer}.
-Output format: **A** or **B** only (single uppercase letter; no spaces, punctuation, or explanation):'''
+Output exactly one uppercase letter: A or B. Do not include Markdown, whitespace, punctuation, or explanation:'''
 PTRUE = '''{question}
 Proposed Answer: {answer}
 Is the proposed answer:
 A. True
 B. False
-Output format: **A** or **B** only (single uppercase letter; no spaces, punctuation, or explanation):'''
+Output exactly one uppercase letter: A or B. Do not include Markdown, whitespace, punctuation, or explanation:'''
 CLINICAL = '''{question}
 Proposed diagnosis: {answer}
 Based only on the patient evidence provided, is the evidence sufficient to commit to this diagnosis, while reasonably excluding competing diagnoses that require different management?
 A. Yes — the current evidence is sufficient to support a definite diagnosis of {answer}.
 B. No — the current evidence is insufficient, permits relevant alternatives, or contradicts {answer}.
-Output format: **A** or **B** only (single uppercase letter; no spaces, punctuation, or explanation):'''
+Output exactly one uppercase letter: A or B. Do not include Markdown, whitespace, punctuation, or explanation:'''
 DIAGNOSIS = '''{question}
 Based only on the patient evidence available above, give your single best current diagnosis. If information is incomplete, give your best provisional diagnosis. Return one concise English diagnosis phrase only, with no explanation, probability, JSON, alternatives, or tool call.'''
 
+
+TEMPLATES = {'diagnosis': DIAGNOSIS, 'sample': DIAGNOSIS, 'sufficient': SUFFICIENT, 'true': PTRUE, 'clinical': CLINICAL}
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
@@ -229,6 +231,23 @@ def extract_snapshots(history):
     return snapshots
 
 
+def probe_config(base, plan, job_id, kind):
+    cfg = dict(base)
+    cfg.update(temperature=1.0 if kind == 'sample' else 0.0,
+               max_tokens=plan.get('max_probe_tokens', 128))
+    if plan.get('provider_seed_supported'):
+        cfg['seed'] = int(digest([plan['seed'], job_id])[:8], 16)
+    if plan.get('top_p') is not None:
+        cfg['top_p'] = plan['top_p']
+    if kind == 'sample' and plan.get('sample_batch_size', 1) > 1:
+        cfg['n'] = plan['sample_batch_size']
+    if kind in {'sufficient', 'true', 'clinical'}:
+        cfg.update(logprobs=True, top_logprobs=plan['top_logprobs'])
+    else:
+        cfg.pop('logprobs', None); cfg.pop('top_logprobs', None)
+    return cfg
+
+
 def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     import fcntl
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
@@ -286,7 +305,7 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
             (row['kind'] == 'true' and row['target'] == 'current') or
             (scope == 'consistency' and row['kind'] == 'sample'))
     completed = {}
-    allowed_prefixes = {(r['episode_id'], r['turn_id'], r['prefix_sha256']) for r in snapshots}
+    allowed_prefixes = {(r['episode_id'], r['turn_id'], r['prefix_sha256']): r for r in snapshots}
     if not resume:
         reused_ids = set()
         for reuse in plan.get('reuse_runs', []):
@@ -300,6 +319,21 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
                     continue
                 if row['kind'] == 'sample' and row['model_config'].get('n', 1) != plan.get('sample_batch_size', 1):
                     continue
+                snapshot = allowed_prefixes[(row['episode_id'], row['turn_id'], row['prefix_sha256'])]
+                template = TEMPLATES[row['kind']]
+                prompt = template.format(question=render_context(snapshot, row['variant']), answer=row.get('candidate') or '')
+                expected_request = [{'role': 'system', 'content': 'You are a helpful assistant.'}, {'role': 'user', 'content': prompt}]
+                if row.get('request_sha256') != digest(expected_request):
+                    continue
+                identity = {k: row[k] for k in ['episode_id', 'turn_id', 'step', 'progress', 'prefix_sha256',
+                                                'variant', 'kind', 'target', 'candidate', 'sample_index']}
+                if row['kind'] == 'sample': identity['sampling_batch_size'] = plan.get('sample_batch_size', 1)
+                identity['prompt_sha256'] = digest(template)
+                original_jid = row['job_id']
+                new_jid = digest(identity)
+                if row.get('model_config') != probe_config(model.config, plan, new_jid, row['kind']):
+                    continue
+                row.update(identity, job_id=new_jid, source_job_id=original_jid)
                 if row['job_id'] in reused_ids:
                     continue
                 reused_ids.add(row['job_id'])
@@ -328,27 +362,14 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
             with io_lock:
                 append('probe_calls.jsonl', row); completed[jid] = row
             return row
-        cfg = dict(model.config)
-        cfg.update(temperature=1.0 if job['kind'] == 'sample' else 0.0,
-                   max_tokens=plan.get('max_probe_tokens', 128))
-        if plan.get('provider_seed_supported'):
-            cfg['seed'] = int(digest([plan['seed'], jid])[:8], 16)
-        if plan.get('top_p') is not None:
-            cfg['top_p'] = plan['top_p']
-        if job['kind'] == 'sample' and plan.get('sample_batch_size', 1) > 1:
-            cfg['n'] = plan['sample_batch_size']
-        if job['kind'] in {'sufficient', 'true', 'clinical'}:
-            cfg.update(logprobs=True, top_logprobs=plan['top_logprobs'])
-        else:
-            cfg.pop('logprobs', None); cfg.pop('top_logprobs', None)
+        cfg = probe_config(model.config, plan, jid, job['kind'])
         context = job.pop('_context')
         if len(context) > plan.get('max_context_chars', 120000):
             row = {**job, 'error': 'context_character_limit', 'reply': None, 'usage': None, 'model_calls': 0, 'termination': 'not_executed'}
             with io_lock:
                 append('probe_calls.jsonl', row); completed[jid] = row
             return row
-        template = {'diagnosis': DIAGNOSIS, 'sample': DIAGNOSIS, 'sufficient': SUFFICIENT,
-                    'true': PTRUE, 'clinical': CLINICAL}[job['kind']]
+        template = TEMPLATES[job['kind']]
         prompt = template.format(question=context, answer=job.get('candidate', ''))
         request_history = [{'role': 'system', 'content': 'You are a helpful assistant.'},
                            {'role': 'user', 'content': prompt}]
@@ -390,7 +411,7 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     def job(snapshot, variant, kind, candidate=None, target='current', sample=None):
         base = {k: snapshot[k] for k in ['episode_id', 'turn_id', 'step', 'progress', 'prefix_sha256']}
         value = {**base, 'variant': variant, 'kind': kind, 'target': target,
-                 'candidate': candidate, 'sample_index': sample,
+                 'candidate': candidate, 'sample_index': sample, 'prompt_sha256': digest(TEMPLATES[kind]),
                  **({'sampling_batch_size': plan.get('sample_batch_size', 1)} if kind == 'sample' else {}),
                  '_context': render_context(snapshot, variant)}
         value['job_id'] = digest({k: v for k, v in value.items() if k != '_context'})
