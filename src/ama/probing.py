@@ -15,6 +15,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+from .probing_contracts import (ORIGINAL_SCHEMAS, ORIGINAL_CONTRACTS, INTERACTIVE_SCHEMAS,
+                                INTERACTIVE_CONTRACT, INTERACTIVE_CONTRACTS)
 from .probing_transport import ProbeTransport, PacedProbeModel
 from .agent import Agent
 from .data import load_dataset, resolve_dataset_dir, validate_visible_files
@@ -250,13 +252,13 @@ def probe_config(base, plan, job_id, kind):
 
 def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     import fcntl
-    if json.loads(Path(plan_path).read_text()).get('schema') == 'ama-original-agent-probing-v1':
+    if json.loads(Path(plan_path).read_text()).get('schema') in ORIGINAL_SCHEMAS:
         from .original_agent_probing import execute_original_agent_probing
         return execute_original_agent_probing(dataset_dir, model, plan_path, runs_root=runs_root, resume=resume)
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
     validate_visible_files(dataset)
     plan = json.loads(Path(plan_path).read_text())
-    if plan.get('schema') != 'ama-interactive-probing-v1' or plan.get('sc_samples') != 20:
+    if plan.get('schema') not in INTERACTIVE_SCHEMAS or plan.get('sc_samples') != 20:
         raise ValueError('unsupported probing plan or SC sample count')
     if plan.get('sample_batch_size', 1) not in (1, 4, 10, 20):
         raise ValueError('sample_batch_size must divide 20')
@@ -288,7 +290,7 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
                             max_calls=1)
         root, manifest = recorder.run_dir, recorder.manifest
         manifest.update(probing_plan=str(Path(plan_path).resolve()), plan_sha256=digest(plan),
-                        output_contract_version='interactive-probing-v1')
+                        output_contract_version=INTERACTIVE_CONTRACT)
         write_json(root / 'manifest.json', manifest)
         (root / 'probe_calls.jsonl').touch()
         write_json(root / 'messages.json', {r['episode_id'] + '/' + r['turn_id']: r['history'] for r in snapshots})
@@ -500,12 +502,18 @@ def execute_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
 
 
 def evaluate_probing(run_dir, dataset, manifest, decisions, scorer_override=None):
-    if manifest.get('output_contract_version') == 'original-agent-probing-v1':
+    if manifest.get('output_contract_version') in ORIGINAL_CONTRACTS:
         from .original_agent_probing import evaluate_original_agent_probing
         return evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override)
     if scorer_override not in (None, 'interactive_probing'):
         raise ValueError('probing runs require interactive_probing scorer')
     plan = json.loads(Path(manifest['probing_plan']).read_text())
+    # Older offline evaluator callers may omit these fields entirely. Validate
+    # declared names without rewriting or rejecting those archived inputs.
+    if ((plan.get('schema') is not None and plan['schema'] not in INTERACTIVE_SCHEMAS) or
+            (manifest.get('output_contract_version') is not None and
+             manifest['output_contract_version'] not in INTERACTIVE_CONTRACTS)):
+        raise ValueError('unsupported interactive probing plan/contract')
     snapshots = [json.loads(line) for line in Path(plan['snapshots_file']).read_text().splitlines()]
     if digest(plan) != manifest['plan_sha256'] or hashlib.sha256(Path(plan['snapshots_file']).read_bytes()).hexdigest() != plan['snapshots_sha256']:
         raise ValueError('scoring input hash mismatch')

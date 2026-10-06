@@ -14,7 +14,8 @@ from .recorder import Recorder, write_json
 from .probing_transport import ProbeTransport, PacedProbeModel
 from .probing import binary_probability, digest, extract_snapshots, PTRUE, SUFFICIENT
 
-SCHEMA = 'ama-original-agent-probing-v1'
+from .probing_contracts import (ORIGINAL_SCHEMA as SCHEMA, ORIGINAL_SCHEMAS,
+                                ORIGINAL_CONTRACT, ORIGINAL_CONTRACTS)
 MODE_EXCEPTION = ('\n\nMeasurement mode exception, applicable only to the following additional '
     'measurement request: retain the original clinical task and evidence, but do not make '
     'a new diagnosis, request tools, or submit another clinical Decision JSON. '
@@ -29,10 +30,64 @@ POST_SUBMISSION_REQUEST = ('This is an additional measurement after your complet
     'answer the following question with exactly one uppercase letter A or B, '
     'without explanation or formatting.\n\n')
 
+REPLAY_REQUEST = ('This is an independent measurement from a saved clinical history. '
+    'Judge the supplied fixed proposed diagnosis using only the evidence visible in '
+    'this history. Do not revise the original clinical trajectory, request tools, '
+    'or emit another clinical Decision JSON. For this measurement only, answer '
+    'exactly one uppercase letter A or B, without explanation or formatting.\n\n')
+REPLAY_FIELDS = ('source_message_end', 'batch_size', 'evidence_types', 'tool_failures',
+                 'duplicate_results', 'diagnostic_impression')
+
+
+def selected_probe_kinds(plan):
+    kinds = plan.get('probe_kinds', ['sufficient', 'true'])
+    if (not isinstance(kinds, list) or not kinds or
+            not all(isinstance(k, str) and k in {'sufficient', 'true'} for k in kinds) or
+            len(set(kinds)) != len(kinds)):
+        raise ValueError('probe_kinds must be a non-empty unique list of sufficient/true')
+    return [k for k in ['sufficient', 'true'] if k in kinds]
+
+
+def _validate_replay_history(history):
+    if not history:
+        raise ValueError('replay requires a saved original history')
+    pending = set()
+    seen = set()
+    for message in history:
+        calls = message.get('tool_calls') or []
+        if calls:
+            if not isinstance(calls, list) or not all(isinstance(c, dict) for c in calls):
+                raise ValueError('replay tool calls must be a list of objects')
+            ids = [c.get('id') for c in calls]
+            if (pending or message.get('role') != 'assistant' or
+                    any(not isinstance(i, str) or not i for i in ids) or
+                    len(ids) != len(set(ids)) or seen.intersection(ids)):
+                raise ValueError('replay requires complete tool batches with unique call IDs')
+            pending.update(ids); seen.update(ids)
+        elif message.get('role') == 'tool':
+            call_id = message.get('tool_call_id')
+            if not isinstance(call_id, str) or call_id not in pending:
+                raise ValueError('replay tool result has no pending original call')
+            pending.remove(call_id)
+        elif pending:
+            raise ValueError('replay tool batch is incomplete before the next message')
+    if pending:
+        raise ValueError('replay tool batch is incomplete')
+
 
 def measurement_snapshots(histories, design='evidence_prefix'):
     if design == 'evidence_prefix':
         return extract_snapshots(histories['interactive'])
+    if design == 'tool_history_replay':
+        history = histories['interactive']
+        _validate_replay_history(history)
+        snapshots = [s for s in extract_snapshots(history)
+                     if s['kind'] in {'initial', 'after_tool_batch'}]
+        for step, snapshot in enumerate(snapshots):
+            snapshot.update(step=step, source_view='interactive',
+                            measurement_design='tool_history_replay',
+                            progress=step / (len(snapshots) - 1) if len(snapshots) > 1 else 0.0)
+        return snapshots
     if design != 'post_submission':
         raise ValueError('unsupported measurement design')
     snapshots = []
@@ -61,8 +116,9 @@ def candidate(row):
 
 
 def validate_sources(plan, model_config=None):
-    if plan['schema'] != SCHEMA or plan.get('workers') != 1:
-        raise ValueError('original-agent probes require schema v1 and one worker')
+    if plan['schema'] not in ORIGINAL_SCHEMAS or plan.get('workers') != 1:
+        raise ValueError('original-agent probes require a supported schema and one worker')
+    selected_probe_kinds(plan)
     sources = {}
     for view in ['hpi', 'interactive']:
         source = plan['original_sources'][view]
@@ -91,28 +147,42 @@ def probe_history(snapshot, kind, diagnosis):
     history = copy.deepcopy(snapshot['history'])
     if not history or history[0].get('role') != 'system' or not isinstance(history[0].get('content'), str):
         raise ValueError('original system message is required')
-    # Only the measurement fork receives this declared exception; all original
-    # non-system messages, including tool-call IDs, are copied unchanged.
+    # Legacy evidence-prefix mode keeps its original system exception. New
+    # measurements preserve the entire source prefix and append only a user turn.
     post_submission = snapshot.get('kind') == 'post_submission'
-    if not post_submission:
+    replay = snapshot.get('measurement_design') == 'tool_history_replay'
+    if not post_submission and not replay:
         history[0]['content'] += MODE_EXCEPTION
     template = SUFFICIENT if kind == 'sufficient' else PTRUE
     prompt = template.format(question='', answer=diagnosis).strip()
     if post_submission:
         prompt = POST_SUBMISSION_REQUEST + prompt
+    elif replay:
+        prompt = REPLAY_REQUEST + prompt
     return history + [{'role': 'user', 'content': prompt}]
 
 
 def job_list(snapshots, sources, base_config, plan):
     jobs, missing = [], []
+    kinds = selected_probe_kinds(plan)
+    design = plan.get('measurement_design', 'evidence_prefix')
+    if design not in {'evidence_prefix', 'post_submission', 'tool_history_replay'}:
+        raise ValueError('unsupported measurement design')
     cfg = dict(base_config, logprobs=True, top_logprobs=plan['top_logprobs'],
                max_tokens=plan.get('max_probe_tokens', 32))
     for s in snapshots:
-        post_submission = plan.get('measurement_design', 'evidence_prefix') == 'post_submission'
+        post_submission = design == 'post_submission'
+        replay = design == 'tool_history_replay'
+        if replay != (s.get('measurement_design') == 'tool_history_replay'):
+            raise ValueError('snapshot and measurement design differ')
         if post_submission != (s.get('kind') == 'post_submission'):
             raise ValueError('snapshot and measurement design differ')
-        targets = ([(k, 'original_hpi' if s['source_view'] == 'hpi' else 'original_final')
-                    for k in ['sufficient', 'true']] if post_submission else TARGETS)
+        if post_submission:
+            targets = [(k, 'original_hpi' if s['source_view'] == 'hpi' else 'original_final') for k in kinds]
+        elif replay:
+            targets = [(k, 'original_final_hindsight') for k in kinds]
+        else:
+            targets = [(k, target) for k, target in TARGETS if k in kinds]
         for kind, target in targets:
             view = s['source_view'] if post_submission else ('hpi' if target == 'original_hpi' else 'interactive')
             diagnosis = candidate(sources[view]['rows'][s['episode_id']])
@@ -125,7 +195,11 @@ def job_list(snapshots, sources, base_config, plan):
             identity.update(kind=kind, target=target, candidate=diagnosis,
                             request_sha256=digest(history), model_config=cfg,
                             source_decision_sha256=digest(sources[view]['rows'][s['episode_id']]),
-                            measurement_mode_sha256=digest(POST_SUBMISSION_REQUEST if post_submission else MODE_EXCEPTION))
+                            measurement_mode_sha256=digest(POST_SUBMISSION_REQUEST if post_submission else
+                                                          REPLAY_REQUEST if replay else MODE_EXCEPTION))
+            if replay:
+                identity.update({k: s[k] for k in REPLAY_FIELDS})
+                identity.update(source_view='interactive', measurement_design='tool_history_replay')
             jobs.append({**identity, 'job_id': digest(identity), '_history': history})
     return jobs, missing
 
@@ -151,6 +225,23 @@ def original_label_probability(metadata, readout='single_label'):
                   trailing_output_present=bool(text[len(first):].strip()))
     return result
 
+def validate_measurement_snapshots(snapshots, sources, plan):
+    design = plan.get('measurement_design', 'evidence_prefix')
+    for ep in {s['episode_id'] for s in snapshots}:
+        actual = sorted([s for s in snapshots if s['episode_id'] == ep], key=lambda s: s['step'])
+        frozen = measurement_snapshots({v: sources[v]['histories'][ep] for v in sources},
+                                       design)
+        if len(actual) != len(frozen):
+            raise ValueError('prefix count differs from original AMA history')
+        for a, b in zip(actual, frozen):
+            if a['history'] != b['history'] or a['prefix_sha256'] != digest(b['history']):
+                raise ValueError('prefix is not the original native AMA history')
+            if design == 'post_submission' and any(a.get(k) != b[k] for k in ['step', 'kind', 'source_view']):
+                raise ValueError('post-submission source view changed')
+            if design == 'tool_history_replay' and any(a.get(k) != b[k] for k in
+                    ['step', 'kind', 'source_view', 'measurement_design', 'progress', *REPLAY_FIELDS]):
+                raise ValueError('replay boundary or source metadata changed')
+
 
 def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, resume=None):
     dataset = load_dataset(resolve_dataset_dir(dataset_dir))
@@ -163,17 +254,7 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
     expected = {(ep.id, t.id) for ep in dataset.episodes for t in ep.turns}
     if {(s['episode_id'], s['turn_id']) for s in snapshots} != expected or len(snapshots) != len(expected):
         raise ValueError('snapshot IDs do not match expected turns')
-    for ep in {s['episode_id'] for s in snapshots}:
-        actual = sorted([s for s in snapshots if s['episode_id'] == ep], key=lambda s: s['step'])
-        frozen = measurement_snapshots({v: sources[v]['histories'][ep] for v in sources},
-                                       plan.get('measurement_design', 'evidence_prefix'))
-        if len(actual) != len(frozen):
-            raise ValueError('prefix count differs from original AMA history')
-        for a, b in zip(actual, frozen):
-            if a['history'] != b['history'] or a['prefix_sha256'] != digest(b['history']):
-                raise ValueError('prefix is not the original native AMA history')
-            if plan.get('measurement_design') == 'post_submission' and any(a.get(k) != b[k] for k in ['step', 'kind', 'source_view']):
-                raise ValueError('post-submission source view changed')
+    validate_measurement_snapshots(snapshots, sources, plan)
     jobs, missing = job_list(snapshots, sources, model.config, plan)
     if resume:
         root = Path(resume)
@@ -184,7 +265,7 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
         recorder = Recorder(runs_root, dataset=dataset, episodes=dataset.episodes, mode='run', model=model, max_calls=1)
         root, manifest = recorder.run_dir, recorder.manifest
         manifest.update(probing_plan=str(Path(plan_path).resolve()), plan_sha256=digest(plan),
-                        output_contract_version='original-agent-probing-v1', source_decisions_reused=True)
+                        output_contract_version=ORIGINAL_CONTRACT, source_decisions_reused=True)
         write_json(root/'manifest.json', manifest)
         (root/'probe_calls.jsonl').touch()
         # No invented prefix Decisions. Original submissions have their own exact archive.
@@ -209,7 +290,7 @@ def execute_original_agent_probing(dataset_dir, model, plan_path, *, runs_root, 
     if not resume:
         for previous in plan.get('reuse_runs', []):
             prior_manifest = json.loads((Path(previous)/'manifest.json').read_text())
-            if prior_manifest.get('output_contract_version') != 'original-agent-probing-v1':
+            if prior_manifest.get('output_contract_version') not in ORIGINAL_CONTRACTS:
                 raise ValueError('cannot reuse older rediagnosis experiment')
             for row in read_rows(Path(previous)/'probe_calls.jsonl'):
                 identity = identities.get(row['job_id'])
@@ -279,6 +360,7 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
         for path, expected in source.get('eval_hashes', {}).items():
             if file_hash(path) != expected: raise ValueError('original evaluator input changed: '+path)
     snapshots = read_rows(plan['snapshots_file'])
+    validate_measurement_snapshots(snapshots, sources, plan)
     expected_jobs, missing = job_list(snapshots, sources, manifest['model_config'], plan)
     rows = read_rows(run_dir/'probe_calls.jsonl')
     indexed = {r['job_id']: r for r in rows}
@@ -310,7 +392,7 @@ def evaluate_original_agent_probing(run_dir, dataset, manifest, scorer_override=
     features = []
     for s in snapshots:
         entry = {k: s[k] for k in ['episode_id', 'turn_id', 'step', 'prefix_sha256']}
-        entry.update({k: s[k] for k in ['progress', 'kind', 'source_view'] if k in s})
+        entry.update({k: s[k] for k in ['progress', 'kind', 'source_view', 'measurement_design', *REPLAY_FIELDS] if k in s})
         entry.update(probes={})
         for j in [j for j in expected_jobs if j['episode_id'] == s['episode_id'] and j['turn_id'] == s['turn_id']]:
             r = indexed.get(j['job_id'], {})

@@ -57,7 +57,8 @@ def test_retry_after_date_and_overlong_wait(monkeypatch):
     assert waits == [3] and stream.stop_reason and len(records) == 2
 
 
-def test_native_core_then_consistency_reuses_jobs_and_preserves_sc20(tmp_path, monkeypatch):
+@pytest.mark.parametrize('schema', ['ama-interactive-probing', 'ama-interactive-probing-v1'])
+def test_native_core_then_consistency_reuses_jobs_and_preserves_sc20(tmp_path, monkeypatch, schema):
     import hashlib
     import ama.probing as probing
     history = [{'role':'user','content':'FICTIONAL_INITIAL'},
@@ -87,12 +88,17 @@ def test_native_core_then_consistency_reuses_jobs_and_preserves_sc20(tmp_path, m
             return {'role':'assistant','content':phrase}
     monkeypatch.setattr(probing, 'Model', Sidecar)
     model=Sidecar('test-model', config, 60)
-    plan={'schema':'ama-interactive-probing-v1','sc_samples':20,'sample_batch_size':10,
+    plan={'schema':schema,'sc_samples':20,'sample_batch_size':10,
           'workers':1,'job_scope':'core','top_logprobs':20,'seed':1,
           'snapshots_file':str(file),'snapshots_sha256':hashlib.sha256(file.read_bytes()).hexdigest()}
     planfile=tmp_path/'core.json'; planfile.write_text(json.dumps(plan))
     core=execute_probing(data, model, planfile, runs_root=tmp_path/'runs')
     assert len(requests)==8 and 'FUTURE_FINAL_MUST_NOT_LEAK' not in json.dumps(requests)
+    manifest = json.loads((core/'manifest.json').read_text())
+    assert manifest['output_contract_version'] == 'interactive-probing'
+    if schema.endswith('-v1'):
+        manifest['output_contract_version'] = 'interactive-probing-v1'
+        (core/'manifest.json').write_text(json.dumps(manifest))
     assert _eval_run(core)==0
     metrics=json.loads((core/'metrics.json').read_text())['scored']
     assert len(metrics['per_prefix'])==2 and metrics['aggregate']['valid_real_current_sufficient']==2
