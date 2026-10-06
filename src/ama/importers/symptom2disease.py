@@ -10,8 +10,31 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from ..data import validate_dataset
+from ..data import Dataset, validate_dataset
 from ..dataset_card import write_dataset_cards
+
+SCORER = "symptom2disease_v1"
+LABELS = (
+    "Acne", "Arthritis", "Bronchial Asthma", "Cervical spondylosis", "Chicken pox",
+    "Common Cold", "Dengue", "Dimorphic Hemorrhoids", "Fungal infection",
+    "Hypertension", "Impetigo", "Jaundice", "Malaria", "Migraine", "Pneumonia",
+    "Psoriasis", "Typhoid", "Varicose Veins", "allergy", "diabetes", "drug reaction",
+    "gastroesophageal reflux disease", "peptic ulcer disease", "urinary tract infection",
+)
+
+
+def _label_key(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+LABEL_BY_KEY = {_label_key(label): label for label in LABELS}
+INSTRUCTIONS = (
+    "Classify the patient's symptom description into exactly one of these 24 dataset labels:\n"
+    + ", ".join(LABELS) + ".\n"
+    "Return the chosen label as answer.disease, for example "
+    "{\"turn_id\": \"t1\", \"answer\": {\"disease\": \"<one label above>\"}, "
+    "\"citations\": [\"symptoms\"]}. Do not return multiple labels.\n"
+)
 
 
 def configure_cli(parser: ArgumentParser) -> None:
@@ -95,6 +118,9 @@ def import_symptom2disease(source: Path, out: Path, *, limit: int | None = None,
                     raise ValueError(f"{source_csv}:{row_number}: selected row has empty label")
                 excluded["empty_label"] += 1
                 continue
+            if _label_key(label) not in LABEL_BY_KEY:
+                raise ValueError(f"{source_csv}:{row_number}: unknown disease label {label!r}")
+            label = LABEL_BY_KEY[_label_key(label)]
             n_eligible += 1
             if selected_rows is not None and row_number not in selected_rows:
                 continue
@@ -147,12 +173,8 @@ def import_symptom2disease(source: Path, out: Path, *, limit: int | None = None,
         _jsonl(stage / "episodes.jsonl", episodes)
         _jsonl(stage / "targets.jsonl", targets)
         _jsonl(stage / "provenance.jsonl", provenance)
-        (stage / "instructions.txt").write_text(
-            "Predict the dataset disease label from the patient's symptom description.\n"
-            "For a structured answer, use {\"disease\": \"label\"}.\n",
-            encoding="utf-8",
-        )
-        (stage / "eval.json").write_text('{"scorer":"unscored"}\n', encoding="utf-8")
+        (stage / "instructions.txt").write_text(INSTRUCTIONS, encoding="utf-8")
+        (stage / "eval.json").write_text(json.dumps({"scorer": SCORER}) + "\n", encoding="utf-8")
         (stage / "import_report.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         write_dataset_cards(
@@ -164,9 +186,9 @@ def import_symptom2disease(source: Path, out: Path, *, limit: int | None = None,
             construction_en="Each non-empty label/text row becomes one Episode and one Turn. Text is visible Evidence; the label is evaluator-only.",
             construction_zh="每条标签和症状均非空的记录生成一个 Episode 和一个 Turn；症状是可见 Evidence，标签仅供评测。",
             episodes=len(episodes), turns=len(episodes), evidence=len(episodes),
-            scorer="unscored", targets=len(targets),
-            limitations_en="There is no official split in this import and no task accuracy scorer yet. Dataset-label prediction is not clinical diagnosis accuracy.",
-            limitations_zh="本次导入未定义官方数据划分，也尚无任务准确率评分器；数据集标签预测不代表临床诊断准确率。",
+            scorer=SCORER, targets=len(targets),
+            limitations_en="This importer defines no official split. The AMA 24-choice top-1 score uses exact source labels after case and whitespace normalization, counting missing and invalid answers as wrong. It is not an official dataset benchmark or clinical diagnosis accuracy.",
+            limitations_zh="本次导入未定义官方数据划分。AMA 的 24 选 1 top-1 评分忽略大小写和多余空格后精确匹配源标签，缺失及无效回答计为错误；它并非官方数据集基准或临床诊断准确率。",
             artifacts_en="No external artifacts; symptom text is embedded in Evidence. Source row numbers are in import_report.json.",
             artifacts_zh="没有外部 artifact；症状文本直接存于 Evidence，原始行号存于 import_report.json。",
         )
@@ -177,3 +199,55 @@ def import_symptom2disease(source: Path, out: Path, *, limit: int | None = None,
             raise FileExistsError(f"output already exists: {out}")
         stage.rename(out)
     return report
+
+
+def score_symptom2disease(dataset: Dataset,
+                          decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Exact top-1 match among source labels; missing or invalid choices score zero."""
+    from ..scorer import _rate, expected_rows
+
+    episode_ids = {episode.id for episode in dataset.episodes}
+    unexpected = set(decisions) - episode_ids
+    if unexpected:
+        raise ValueError(f"unexpected decision episodes: {sorted(unexpected)}")
+    per_episode: dict[str, Any] = {}
+    correct = submitted = valid = answer_objects = 0
+    for episode in dataset.episodes:
+        if len(episode.turns) != 1:
+            raise ValueError(f"{episode.id}: Symptom2Disease expects one turn")
+        if len(decisions.get(episode.id, [])) > 1:
+            raise ValueError(f"{episode.id}: duplicate recorded decisions")
+        turn = episode.turns[0]
+        target = dataset.targets.get(episode.id)
+        if target is None or turn.id not in target.turns:
+            raise ValueError(f"{episode.id}/{turn.id}: missing disease target")
+        target_answer = target.turns[turn.id].get("answer")
+        wanted = target_answer.get("disease") if isinstance(target_answer, dict) else None
+        if not isinstance(wanted, str) or _label_key(wanted) not in LABEL_BY_KEY:
+            raise ValueError(f"{episode.id}/{turn.id}: invalid disease target")
+        if decisions.get(episode.id) and decisions[episode.id][0].get("turn_id") != turn.id:
+            raise ValueError(f"{episode.id}: unexpected decision turn")
+        row = expected_rows(episode, decisions)[0]
+        decision = row["decision"]
+        answer = decision.get("answer") if isinstance(decision, dict) else None
+        is_object = isinstance(answer, dict)
+        choice = answer.get("disease") if is_object and set(answer) == {"disease"} else answer if isinstance(answer, str) else None
+        predicted = LABEL_BY_KEY.get(_label_key(choice)) if isinstance(choice, str) else None
+        is_correct = predicted == LABEL_BY_KEY[_label_key(wanted)]
+        submitted += decision is not None
+        valid += predicted is not None
+        correct += is_correct
+        answer_objects += is_object
+        per_episode[episode.id] = {
+            "turn_id": turn.id, "submitted": decision is not None,
+            "predicted_disease": predicted, "correct": is_correct,
+            "valid_choice": predicted is not None, "answer_is_object": is_object,
+            "termination": row["termination"],
+        }
+    total = len(dataset.episodes)
+    return {"scorer": SCORER, "per_episode": per_episode, "aggregate": {
+        "disease_accuracy": _rate(correct, total),
+        "valid_choice": _rate(valid, total),
+        "completion": _rate(submitted, total),
+        "answer_object_format": _rate(answer_objects, total),
+    }}

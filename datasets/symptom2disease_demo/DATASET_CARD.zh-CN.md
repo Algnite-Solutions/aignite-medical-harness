@@ -22,7 +22,7 @@
 
 ## 评分与 targets
 
-Scorer：`unscored`。Target 记录数：6。
+Scorer：`symptom2disease_v1`。Target 记录数：6。任务列出源 CSV 中的 24 个标签，要求在 `answer.disease` 中选一个。评分器接受 `{"disease": "<标签>"}` 或单个标签字符串；比较时忽略大小写和多余空格，但必须匹配源标签。不在选项中的文本、别名、多个标签、缺失回答和失败的 Turn 均计为错误。Top-1 准确率以全部六个预期 Episode 为分母；完成率、有效选项率和答案对象格式另行报告。
 
 ## Artifacts
 
@@ -30,7 +30,7 @@ Scorer：`unscored`。Target 记录数：6。
 
 ## 限制与报告口径
 
-这六条样本不是官方测试集或 benchmark；目前也没有任务准确率评分器。数据集标签预测不代表临床诊断准确率。
+这六条样本不是官方测试集或 benchmark。原数据集没有规定此处的 AMA 24 选 1 提示词和评分协议。Demo 准确率只用于验证评测流程，不是公开发表的 Symptom2Disease 基准成绩，也不代表临床诊断准确率。
 
 ## 如何测试
 
@@ -47,11 +47,11 @@ python3 -m pytest -q tests/test_symptom2disease.py
 ama import symptom2disease --source /path/to/Symptom2Disease.csv --out /tmp/symptom2disease-check --row 2 --row 52 --row 102 --row 152 --row 202 --row 252
 ```
 
-如需用真实模型试跑，按 `.env.example` 配置模型别名及密钥。先运行一例，再把 `ama run` 打印的运行目录用于评测：
+如需用真实模型试跑，按 `.env.example` 配置模型别名及密钥。运行全部六例，再把 `ama run` 打印的运行目录用于评测：
 
 ```bash
-ama run datasets/symptom2disease_demo --model qwen36 --episode s2d-000001
+ama run datasets/symptom2disease_demo --model qwen36
 ama eval runs/<运行目录>
 ```
 
-`all` split 包含全部六例。当前 scorer 为 `unscored`，`eval` 只报告完成情况。
+`all` split 包含全部六例。`eval` 报告疾病标签的 top-1 准确率和独立的输出质量指标。

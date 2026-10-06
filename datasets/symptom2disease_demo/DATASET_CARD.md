@@ -22,7 +22,7 @@ Six CSV records (rows 2, 52, 102, 152, 202 and 252) were selected from different
 
 ## Scoring and targets
 
-Scorer: `unscored`. Target records: 6.
+Scorer: `symptom2disease_v1`. Target records: 6. The task presents the 24 labels from the source CSV and asks for exactly one `answer.disease` choice. The scorer accepts either `{"disease": "<label>"}` or a single label string, ignores case and extra whitespace, and requires an exact source-label match. Other text, aliases, multiple labels, missing answers and failed turns score zero. Top-1 accuracy uses all six expected Episodes as its denominator; completion, valid-choice rate and answer-object format are reported separately.
 
 ## Artifacts
 
@@ -30,7 +30,7 @@ No external artifacts; symptom text is embedded in Evidence. Source row numbers 
 
 ## Limitations and reporting
 
-This six-example demo is not an official test split or benchmark. There is no task accuracy scorer yet. Dataset-label prediction is not clinical diagnosis accuracy.
+This six-example demo is not an official test split or benchmark. The source dataset does not prescribe this AMA 24-choice prompt or scoring protocol. Demo accuracy is only a pipeline smoke check, not a published Symptom2Disease benchmark result or clinical diagnosis accuracy.
 
 ## How to test
 
@@ -47,11 +47,11 @@ To test the importer on the full source CSV, choose a new output directory and r
 ama import symptom2disease --source /path/to/Symptom2Disease.csv --out /tmp/symptom2disease-check --row 2 --row 52 --row 102 --row 152 --row 202 --row 252
 ```
 
-For an optional model-backed smoke run, configure a model alias and its key as described in `.env.example`, then run one demo Episode. Use the run directory printed by `ama run` for the next command:
+For an optional model-backed smoke run, configure a model alias and its key as described in `.env.example`, then run all six demo Episodes. Use the run directory printed by `ama run` for the next command:
 
 ```bash
-ama run datasets/symptom2disease_demo --model qwen36 --episode s2d-000001
+ama run datasets/symptom2disease_demo --model qwen36
 ama eval runs/<run-directory>
 ```
 
-The `all` split includes all six examples. `eval` reports completion only while the scorer is `unscored`.
+The `all` split includes all six examples. `eval` reports top-1 disease-label accuracy and separate output diagnostics.

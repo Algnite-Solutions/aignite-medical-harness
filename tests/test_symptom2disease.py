@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from ama.cli import main
+from ama.cli import main, _eval_run
 from ama.data import load_dataset, validate_dataset
-from ama.importers.symptom2disease import import_symptom2disease
+from ama.importers.symptom2disease import LABELS, SCORER, import_symptom2disease, score_symptom2disease
+from ama.runner import execute
+from ama.scorer import REGISTRY
+from fakes import FakeModel, decision
 
 
 def source_csv(path: Path) -> Path:
@@ -31,7 +34,7 @@ def test_import_generates_valid_single_turn_dataset_without_label_leakage(tmp_pa
     assert validate_dataset(out) == []
     dataset = load_dataset(out, with_targets=True)
     assert dataset.info.splits == {"all": ["s2d-000001", "s2d-000002", "s2d-000005"]}
-    assert dataset.eval_config.scorer == "unscored"
+    assert dataset.eval_config.scorer == SCORER
     assert report["n_source_rows"] == 5 and report["n_imported"] == 3
     assert report["n_eligible"] == 3 and report["n_not_selected_due_limit"] == 0
     assert report["n_not_selected_due_row_filter"] == 0
@@ -40,7 +43,7 @@ def test_import_generates_valid_single_turn_dataset_without_label_leakage(tmp_pa
     assert all(len(ep.turns) == 1 and len(ep.turns[0].evidence) == 1 for ep in dataset.episodes)
     assert dataset.episodes[0].turns[0].evidence[0].text == "My skin is itchy."
     assert "Psoriasis" not in (out / "episodes.jsonl").read_text()
-    assert "Migraine" not in (out / "instructions.txt").read_text()
+    assert all(label in (out / "instructions.txt").read_text() for label in LABELS)
     assert dataset.targets["s2d-000001"].turns["t1"]["answer"] == {"disease": "Psoriasis"}
     assert json.loads((out / "provenance.jsonl").read_text().splitlines()[0])["source_row"] == 2
 
@@ -116,3 +119,57 @@ def test_committed_demo_is_valid_and_has_no_visible_labels():
     report = json.loads((root / "import_report.json").read_text(encoding="utf-8"))
     assert report["selection"]["rows"] == [2, 52, 102, 152, 202, 252]
     assert not Path(report["source_file"]).is_absolute()
+    assert full.eval_config.scorer == SCORER
+    assert len(LABELS) == 24 and REGISTRY[SCORER] is score_symptom2disease
+
+
+def test_six_demo_episodes_run_and_eval_offline(tmp_path):
+    root = Path(__file__).resolve().parents[1] / "datasets" / "symptom2disease_demo"
+    dataset = load_dataset(root, with_targets=True)
+    labels = [dataset.targets[episode.id].turns["t1"]["answer"]["disease"]
+              for episode in dataset.episodes]
+    model = FakeModel(*(decision(answer={"disease": label}, citations=["symptoms"])
+                        for label in labels))
+    run = execute(root, model, runs_root=tmp_path / "runs")
+    assert len(model.requests) == 6
+    assert _eval_run(run) == 0
+    result = json.loads((run / "metrics.json").read_text())["scored"]
+    assert result["scorer"] == SCORER
+    assert result["aggregate"]["disease_accuracy"] == {"num": 6, "den": 6, "value": 1.0}
+    assert result["aggregate"]["valid_choice"]["num"] == 6
+    assert result["aggregate"]["completion"]["num"] == 6
+
+
+def test_scorer_counts_wrong_invalid_and_missing_in_denominator():
+    root = Path(__file__).resolve().parents[1] / "datasets" / "symptom2disease_demo"
+    dataset = load_dataset(root, with_targets=True)
+    episodes = [episode.id for episode in dataset.episodes]
+    def row(episode_id, answer):
+        return {"turn_id": "t1", "decision": {"answer": answer},
+                "termination": "completed", "model_calls": 1,
+                "usage": None, "duration_ms": 0}
+    decisions = {
+        episodes[0]: [row(episodes[0], {"disease": "  psoriasis "})],
+        episodes[1]: [row(episodes[1], "Acne")],
+        episodes[2]: [row(episodes[2], {"disease": "unknown"})],
+        episodes[3]: [row(episodes[3], {"disease": "Chicken pox", "other": "Dengue"})],
+        episodes[4]: [row(episodes[4], "Impetigo")],
+    }
+    result = score_symptom2disease(dataset, decisions)
+    aggregate = result["aggregate"]
+    assert aggregate["disease_accuracy"] == {"num": 2, "den": 6, "value": 2 / 6}
+    assert aggregate["valid_choice"] == {"num": 3, "den": 6, "value": 0.5}
+    assert aggregate["completion"] == {"num": 5, "den": 6, "value": 5 / 6}
+    assert result["per_episode"][episodes[-1]]["termination"] == "not_executed"
+    assert not result["per_episode"][episodes[-1]]["submitted"]
+    with pytest.raises(ValueError, match="duplicate recorded decisions"):
+        score_symptom2disease(dataset, {episodes[0]: [decisions[episodes[0]][0]] * 2})
+    with pytest.raises(ValueError, match="unexpected decision episodes"):
+        score_symptom2disease(dataset, {"unknown": [row("unknown", "Acne")]})
+    bad_turn = row(episodes[0], "Psoriasis")
+    bad_turn["turn_id"] = "t2"
+    with pytest.raises(ValueError, match="unexpected decision turn"):
+        score_symptom2disease(dataset, {episodes[0]: [bad_turn]})
+    dataset.targets.pop(episodes[0])
+    with pytest.raises(ValueError, match="missing disease target"):
+        score_symptom2disease(dataset, {})
