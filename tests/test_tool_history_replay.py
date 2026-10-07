@@ -77,11 +77,20 @@ def cli_run(tmp_path, data, plan, config, *, resume=None, success=True):
     models.write_text(json.dumps({'models': {'synthetic': config}}))
     root = tmp_path/'runs'
     before = set(root.glob('*/manifest.json'))
-    argv = ['run', str(data), '--model', 'synthetic', '--config', str(models),
-            '--probing-plan', str(plan), '--runs-root', str(root), '--max-calls', '1']
     if resume:
-        argv += ['--resume', str(resume)]
-    assert main(argv) == (0 if success else 1)
+        assert main(['probe', '--resume', str(resume)]) == (0 if success else 1)
+    else:
+        # Construct an archived-format run through its retained backend. The old
+        # CLI flag is intentionally gone; all resumption uses the new entrypoint.
+        from ama.probing import execute_probing
+        from ama.model import Model, ModelError
+        try:
+            execute_probing(data, Model('synthetic', config), plan, runs_root=root)
+        except (ValueError, ModelError):
+            if success:
+                raise
+        else:
+            assert success
     if not success:
         return None
     if resume:
@@ -221,7 +230,10 @@ def test_old_contract_read_selection_reuse_and_resume_identity(tmp_path, monkeyp
     assert cli_run(tmp_path, data, only, config, resume=reused) == reused
     assert len(requests) == 6
     p['probe_kinds'] = ['true']; changed = tmp_path/'changed.json'; changed.write_text(json.dumps(p))
-    cli_run(tmp_path, data, changed, config, resume=reused, success=False)
+    frozen_only = only.read_bytes()
+    only.write_bytes(changed.read_bytes())
+    cli_run(tmp_path, data, only, config, resume=reused, success=False)
+    only.write_bytes(frozen_only)
     assert len(requests) == 6
     p.update(probe_kinds=['sufficient', 'true'], reuse_runs=[str(reused)])
     expanded = tmp_path/'expanded.json'; expanded.write_text(json.dumps(p))

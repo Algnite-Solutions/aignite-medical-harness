@@ -92,3 +92,7 @@ API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后
 
 模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`，按样本和轮次 ID 对照。
 词重合与 CUI 重合不是临床正确率。
+
+## 独立置信度探测
+
+使用 `ama probe SOURCE_RUN --mode cumulative --model MODEL` 按每条工具结果累计探测，或用 `--mode endpoint` 在原始作答后探测。加 `--prepare-only` 可离线检查冻结输入，不调用 API。累计模式排除影像目录和模型解释。`ama eval PROBE_RUN` 离线评分。详见 [probe 使用说明](docs/ama-probe.md)。旧的 `ama run --probing-plan` 入口已移除。
