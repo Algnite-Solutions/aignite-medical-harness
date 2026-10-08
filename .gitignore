@@ -12,4 +12,3 @@ dist/
 .DS_Store
 datasets/mimic_cdm/
 _agent/
-AGENTS.md
