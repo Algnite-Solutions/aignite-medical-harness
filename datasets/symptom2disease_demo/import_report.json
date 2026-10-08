@@ -29,11 +29,29 @@
     ]
   },
   "selected_source_rows": [
-    {"id": "s2d-000001", "source_row": 2},
-    {"id": "s2d-000051", "source_row": 52},
-    {"id": "s2d-000101", "source_row": 102},
-    {"id": "s2d-000151", "source_row": 152},
-    {"id": "s2d-000201", "source_row": 202},
-    {"id": "s2d-000251", "source_row": 252}
+    {
+      "id": "s2d-000001",
+      "source_row": 2
+    },
+    {
+      "id": "s2d-000051",
+      "source_row": 52
+    },
+    {
+      "id": "s2d-000101",
+      "source_row": 102
+    },
+    {
+      "id": "s2d-000151",
+      "source_row": 152
+    },
+    {
+      "id": "s2d-000201",
+      "source_row": 202
+    },
+    {
+      "id": "s2d-000251",
+      "source_row": 252
+    }
   ]
 }
