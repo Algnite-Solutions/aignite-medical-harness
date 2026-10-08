@@ -55,3 +55,36 @@ ama eval runs/<run-directory>
 ```
 
 The `all` split includes all six examples. `eval` reports top-1 disease-label accuracy and separate output diagnostics.
+
+## Fixed 100-case, multi-model evaluation
+
+This is an AMA research protocol for the original 24-label `label,text` CSV, not an official Symptom2Disease test split or a clinical diagnosis benchmark. Each Episode shows one symptom description and asks for exactly one of the 24 source labels. `symptom2disease_v1` scores an exact top-1 label match after case and whitespace normalization. Missing, malformed, and out-of-list answers count as wrong; answer format and completion are reported separately.
+
+### One command to prepare, run, score, and compare
+
+From the repository root, with the source CSV available locally and each model key in its configured environment variable:
+
+```bash
+.venv/bin/python -m scripts.symptom2disease_benchmark \
+  --source /path/to/Symptom2Disease.csv \
+  --out runs/symptom2disease-fixed100-seed42 \
+  --model deepseek-v4-flash \
+  --model antangelmed2 \
+  --model qwen36
+```
+
+The aliases come from `ama.json`; `--config /path/to/models.json` can select another AMA-compatible model configuration without changing the source code. The command does not store API key values. Use `--prepare-only` to build and inspect the cohort without model calls. The script must be run in an environment where the chosen `api_key_env` variables are available.
+
+### Fixed cohort and run contract
+
+The script excludes repeated symptom texts after whitespace normalization and case folding, keeping the first CSV row. A repeated text with conflicting labels is rejected. With seed 42, it chooses four unique rows from each of 24 labels, then one extra row from four seeded labels. The resulting 100 CSV row numbers and Episode IDs are sorted and recorded in `benchmark.json` with the source SHA-256, label counts, scorer version, and dataset file hashes. Rerunning with a different source or changed dataset fails instead of silently replacing the cohort. The source CSV remains local and is not committed.
+
+Each selected Episode is sent independently through AMA's canonical `execute()` path. By default, runs use one model call per Episode, temperature from the model alias, a 300-second request timeout, a one-second request delay, and at most three transport attempts per case. The same actual system prompt and Episode order are required across compared models. The comparison also requires matching timeout, call limit, temperature, and output-token limit; provider-specific options remain visible in each model's saved configuration.
+
+The batch retries only connection failures, HTTP 408/429/5xx, and provider responses with no usable assistant message, using bounded backoff. If these attempts are exhausted, the command stops, retains completed case records, and can resume with the same command. Once an assistant message is recorded, that case's answer is frozen. On resume, the batch checks saved AMA shards before making another request, including a shard completed just before an interrupted `batch.json` write. A reply AMA cannot parse as a Decision is usually recorded as `invalid_decision`; a malformed assistant message can be recorded as `api_error`. Both count as wrong. Permanent API errors stop the batch and require a corrected configuration and new run directory. No comparison file is produced while transport or provider failures remain unresolved.
+
+### Results and interpretation
+
+`runs/<alias>/batch.json` tracks attempts and settings; `shards/` preserves individual AMA runs; `merged/` contains the standard AMA run and `metrics.json`. `comparison.json` is written only after every requested model has 100 terminal case records. It validates the cohort, actual prompt, model settings, decision coverage, scorer, and target file hashes, then reports accuracy, completion, formatting, terminations, token usage, and paired case outcomes for each model pair.
+
+The fixed 100 cases are a small sampled evaluation. Reusing them to tune prompts or settings would make a later score on the same cases exploratory. Neither these scores nor pairwise differences establish clinical performance or a definitive model ranking.
