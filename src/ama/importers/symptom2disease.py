@@ -31,9 +31,8 @@ LABEL_BY_KEY = {_label_key(label): label for label in LABELS}
 INSTRUCTIONS = (
     "Classify the patient's symptom description into exactly one of these 24 dataset labels:\n"
     + ", ".join(LABELS) + ".\n"
-    "Return the chosen label as answer.disease, for example "
-    "{\"turn_id\": \"t1\", \"answer\": {\"disease\": \"<one label above>\"}, "
-    "\"citations\": [\"symptoms\"]}. Do not return multiple labels.\n"
+    "The answer must be an object with exactly one disease label in the disease field, "
+    "for example {\"disease\": \"Acne\"}.\n"
 )
 
 

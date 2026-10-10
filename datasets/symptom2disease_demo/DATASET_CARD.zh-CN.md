@@ -65,15 +65,18 @@ ama eval runs/<运行目录>
 在仓库根目录运行，源 CSV 保存在本地，所选模型的密钥已设置在各自配置的环境变量中：
 
 ```bash
-.venv/bin/python -m scripts.symptom2disease_benchmark \
-  --source /path/to/Symptom2Disease.csv \
-  --out runs/symptom2disease-fixed100-seed42 \
-  --model deepseek-v4-flash \
-  --model antangelmed2 \
-  --model qwen36
+export AMA_DATA_PATH=/path/to/data
+bash scripts/run_symptom2disease.sh --help
+bash scripts/run_symptom2disease.sh all deepseek-v4-flash antangelmed2 qwen36
 ```
 
-模型别名来自 `ama.json`。也可以用 `--config /path/to/models.json` 选择其他 AMA 兼容配置，无须修改源码。命令不会保存 API 密钥值。`--prepare-only` 只生成并检查样本，不调用模型。运行环境需要能读取配置中 `api_key_env` 对应的环境变量。
+模型别名来自 `ama.json`，运行前设置配置中 `api_key_env` 对应的环境变量。`CONFIG` 可指定其他 AMA 配置；`PYTHON_BIN` 默认 `.venv/bin/python`。命令不会保存密钥值。
+
+`import` 将全量 CSV 导入 `$AMA_DATA_PATH/processed/Symptom2Disease`，已有目标会拒绝覆盖。`sample` 准备固定 100 例；`run MODEL ...` 运行并评分，`eval MODEL ...` 重新评分，`compare MODEL ...` 比较已完成模型。`all MODEL ...` 依次完成抽样、运行、评分和比较。`sample`、`eval`、`compare` 不调用模型。
+
+固定样本位于 `$AMA_DATA_PATH/processed/Symptom2Disease-fixed100-seed42/dataset/`，包含可直接用于 `ama run` 和 `ama eval` 的完整数据集；相邻的 `benchmark.json` 记录抽样协议。运行记录默认位于本地 `runs/symptom2disease-fixed100-seed42/`。可覆盖 `SOURCE_CSV`、`PROCESSED_DIR`、`BENCHMARK_DIR` 和 `RUNS_DIR`；只设置 `BENCHMARK_DIR` 即可运行已有样本，无须 raw CSV。新实验请使用新的样本和运行目录。
+
+Python 入口也支持 `--benchmark /path/to/processed/cohort --out /path/to/runs --model MODEL`，以及 `--prepare-only`、`--run-only`、`--compare-only`。不传 `--benchmark` 时保留原先数据与运行记录合并到 `--out` 的用法。
 
 ### 固定样本与运行约束
 
@@ -85,6 +88,6 @@ ama eval runs/<运行目录>
 
 ### 结果与解释
 
-`runs/<别名>/batch.json` 保存尝试记录和运行设置，`shards/` 保存逐例 AMA 记录，`merged/` 保存合并后的标准运行和 `metrics.json`。只有全部模型都取得 100 条终态记录后，才写入 `comparison.json`。比较过程校验样本、实际提示词、模型参数、Decision 覆盖、评分器和 target 文件哈希，再报告准确率、完成率、输出格式、终止原因、token 用量及各模型之间的逐例配对结果。
+`$RUNS_DIR/<别名>/batch.json` 保存尝试记录和运行设置，`shards/` 保存逐例 AMA 记录，`merged/` 保存合并后的标准运行和 `metrics.json`。只有全部模型都取得 100 条终态记录后，才写入 `comparison.json`。比较过程校验样本、实际提示词、模型参数、Decision 覆盖、评分器和 target 文件哈希，再报告准确率、完成率、输出格式、终止原因、token 用量及各模型之间的逐例配对结果。
 
 这 100 条只是固定抽样。若根据这批样本调整提示词或参数，再在同一批样本上报告分数，只能算探索性结果。分数及其差异均不代表临床表现或确定的模型排序。

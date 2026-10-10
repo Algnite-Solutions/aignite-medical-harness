@@ -212,7 +212,7 @@ def _recover_shards(out: Path, batch: dict[str, Any]) -> None:
         manifest = _read(manifest_path)
         ids = manifest.get("episode_ids")
         if not isinstance(ids, list) or len(ids) != 1 or ids[0] not in batch["episode_ids"] or \
-                manifest.get("dataset_dir") != str(out.parent.parent / "dataset") or \
+                manifest.get("dataset_dir") != batch["dataset_dir"] or \
                 manifest.get("model") != batch["model"] or \
                 manifest.get("model_config") != batch["model_config"] or \
                 manifest.get("timeout") != batch["timeout"] or \
@@ -254,7 +254,8 @@ def _recover_shards(out: Path, batch: dict[str, Any]) -> None:
 
 
 def run_model(root: Path, model_name: str, *, config: Path = Path("ama.json"),
-              timeout: float = 300, delay: float = 1, max_attempts: int = 3) -> Path:
+              timeout: float = 300, delay: float = 1, max_attempts: int = 3,
+              runs_root: Path | None = None) -> Path:
     """Resume transport failures; freeze completed and invalid model responses."""
     root, config = Path(root).resolve(), Path(config).resolve()
     benchmark = verify_benchmark(root)
@@ -264,8 +265,9 @@ def run_model(root: Path, model_name: str, *, config: Path = Path("ama.json"),
         raise ValueError("timeout, delay or max_attempts out of range")
     _load_dotenv()
     model = RetryingModel.from_config(model_name, config, timeout=timeout)
-    out = root / "runs" / model_name
+    out = (Path(runs_root).resolve() if runs_root is not None else root / "runs") / model_name
     settings = {
+        "dataset_dir": str(root / "dataset"),
         "protocol": PROTOCOL, "episode_ids": benchmark["episode_ids"],
         "visible_sha256": {name: benchmark["dataset_sha256"][name] for name in VISIBLE_FILES},
         "model": model_name, "model_config": model.config, "timeout": timeout,
@@ -348,17 +350,19 @@ def _paired(left: dict[str, Any], right: dict[str, Any], ids: list[str]) -> dict
     return {name: counts[name] for name in ("both_correct", "left_only", "right_only", "neither")}
 
 
-def compare_models(root: Path, names: list[str]) -> dict[str, Any]:
+def compare_models(root: Path, names: list[str], *, runs_root: Path | None = None) -> dict[str, Any]:
     """Verify matched runs before reporting scores and paired case outcomes."""
     root = Path(root).resolve()
     benchmark = verify_benchmark(root, evaluator=True)
     ids = benchmark["episode_ids"]
     if not names or len(names) != len(set(names)):
         raise ValueError("comparison needs distinct model aliases")
+    if any(not re.fullmatch(r"[A-Za-z0-9._-]+", name) or name in {".", ".."} for name in names):
+        raise ValueError("model alias is not a safe directory name")
     results: dict[str, Any] = {}
     request_settings = None
     for name in names:
-        out = root / "runs" / name
+        out = (Path(runs_root).resolve() if runs_root is not None else root / "runs") / name
         batch, manifest = _read(out / "batch.json"), _read(out / "merged" / "manifest.json")
         metrics = _read(out / "merged" / "metrics.json")
         if batch["status"] not in {"completed", "completed_with_invalid_answers"} or \
@@ -424,28 +428,50 @@ def compare_models(root: Path, names: list[str]) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--model", action="append", dest="models")
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        "Use scripts/run_symptom2disease.sh --help for the raw/processed workflow. "
+        "With --benchmark, --out contains run records only; running a prepared cohort "
+        "does not require the raw CSV. Without --benchmark, the legacy combined layout is used."))
+    parser.add_argument("--source", type=Path, help="raw label,text CSV; required to prepare a cohort")
+    parser.add_argument("--benchmark", type=Path, help="prepared cohort root containing benchmark.json and dataset/")
+    parser.add_argument("--out", type=Path, help="run output directory, or combined cohort/run root without --benchmark")
+    parser.add_argument("--model", action="append", dest="models", help="ama.json model alias; repeat for multiple models")
     parser.add_argument("--config", type=Path, default=Path("ama.json"))
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--delay", type=float, default=1)
     parser.add_argument("--max-attempts", type=int, default=3)
-    parser.add_argument("--prepare-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--prepare-only", action="store_true", help="prepare and validate without API calls")
+    mode.add_argument("--compare-only", action="store_true", help="compare completed runs without API calls")
+    mode.add_argument("--run-only", action="store_true", help="run and score models without writing a comparison")
     args = parser.parse_args(argv)
     if not args.prepare_only and not args.models:
         parser.error("provide at least one --model or use --prepare-only")
-    root = args.out.resolve()
-    prepare_benchmark(args.source, root)
+    if args.benchmark is None and args.out is None:
+        parser.error("provide --benchmark or --out")
+    if not args.prepare_only and args.out is None:
+        parser.error("provide --out for run records")
+    if args.prepare_only and args.source is None:
+        parser.error("--prepare-only requires --source")
+    if args.benchmark is None and args.source is None:
+        parser.error("provide --source or an existing --benchmark")
+    root = (args.benchmark or args.out).resolve()
+    if args.source is not None and not args.compare_only:
+        prepare_benchmark(args.source, root)
+    else:
+        verify_benchmark(root)
     if args.prepare_only:
         print(f"prepared: {root / 'dataset'}")
         return 0
-    for name in args.models:
-        run_model(root, name, config=args.config, timeout=args.timeout,
-                  delay=args.delay, max_attempts=args.max_attempts)
-    report = compare_models(root, args.models)
-    destination = root / "comparison.json"
+    runs_root = args.out.resolve() if args.benchmark is not None else None
+    if not args.compare_only:
+        for name in args.models:
+            run_model(root, name, config=args.config, timeout=args.timeout,
+                      delay=args.delay, max_attempts=args.max_attempts, runs_root=runs_root)
+    if args.run_only:
+        return 0
+    report = compare_models(root, args.models, runs_root=runs_root)
+    destination = (runs_root or root) / "comparison.json"
     if destination.exists() and _read(destination) != report:
         raise ValueError("existing comparison differs; use a new output directory")
     write_json(destination, report)

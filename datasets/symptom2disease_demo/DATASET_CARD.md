@@ -65,15 +65,18 @@ This is an AMA research protocol for the original 24-label `label,text` CSV, not
 From the repository root, with the source CSV available locally and each model key in its configured environment variable:
 
 ```bash
-.venv/bin/python -m scripts.symptom2disease_benchmark \
-  --source /path/to/Symptom2Disease.csv \
-  --out runs/symptom2disease-fixed100-seed42 \
-  --model deepseek-v4-flash \
-  --model antangelmed2 \
-  --model qwen36
+export AMA_DATA_PATH=/path/to/data
+bash scripts/run_symptom2disease.sh --help
+bash scripts/run_symptom2disease.sh all deepseek-v4-flash antangelmed2 qwen36
 ```
 
-The aliases come from `ama.json`; `--config /path/to/models.json` can select another AMA-compatible model configuration without changing the source code. The command does not store API key values. Use `--prepare-only` to build and inspect the cohort without model calls. The script must be run in an environment where the chosen `api_key_env` variables are available.
+Aliases come from `ama.json`; set their `api_key_env` variables before running. Override `CONFIG` to select another AMA configuration; `PYTHON_BIN` defaults to `.venv/bin/python`. The command does not store key values.
+
+`import` imports the full CSV into `$AMA_DATA_PATH/processed/Symptom2Disease` and rejects an existing destination. `sample` prepares the fixed 100 cases; `run MODEL ...` runs and scores, `eval MODEL ...` re-scores, and `compare MODEL ...` compares completed models. `all MODEL ...` prepares, runs, scores, and compares in sequence. `sample`, `eval`, and `compare` make no model calls.
+
+The fixed cohort is stored at `$AMA_DATA_PATH/processed/Symptom2Disease-fixed100-seed42/dataset/`, a complete dataset usable directly with `ama run` and `ama eval`; the adjacent `benchmark.json` records the sampling protocol. Run records default to local `runs/symptom2disease-fixed100-seed42/`. Override `SOURCE_CSV`, `PROCESSED_DIR`, `BENCHMARK_DIR`, and `RUNS_DIR` as needed. Setting `BENCHMARK_DIR` is sufficient to run prepared cases without the raw CSV. Use new cohort and run directories for a fresh experiment.
+
+The Python entry point also accepts `--benchmark /path/to/processed/cohort --out /path/to/runs --model MODEL`, plus `--prepare-only`, `--run-only`, and `--compare-only`. Omitting `--benchmark` preserves the legacy combined dataset/run layout under `--out`.
 
 ### Fixed cohort and run contract
 
@@ -85,6 +88,6 @@ The batch retries only connection failures, HTTP 408/429/5xx, and provider respo
 
 ### Results and interpretation
 
-`runs/<alias>/batch.json` tracks attempts and settings; `shards/` preserves individual AMA runs; `merged/` contains the standard AMA run and `metrics.json`. `comparison.json` is written only after every requested model has 100 terminal case records. It validates the cohort, actual prompt, model settings, decision coverage, scorer, and target file hashes, then reports accuracy, completion, formatting, terminations, token usage, and paired case outcomes for each model pair.
+`$RUNS_DIR/<alias>/batch.json` tracks attempts and settings; `shards/` preserves individual AMA runs; `merged/` contains the standard AMA run and `metrics.json`. `comparison.json` is written only after every requested model has 100 terminal case records. It validates the cohort, actual prompt, model settings, decision coverage, scorer, and target file hashes, then reports accuracy, completion, formatting, terminations, token usage, and paired case outcomes for each model pair.
 
 The fixed 100 cases are a small sampled evaluation. Reusing them to tune prompts or settings would make a later score on the same cases exploratory. Neither these scores nor pairwise differences establish clinical performance or a definitive model ranking.

@@ -1,5 +1,8 @@
 import csv
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -198,6 +201,7 @@ def test_429_then_invalid_reply_is_frozen(tmp_path, monkeypatch):
 
 def test_crash_before_batch_write_recovers_frozen_shard(tmp_path, monkeypatch):
     root = tmp_path / "benchmark"
+    runs_root = tmp_path / "separate-runs"
     benchmark = prepare_benchmark(_source(tmp_path / "raw.csv"), root)
     model = _model("crash", ["not JSON"] + [decision(answer={
         "disease": "Acne"}, citations=["symptoms"]) for _ in range(99)])
@@ -210,18 +214,19 @@ def test_crash_before_batch_write_recovers_frozen_shard(tmp_path, monkeypatch):
         real_write(path, value)
     monkeypatch.setattr(protocol, "write_json", crash_on_case_record)
     with pytest.raises(KeyboardInterrupt, match="simulated process exit"):
-        run_model(root, "crash", timeout=30, delay=0)
+        run_model(root, "crash", timeout=30, delay=0, runs_root=runs_root)
     assert len(model.requests) == 1
-    saved = json.loads((root / "runs/crash/batch.json").read_text())
+    saved = json.loads((runs_root / "crash/batch.json").read_text())
     assert saved["attempts"] == {}
     monkeypatch.setattr(protocol, "write_json", real_write)
-    run_model(root, "crash", timeout=30, delay=0)
+    run_model(root, "crash", timeout=30, delay=0, runs_root=runs_root)
     assert len(model.requests) == 100
-    batch = json.loads((root / "runs/crash/batch.json").read_text())
+    batch = json.loads((runs_root / "crash/batch.json").read_text())
     first = benchmark["episode_ids"][0]
     assert len(batch["attempts"][first]) == 1
     assert batch["attempts"][first][0]["termination"] == "invalid_decision"
-    assert compare_models(root, ["crash"])["results"]["crash"]["accuracy"]["den"] == 100
+    assert compare_models(root, ["crash"], runs_root=runs_root)["results"]["crash"][
+        "accuracy"]["den"] == 100
 
 
 def test_one_command_prepares_scores_compares_and_reruns_without_new_calls(tmp_path, monkeypatch):
@@ -236,4 +241,32 @@ def test_one_command_prepares_scores_compares_and_reruns_without_new_calls(tmp_p
     report = json.loads((root / "comparison.json").read_text())
     assert report["results"]["one"]["accuracy"]["den"] == 100
     assert main(args) == 0
+    assert len(model.requests) == 100
+
+
+def test_shell_sample_and_separate_runs_work_without_raw_csv(tmp_path, monkeypatch):
+    data = tmp_path / "data with spaces"
+    raw = data / "raw/Symptom2Disease"
+    raw.mkdir(parents=True)
+    source = _source(raw / "Symptom2Disease.csv")
+    repo = Path(__file__).resolve().parents[1]
+    subprocess.run(["bash", "scripts/run_symptom2disease.sh", "sample"], cwd=repo,
+                   env={**os.environ, "AMA_DATA_PATH": str(data), "PYTHON_BIN": sys.executable},
+                   check=True, capture_output=True, text=True)
+    cohort = data / "processed/Symptom2Disease-fixed100-seed42"
+    assert validate_dataset(cohort / "dataset") == []
+    source.unlink()
+    model = _model("one", [decision(answer={"disease": "Acne"}, citations=["symptoms"])
+                           for _ in range(100)])
+    monkeypatch.setattr(RetryingModel, "from_config", lambda *args, **kwargs: model)
+    runs = tmp_path / "runs"
+    args = ["--benchmark", str(cohort), "--out", str(runs), "--model", "one"]
+    assert main(args + ["--run-only", "--delay", "0", "--timeout", "30"]) == 0
+    assert not (cohort / "runs").exists()
+    assert not (runs / "comparison.json").exists()
+    assert main(args + ["--compare-only"]) == 0
+    assert len(model.requests) == 100
+    report = json.loads((runs / "comparison.json").read_text())
+    assert report["results"]["one"]["accuracy"]["den"] == 100
+    assert main(args + ["--run-only", "--delay", "0", "--timeout", "30"]) == 0
     assert len(model.requests) == 100
