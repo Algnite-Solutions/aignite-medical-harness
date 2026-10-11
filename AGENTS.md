@@ -7,5 +7,3 @@
 - 不另建直接调用模型、手动循环 Agent 并评分的专用 runner 来代替标准实验流程；仅复用底层组件不等于使用标准入口。
 - 离线统计、审计和绘图可使用分析脚本，读取 harness 保存的实验产物，不替代其推理或评分流程。
 - 报告记录实际命令、配置和产物路径；未执行 `ama eval` 时不得称为 `ama eval` 运行。
-
-- 独立置信度测量使用 `ama probe`，再由 `ama eval` 离线评分；`ama run --probing-plan` 已移除。历史 probing 任务使用 `ama probe --resume` 恢复，保留原协议与哈希。

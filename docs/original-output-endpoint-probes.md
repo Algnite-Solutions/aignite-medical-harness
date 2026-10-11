@@ -1,16 +1,11 @@
 # Probe original AMA submissions and replay tool histories
 
-New measurements use [`ama probe`](ama-probe.md):
+Use the standard AMA entry points for inference and offline evaluation:
 
 ```sh
-ama probe SOURCE_RUN --mode endpoint --model MODEL --config MODELS
-ama eval PROBE_RUN
+ama run DATASET --model MODEL --config MODELS --probing-plan PLAN --max-calls 1
+ama eval RUN
 ```
-
-The rest of this document describes archived plan-based protocols and their
-retained backend. `ama run --probing-plan` is no longer an execution entrypoint.
-Resume existing plan-based tasks with `ama probe --resume OLD_PROBING_RUN`.
-Their plan contents and measurement semantics remain unchanged.
 
 Ordinary clinical runs do not automatically insert probes. A separate frozen
 measurement plan binds completed standard AMA HPI and interactive runs. The
@@ -97,7 +92,7 @@ source message arrays for one case. Add that case's `episode_id` and a stable
 `turn_id` to each returned snapshot. For replay, the source-message boundary can
 be used for the turn ID. Construct a probe dataset with exactly matching episode
 and turn IDs, containing placeholders rather than gold targets. Freeze the JSONL
-and hashes. Archived input preparation makes no inference; existing tasks resume through `ama probe --resume`.
+and hashes. Input preparation makes no inference; execute only through `ama run`.
 Snapshot history, order, boundary and replay metadata are reconstructed from the
 original trajectory and verified before inference and again during evaluation.
 
@@ -166,8 +161,8 @@ native suite. See [the preserved Qwen rerun report](qwen35-open100-thinking-reru
 for the historical80/100 interactive result. That custom-runner accuracy result
 is not an independent AMA rerollout or the paper's AUC comparison.
 
-Implementation validation uses synthetic fixtures through retained archived execution and
-`ama probe --resume` / `ama eval` CLI dispatch with a mocked provider. No paid/patient requests are
+Implementation validation uses synthetic fixtures via standard `ama run` and
+`ama eval` CLI dispatch with a mocked provider. No paid/patient requests are
 required to test batch boundaries, attachments, future-evidence exclusion,
 selection, missing candidates, alias compatibility, reuse, resume, scoring or
 rate-limit recovery. Existing real experiment records remain unchanged.

@@ -149,7 +149,3 @@ AntAngelMed2 endpoints without a server tool parser can opt into
 `<tool_call>` / `<arg_key>` / `<arg_value>` output into standard tool calls. Raw assistant content
 is retained. It adds no prompts or model calls and does not alter final answers. This is an explicit
 endpoint compatibility mode, not a general fallback for providers that honor `none` by disabling tools.
-
-## Independent measurements
-
-Use `ama probe SOURCE_RUN --mode cumulative --model MODEL` for one measurement per tool result, or `--mode endpoint` after the original answer. Add `--prepare-only` to inspect frozen inputs without API calls. Imaging catalogs are excluded from cumulative evidence. Score with `ama eval PROBE_RUN`. See [the probe guide](docs/ama-probe.md). The old `ama run --probing-plan` flag has been removed.
