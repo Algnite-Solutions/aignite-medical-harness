@@ -1,4 +1,4 @@
-"""CLI wiring: run / chat / eval / import rocov2."""
+"""CLI wiring: run / chat / eval / import rocov2 / import icc-xlsx (+ optional --mri-source)."""
 from __future__ import annotations
 
 import argparse
@@ -88,6 +88,7 @@ def main(argv=None):
     importer.add_argument("--split", default="test")
     importer.add_argument("--limit", type=int)
     importer.add_argument("--id", action="append", dest="ids")
+    importer.add_argument("--mri-source", type=Path, dest="mri_source")
     args = parser.parse_args(argv)
     try:
         if args.command in ("run", "chat"):
@@ -105,7 +106,7 @@ def main(argv=None):
             return _eval_run(args.run_dir, args.scorer)
         if args.kind == "icc-xlsx":
             from .importers.srrsh_icc import import_srrsh_icc
-            report = import_srrsh_icc(args.source, args.out, ids=args.ids)
+            report = import_srrsh_icc(args.source, args.out, ids=args.ids, mri_source=args.mri_source)
         else:
             from .importers.rocov2 import import_rocov2
             report = import_rocov2(args.source, args.out, split=args.split, limit=args.limit, ids=args.ids)

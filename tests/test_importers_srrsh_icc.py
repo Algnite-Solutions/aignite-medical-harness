@@ -13,6 +13,10 @@ from ama.importers.srrsh_icc import (
     CLIN_FIELDS,
     LAB_FIELDS,
     MISSING_TEXT,
+    MRI_EVIDENCE_ID,
+    MRI_REPORT_PREFIX,
+    MRI_SHEET_NAME,
+    MRI_SOURCE_LOCATOR,
     NOT_EVALUATED_MARK,
     ORIGIN_TABLE1,
     ORIGIN_TABLE2,
@@ -96,6 +100,20 @@ def _write_synthetic_workbook(path: Path, rows: list[dict]) -> None:
     sheet.append(HEADERS)
     for row in rows:
         sheet.append([row.get(header) for header in HEADERS])
+    workbook.save(path)
+    workbook.close()
+
+
+MRI_HEADERS = ["住院号", "检查所见", "诊断"]
+
+
+def _write_synthetic_mri_workbook(path: Path, rows: list[dict]) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = MRI_SHEET_NAME
+    sheet.append(MRI_HEADERS)
+    for row in rows:
+        sheet.append([row.get(header) for header in MRI_HEADERS])
     workbook.save(path)
     workbook.close()
 
@@ -242,6 +260,110 @@ def test_cli_imports_synthetic_workbook(tmp_path, capsys):
         str(out),
         "--id",
         TEST_PATIENT_ID,
+    ])
+
+    assert exit_code == 0
+    assert validate_dataset(out) == []
+    assert "imported ->" in capsys.readouterr().out
+
+
+SYNTHETIC_MRI_REPORT = {
+    "检查所见": "扫描序列:AX(T1WI,T2WI)\n肝IV段见病灶。",
+    "诊断": "占位，胆管细胞癌首先考虑。",
+}
+
+
+def test_episode_with_mri_report_adds_sixth_evidence():
+    episode, provenance = build_episode(_synthetic_row(), mri_report=SYNTHETIC_MRI_REPORT)
+
+    evidence = episode["turns"][0]["evidence"]
+    assert [item["id"] for item in evidence] == [
+        "clin-1", "lab-1", "tx-tace-1", MRI_EVIDENCE_ID, "tx-surg-1", "path-1",
+    ]
+    assert evidence[3] == {
+        "id": MRI_EVIDENCE_ID,
+        "type": "radiology_report",
+        "text": (
+            f"{MRI_REPORT_PREFIX}\n"
+            f"检查所见：{SYNTHETIC_MRI_REPORT['检查所见']}\n"
+            f"诊断：{SYNTHETIC_MRI_REPORT['诊断']}"
+        ),
+    }
+    mri_provenance = provenance["evidence"][MRI_EVIDENCE_ID]
+    assert mri_provenance["event_time_basis"] == "proxy_preop_anchor_surg_day"
+    assert mri_provenance["source"] == MRI_SOURCE_LOCATOR.format(id=TEST_PATIENT_ID)
+
+
+def test_missing_report_marks_provenance_only_when_source_loaded():
+    episode, provenance = build_episode(_synthetic_row())
+    assert len(episode["turns"][0]["evidence"]) == 5
+    assert "mri_report_missing" not in provenance
+
+    episode, provenance = build_episode(_synthetic_row(), mri_source_loaded=True)
+    assert len(episode["turns"][0]["evidence"]) == 5
+    assert provenance["mri_report_missing"] is True
+
+
+def test_postop_keywords_flagged_in_provenance():
+    _, provenance = build_episode(
+        _synthetic_row(),
+        mri_report={"检查所见": "术后改变，肝内新发病灶。", "诊断": "考虑肿瘤复发。"},
+    )
+
+    assert provenance["evidence"][MRI_EVIDENCE_ID]["postop_suspicion_keywords"] == [
+        "术后", "复发",
+    ]
+
+
+def test_importer_joins_mri_reports_and_reports_unmatched(tmp_path):
+    source = tmp_path / "synthetic_icc.xlsx"
+    mri_path = tmp_path / "synthetic_mri.xlsx"
+    out = tmp_path / "srrsh_icc"
+    _write_synthetic_workbook(source, [
+        _synthetic_row(),
+        _synthetic_row(ID="90020003", surg_time="2025-02-20", T=None),
+    ])
+    _write_synthetic_mri_workbook(mri_path, [
+        {"住院号": TEST_PATIENT_ID, **SYNTHETIC_MRI_REPORT},
+        {"住院号": "99999999", "检查所见": "肝VIII段见病灶。", "诊断": "占位。"},
+        {"住院号": TEST_PATIENT_ID, "检查所见": "重复报告。", "诊断": "重复。"},
+    ])
+
+    report = import_srrsh_icc(source, out, mri_source=mri_path)
+
+    assert report["counts"] == {"episodes": 2, "turns": 2, "evidence": 11}
+    assert report["mri_report"]["matched"] == 1
+    assert report["mri_report"]["patients_without_report"]["ids"] == ["90020003"]
+    assert "99999999" in report["mri_report"]["unmatched_report_ids"]["ids"]
+    assert {"id": TEST_PATIENT_ID, "reason": "duplicate MRI report ID"} in (
+        report["mri_report"]["skipped"]
+    )
+    episodes_text = (out / "episodes.jsonl").read_text(encoding="utf-8")
+    assert "肝IV段" in episodes_text
+    assert "重复报告" not in episodes_text
+    assert validate_dataset(out) == []
+
+
+def test_cli_imports_with_mri_source(tmp_path, capsys):
+    source = tmp_path / "synthetic_icc.xlsx"
+    mri_path = tmp_path / "synthetic_mri.xlsx"
+    out = tmp_path / "srrsh_icc"
+    _write_synthetic_workbook(source, [_synthetic_row()])
+    _write_synthetic_mri_workbook(mri_path, [
+        {"住院号": TEST_PATIENT_ID, **SYNTHETIC_MRI_REPORT},
+    ])
+
+    exit_code = main([
+        "import",
+        "icc-xlsx",
+        "--source",
+        str(source),
+        "--out",
+        str(out),
+        "--id",
+        TEST_PATIENT_ID,
+        "--mri-source",
+        str(mri_path),
     ])
 
     assert exit_code == 0
