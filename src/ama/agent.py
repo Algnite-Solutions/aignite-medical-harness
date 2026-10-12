@@ -14,7 +14,8 @@ class CallLimitExceeded(RuntimeError):
 
 
 class Agent:
-    def __init__(self, model, system: str = "", tools: list[Tool] | None = None, max_calls: int = 8):
+    def __init__(self, model, system: str = "", tools: list[Tool] | None = None, max_calls: int = 8,
+                 on_event=None):
         if max_calls < 1:
             raise ValueError("max_calls must be positive")
         self.model, self.max_calls = model, max_calls
@@ -24,6 +25,13 @@ class Agent:
         self.history = [{"role": "system", "content": system}] if system else []
         self.calls: list[dict] = []
         self.failed = False
+        self.on_event = on_event
+        self.evidence_ids: set[str] = set()
+        self.evidence_releases: list[dict] = []
+
+    def _emit(self, kind: str, value=None) -> None:
+        if self.on_event is not None:
+            self.on_event(kind, value)
 
     def chat(self, message: str | list) -> str:
         if self.failed:
@@ -34,8 +42,9 @@ class Agent:
             for _ in range(self.max_calls):
                 # 1. 原样发出历史；记录每次调用，包括失败和中断。
                 started = time.monotonic()
-                call = {"usage": None, "error": None}
+                call = {"message_index": len(self.history), "usage": None, "error": None}
                 try:
+                    self._emit("model_start")
                     reply = self.model.complete(self.history, tools=definitions or None)
                     if not isinstance(reply, dict):
                         raise ModelError("assistant message must be an object")
@@ -44,6 +53,10 @@ class Agent:
                     self.history.append(reply)
                 except BaseException as exc:
                     call["error"] = f"{type(exc).__name__}: {exc}"
+                    if isinstance(exc, ModelError) and exc.http_status is not None:
+                        call["http_status"] = exc.http_status
+                        if exc.rate_limit_headers:
+                            call["rate_limit_headers"] = exc.rate_limit_headers
                     raise
                 finally:
                     call["duration_ms"] = int((time.monotonic() - started) * 1000)
@@ -68,6 +81,7 @@ class Agent:
                 attachments = []
                 for request in requests:
                     function = request.get("function") or {}
+                    self._emit("tool_call", function)
                     try:
                         if request.get("type") != "function":
                             raise ValueError("unsupported tool call type")
@@ -78,9 +92,15 @@ class Agent:
                         text = result.text or "Image result attached."
                         for path in result.images:
                             attachments.extend([f"Tool image: call_id={request['id']}, name={name}", image(path)])
+                        if result.evidence_ids:
+                            text += "\nCiteable evidence IDs: " + json.dumps(result.evidence_ids)
+                            self.evidence_ids.update(result.evidence_ids)
+                            self.evidence_releases.append({"tool_call_id": request["id"],
+                                                           "name": name, "evidence_ids": result.evidence_ids})
                     except Exception as exc:
                         text = json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                     self.history.append({"role": "tool", "tool_call_id": request["id"], "content": text})
+                    self._emit("tool_result", text)
                 if attachments:
                     self.history.append({"role": "user", "content": content(attachments)})
             raise CallLimitExceeded(f"maximum model calls per chat reached: {self.max_calls}")

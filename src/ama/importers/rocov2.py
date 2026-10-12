@@ -126,7 +126,7 @@ def import_rocov2(source: Path, out: Path, split: str = "test", limit: int | Non
     (out / "eval.json").write_text('{"scorer": "rocov2"}\n', encoding="utf-8")
     (out / "instructions.txt").write_text(
         "Describe each radiology image in concise English and identify its UMLS concepts.\n"
-        "When a structured answer is requested, use {\"caption\": \"description\", \"cuis\": [\"CUI strings\"]}.\n",
+        "The task answer has fields caption (a description) and cuis (a list of UMLS CUI strings).\n",
         encoding="utf-8")
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

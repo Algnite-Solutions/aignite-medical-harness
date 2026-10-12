@@ -91,6 +91,7 @@ class Decision(_Model):
     turn_id: str
     answer: Any
     citations: list[str]
+    reasoning_summary: str = ""
 
 
 class DatasetInfo(_Model):
