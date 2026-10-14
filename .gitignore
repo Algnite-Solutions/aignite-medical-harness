@@ -13,3 +13,4 @@ dist/
 datasets/mimic_cdm/
 datasets/medagentbench/
 datasets/medagentbench_subset/
+_agent/

@@ -82,6 +82,10 @@ For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repe
 ROCOv2 is the built-in `ama import` demo. Each image is one episode/turn; ordered multi-turn datasets
 also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
 
+The later-added Symptom2Disease importer and text demo are documented in the
+[Symptom2Disease demo data card](datasets/symptom2disease_demo/DATASET_CARD.md),
+including import, validation, and run instructions.
+
 ### Credentialed MIMIC-CDM import
 
 The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and

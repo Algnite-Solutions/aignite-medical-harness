@@ -1,0 +1,14 @@
+{
+  "schema": "ama-dataset",
+  "name": "symptom2disease_demo",
+  "splits": {
+    "all": [
+      "s2d-000001",
+      "s2d-000051",
+      "s2d-000101",
+      "s2d-000151",
+      "s2d-000201",
+      "s2d-000251"
+    ]
+  }
+}
