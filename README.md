@@ -53,7 +53,8 @@ Use `--instruction-file path` to replace it. `--max-calls 8` limits API calls pe
 ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools examples/tools.py
 ```
 
-The Python file explicitly exports `TOOLS: list[Tool]`; both run and chat accept it.
+The Python file exports `TOOLS: list[Tool]` or a `make_tools(dataset_dir, episode_id)` factory;
+both run and chat accept it.
 No flag means no tools. Tools are trusted Python, **not sandboxed**: do not expose references or
 future observations through them. See [the executable example](examples/tools.py).
 
@@ -67,15 +68,58 @@ Biomedical retrieval is available with `--tools src/ama/medical_tools.py`:
 ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools src/ama/medical_tools.py
 ```
 
-This registers two tools: `pubmed_search(query, retmax=5, abstract=True)` and
-`guideline_search(query, max_results=5, live=True)`.
+This registers five tools: `pubmed_search(query, retmax=5, abstract=True)`,
+`guideline_search(query, max_results=5, live=True)`,
+`paper_fulltext(pmcid, section="", max_chars=20000)` and
+`clinical_trial_search(condition, intervention="", status="", max_results=5)` and
+`analyze_images(query, image_ids)`.
 PubMed uses ESearch then EFetch, falling back to ESummary without abstracts. Guideline search
 combines a small bundled KDIGO index with live Europe PMC guideline results, sorted by citations;
 `max_results` limits live results, while local matches are additional. Set `live=False` for offline search.
 Publication-type matches can include reporting guidelines; check scope and date before using results.
-Successful searches return lists; failures return `{"error": ...}` and partial guideline searches
+`paper_fulltext` fetches available full-text XML from Europe PMC and returns a title, source URL,
+section IDs/headings and text. Select a section by ID or heading; `max_chars` caps total section text.
+The response reports truncation and available sections so callers can request another section.
+Some PMC articles are unavailable through this endpoint; it cannot retrieve arbitrary paywalled papers.
+`clinical_trial_search` queries the public ClinicalTrials.gov v2 API for NCT IDs, status, phase,
+last update, interventions, summary, eligibility and up to five locations. Optional `status` uses
+registry values such as `RECRUITING` or `COMPLETED`. Summary/eligibility text is capped at
+1000/3000 characters and truncation is reported. A registry match does not establish individual eligibility.
+Both new data sources are publicly accessible without a tool API key; service rate limits still apply.
+See the [ClinicalTrials.gov API](https://clinicaltrials.gov/data-api/api).
+Successful searches return lists; full-text retrieval returns an object. Failures return `{"error": ...}` and partial guideline searches
 also include `results`. Requests time out after 20 seconds and downloads are limited to 4 MiB.
-These tools add no third-party dependencies and do not release dataset evidence IDs.
+These tools add no third-party dependencies. Retrieval tools do not release dataset evidence IDs.
+
+`analyze_images` uses an isolated DeepSeek Flash visual request by default. When it is loaded,
+the runner sends an image evidence-ID catalog to the main Agent and releases the actual image
+paths to the tool as each dataset turn becomes visible. Only the selected PNG/JPG images and
+the query enter the visual expert's request; only its text analysis returns to the main history.
+Successful analyses release their source IDs for citation. Other retrieval tools do not release
+dataset evidence IDs. No images are delivered to the main Agent in this delegated mode.
+
+To load only this tool on a public image episode:
+
+```bash
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model deepseek-flash --tools src/ama/image_analysis_tools.py
+```
+
+For example, ask: `Use analyze_images to describe image-ROCOv2_2023_test_000001.`
+`DEEPSEEK_API_KEY` is read by the CLI from the environment or local `.env`.
+`AMA_VISION_MODEL` (default `deepseek-flash`) and `AMA_VISION_CONFIG` (default `ama.json`)
+select the independent expert. A query must include any necessary clinical context; the expert
+does not receive the main conversation. Without an image-delegating tool, direct image delivery
+is unchanged. `episode_start` diagnostics record `image_delivery` as `tool_only` or `direct`.
+
+Each episode permits four visual API requests, with at most 49 PNG/JPG images and 24 MiB of
+raw image bytes per request. Identical query/ordered image-ID/content-hash combinations reuse
+a per-episode cache. The expert has a 60-second timeout and a 2048-token output budget;
+returned analysis is capped at 6000 characters with truncation reported. Tool results include
+model configuration, source paths/hashes, expert token usage and duration. Expert usage is
+reported separately in the tool result and is not added to the main-model usage aggregates.
+These are paid model requests under the configured account, not free retrieval API calls.
+For an opt-in two-image real-model check:
+`RUN_API_TESTS=1 python -m pytest -q tests/test_image_analysis_tools_api.py`.
 
 Optional environment variables (also supported in `.env`): `NCBI_EMAIL` for caller contact,
 `NCBI_API_KEY` for NCBI's higher request limit, and `AMA_GUIDELINES_PATH` for a custom UTF-8
@@ -87,18 +131,18 @@ and [Europe PMC API documentation](https://europepmc.org/RestfulWebService).
 
 For a real DeepSeek tool-call smoke test, set `DEEPSEEK_API_KEY` in the environment or local
 `.env`, then run `RUN_API_TESTS=1 python -m pytest -q tests/test_medical_tools_api.py`.
-The two cases check PubMed search and offline guideline search, including use of the returned
+The four cases check PubMed search, offline guideline search, full-text reading and clinical-trial search, including use of the returned
 value in the final answer. They are skipped by default; opting in consumes model API credits
-and the PubMed case also requires NCBI access.
+and the online tools also require access to their respective data sources.
 
 To combine retrieval with MIMIC case tools, pass a trusted Python file exporting this factory:
 
 ```python
-from ama.medical_tools import TOOLS
+from ama.medical_tools import make_tools as medical_tools
 from ama.importers.mimic_cdm_tools import make_tools as case_tools
 
 def make_tools(dataset_dir, episode_id):
-    return case_tools(dataset_dir, episode_id) + TOOLS
+    return case_tools(dataset_dir, episode_id) + medical_tools(dataset_dir, episode_id)
 ```
 
 ## Read in four steps

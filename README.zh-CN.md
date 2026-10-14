@@ -47,22 +47,48 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
 `--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
-联网医学检索通过 `--tools src/ama/medical_tools.py` 启用，注册两个函数：
+医学工具通过 `--tools src/ama/medical_tools.py` 启用，注册五个函数：
 
 - `pubmed_search(query, retmax=5, abstract=True)`：检索 PubMed，返回 PMID、标题、期刊、年份、摘要和链接；摘要读取失败时退回无摘要的元数据。
 - `guideline_search(query, max_results=5, live=True)`：合并本地精选索引与 Europe PMC 指南检索；联网结果按被引次数排序。`max_results` 只限制联网结果，本地匹配另计；`live=False` 完全离线。
+- `paper_fulltext(pmcid, section="", max_chars=20000)`：在线读取 Europe PMC 可获取的论文全文 XML，按章节返回。可按章节 ID 或标题选择；`max_chars` 限制总正文长度，结果注明是否截断并列出可选章节。
+- `clinical_trial_search(condition, intervention="", status="", max_results=5)`：在线检索 ClinicalTrials.gov，返回 NCT 编号、标题、状态、阶段、更新时间、干预、摘要、入排标准和最多五个地点。状态可填 `RECRUITING`、`COMPLETED` 等，留空不过滤；摘要/入排标准限制为 1000/3000 字符并标明截断。
+- `analyze_images(query, image_ids)`：默认调用独立的 DeepSeek Flash 视觉专家读取当前轮次已释放的 PNG/JPG 图片，仅将文字分析返回主 Agent。支持多图比较；必要的临床背景需放入 query。
+
+新增的全文与试验检索使用免费公开接口，无需工具 API key，仍需遵守服务端请求限速。
+全文接口仅能读取其可提供的文章；试验匹配结果不代表个人已经满足入组条件。
 
 ```bash
 ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools src/ama/medical_tools.py
 ```
 
-成功检索返回列表，失败返回 `{"error": ...}`；指南检索部分失败时还会通过 `results` 保留可用结果。
-工具仅使用标准库，单次联网超时 20 秒、下载上限 4 MiB，不注册病例 evidence ID。
+成功搜索返回列表，全文读取返回对象，失败返回 `{"error": ...}`；指南检索部分失败时还会通过 `results` 保留可用结果。
+检索工具仅使用标准库，单次联网超时 20 秒、下载上限 4 MiB，不注册病例 evidence ID。
 可在环境变量或 `.env` 配置 `NCBI_EMAIL`、`NCBI_API_KEY`；NCBI 限流在当前进程内生效，多进程需另行协调。
 `AMA_GUIDELINES_PATH` 可指定自定义 UTF-8 JSON 索引：对象列表，每项必须有 `title` 和 `url`，
 可附 `org`、`year`、`keywords`、`key_points`、`abstract` 和 `pub_type`。
 内置索引仅提供 KDIGO 2024 CKD 作为起点，完整性依赖联网查询或自行维护索引。
 与 MIMIC 病例工具一起加载的方法见 [英文说明](README.md#optional-tools)。
+
+只启用视觉分析工具，可以运行：
+
+```powershell
+python -X utf8 -m ama.cli chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model deepseek-flash --tools src/ama/image_analysis_tools.py
+```
+
+例如输入：`请调用 analyze_images，分析 image-ROCOv2_2023_test_000001，说明可见结构和不确定之处。`
+启用视觉分析工具后，主 Agent 只接收图片 ID 目录；每轮实际释放的图片绑定到工具，未来轮次和其他病例的图片不可请求。
+专家每次只收到本次 query 和所选图片，主 history 不附加原图、叠加图或专家的独立历史。
+成功分析后，相应图片 ID 才通过工具结果释放为可引用证据。未启用图片委托工具时，原有直接传图行为保持不变。
+`episode_start` 日志记录 `image_delivery`（`tool_only` / `direct`）。
+
+默认使用 `ama.json` 中的 `deepseek-flash` 与现有 `DEEPSEEK_API_KEY`。
+可通过 `AMA_VISION_MODEL` 和 `AMA_VISION_CONFIG` 改选专家模型别名及配置路径。
+每病例最多四次专家 API 请求；同 query、同图片 ID 顺序和内容哈希的请求命中本病例缓存。
+每次最多 49 张 PNG/JPG、原始文件合计 24 MiB；专家超时 60 秒、输出预算 2048 tokens，返回分析最多 6000 字符并标记截断。
+工具结果记录图片路径/哈希、模型配置、用量和耗时；专家用量单列在工具结果中，尚不计入主模型用量汇总。
+视觉专家请求会按所配置模型账号计费，与免费公开检索接口不同。
+真实双图调用测试：`RUN_API_TESTS=1 python -m pytest -q tests/test_image_analysis_tools_api.py`（PowerShell 中先设置对应环境变量）。
 
 真实 API 工具调用测试（PowerShell；从本地 `.env` 读取 `DEEPSEEK_API_KEY`）：
 
@@ -72,8 +98,8 @@ python -X utf8 -m pytest -q tests/test_medical_tools_api.py
 Remove-Item Env:RUN_API_TESTS
 ```
 
-两个用例分别检查 DeepSeek 调用 PubMed 检索与离线指南检索，并使用工具返回值回答。
-默认测试会跳过它们；显式启用会消耗模型 API 额度，PubMed 用例还需访问 NCBI。
+四个用例分别检查 DeepSeek 调用 PubMed、离线指南、论文全文与临床试验检索，并使用工具返回值回答。
+默认测试会跳过它们；显式启用会消耗模型 API 额度，在线工具还需访问对应数据源。
 
 ## 阅读顺序
 

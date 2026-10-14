@@ -199,9 +199,132 @@ def test_pubmed_validates_arguments(kwargs):
 
 def test_tools_load_and_execute_through_agent():
     tools = load_tools("src/ama/medical_tools.py")
-    assert [tool.name for tool in tools] == ["pubmed_search", "guideline_search"]
+    assert [tool.name for tool in tools] == [
+        "pubmed_search", "guideline_search", "paper_fulltext", "clinical_trial_search", "analyze_images"]
     model = FakeModel(calls(call("guideline_search", '{"query":"CKD","live":false}')), "done")
     agent = Agent(model, tools=tools)
     assert agent.chat("Find a guideline offline") == "done"
-    assert len(model.requests[0][1]) == 2
+    assert len(model.requests[0][1]) == 5
     assert json.loads(agent.history[2]["content"])[0]["source"] == "local_index"
+
+
+FULLTEXT = """<article><front><article-meta><title-group>
+<article-title>A <italic>clinical</italic> study</article-title></title-group>
+<abstract><p>Short abstract.</p></abstract></article-meta></front><body>
+<p>Opening paragraph.</p><sec id="methods"><title>Materials and Methods</title>
+<p>First <italic>inline</italic> paragraph.</p><sec id="cohort"><title>Participants</title>
+<p>Second paragraph.</p></sec></sec><sec id="results"><title>Results</title>
+<p>Observed outcomes.</p></sec></body><back><ref-list><ref>Not body text.</ref></ref-list></back></article>"""
+
+
+def test_fulltext_sections_preserve_nested_text_and_paragraphs(monkeypatch):
+    urls = []
+    monkeypatch.setattr(medical, "_get", lambda url: urls.append(url) or FULLTEXT)
+    result = medical.paper_fulltext("pmc7092803")
+    assert urls == [medical.EPMC_REST + "/PMC7092803/fullTextXML"]
+    assert result["title"] == "A clinical study" and result["pmcid"] == "PMC7092803"
+    assert [s["id"] for s in result["sections"]] == ["abstract", "body", "methods", "results"]
+    assert result["sections"][2]["text"] == (
+        "Materials and Methods\nFirst inline paragraph.\nParticipants\nSecond paragraph.")
+    assert "Not body text" not in json.dumps(result)
+    assert result["truncated"] is False
+
+
+def test_fulltext_heading_selection_and_total_character_budget(monkeypatch):
+    monkeypatch.setattr(medical, "_get", lambda url: FULLTEXT)
+    selected = medical.paper_fulltext("PMC7092803", section="METHODS", max_chars=25)
+    assert len(selected["sections"]) == 1
+    assert selected["sections"][0]["id"] == "methods" and selected["truncated"]
+    assert selected["sections"][0]["truncated"] and len(selected["sections"][0]["text"]) == 25
+    partial = medical.paper_fulltext("PMC7092803", section="materials", max_chars=1000)
+    assert partial["sections"][0]["id"] == "methods"
+    limited = medical.paper_fulltext("PMC7092803", max_chars=30)
+    assert sum(len(s["text"]) for s in limited["sections"]) == 30 and limited["truncated"]
+    missing = medical.paper_fulltext("PMC7092803", section="unknown")
+    assert "error" in missing and missing["available_sections"]
+
+
+def test_fulltext_unstructured_body_and_missing_section_ids(monkeypatch):
+    monkeypatch.setattr(medical, "_get", lambda url: "<article><body><p>Unstructured text.</p></body></article>")
+    assert medical.paper_fulltext("PMC123")["sections"] == [
+        {"id": "body", "title": "Body", "text": "Unstructured text.", "truncated": False}]
+    monkeypatch.setattr(medical, "_get", lambda url: '<article><body><sec sec-type="methods"><p>Text</p></sec></body></article>')
+    assert medical.paper_fulltext("PMC123")["available_sections"] == [{"id": "section-1", "title": "methods"}]
+
+
+@pytest.mark.parametrize("response", ["<broken", "<response><error>Not available</error></response>",
+                                      "<article><body/></article>"])
+def test_fulltext_unavailable_or_malformed_returns_error(monkeypatch, response):
+    monkeypatch.setattr(medical, "_get", lambda url: response)
+    result = medical.paper_fulltext("PMC123")
+    assert "error" in result and result["pmcid"] == "PMC123"
+
+
+@pytest.mark.parametrize("arguments", [
+    {"pmcid": "123"}, {"pmcid": "PMC123/../../private"}, {"pmcid": None},
+    {"pmcid": "PMC123", "max_chars": 0}, {"pmcid": "PMC123", "section": []},
+])
+def test_fulltext_bad_arguments_do_not_fetch(monkeypatch, arguments):
+    monkeypatch.setattr(medical, "_get", lambda url: pytest.fail("invalid arguments made a request"))
+    with pytest.raises(ValueError):
+        medical.paper_fulltext(**arguments)
+
+
+def test_trials_query_filters_and_structured_fields(monkeypatch):
+    urls = []
+    study = {"protocolSection": {
+        "identificationModule": {"nctId": "NCT12345678", "briefTitle": "Clinical study"},
+        "statusModule": {"overallStatus": "RECRUITING", "lastUpdatePostDateStruct": {"date": "2026-10-01"}},
+        "designModule": {"phases": ["PHASE3"], "studyType": "INTERVENTIONAL"},
+        "conditionsModule": {"conditions": ["Psoriasis"]},
+        "armsInterventionsModule": {"interventions": [{"name": "Study drug", "type": "DRUG"}]},
+        "descriptionModule": {"briefSummary": "s" * 1100},
+        "eligibilityModule": {"eligibilityCriteria": "e" * 3100, "minimumAge": "18 Years", "sex": "ALL",
+                              "healthyVolunteers": False},
+        "contactsLocationsModule": {"locations": [{"facility": "Hospital", "city": "Boston", "country": "United States"}] * 6},
+    }}
+    monkeypatch.setattr(medical, "_get", lambda url: urls.append(url) or json.dumps({"studies": [study]}))
+    result = medical.clinical_trial_search("psoriasis & arthritis", "drug A+B", "recruiting", max_results=2)
+    params = parse_qs(urlsplit(urls[0]).query)
+    assert params == {"query.cond": ["psoriasis & arthritis"], "query.intr": ["drug A+B"],
+                      "filter.overallStatus": ["RECRUITING"], "pageSize": ["2"], "format": ["json"]}
+    row = result[0]
+    assert row["nct_id"] == "NCT12345678" and row["url"].endswith("/NCT12345678")
+    assert row["phase"] == ["PHASE3"] and row["last_update"] == "2026-10-01"
+    assert len(row["summary"]) == 1000 and len(row["eligibility"]["criteria"]) == 3000
+    assert row["eligibility"]["healthy_volunteers"] is False and len(row["locations"]) == 5
+    assert all(row["truncated"].values())
+
+
+def test_trials_optional_fields_empty_results_and_errors(monkeypatch):
+    monkeypatch.setattr(medical, "_get", lambda url: '{"studies":[]}')
+    assert medical.clinical_trial_search("psoriasis") == []
+    monkeypatch.setattr(medical, "_get", lambda url: json.dumps({"studies": [{
+        "protocolSection": {"identificationModule": {"nctId": "NCT12345678"}}}]}))
+    row = medical.clinical_trial_search("psoriasis")[0]
+    assert row["locations"] == [] and row["phase"] == [] and row["summary"] == ""
+    monkeypatch.setattr(medical, "_get", lambda url: '<html>Access denied</html>')
+    assert "error" in medical.clinical_trial_search("psoriasis")
+    monkeypatch.setattr(medical, "_get", lambda url: '{"other":[]}')
+    assert "error" in medical.clinical_trial_search("psoriasis")
+
+
+@pytest.mark.parametrize("function,arguments", [
+    (medical.paper_fulltext, {"pmcid": "PMC123"}),
+    (medical.clinical_trial_search, {"condition": "psoriasis"}),
+])
+def test_online_tools_return_network_errors(monkeypatch, function, arguments):
+    def fail(url):
+        raise ValueError("Remote server returned HTTP 404")
+    monkeypatch.setattr(medical, "_get", fail)
+    assert "error" in function(**arguments)
+
+
+@pytest.mark.parametrize("arguments", [
+    {"condition": ""}, {"condition": "psoriasis", "max_results": True},
+    {"condition": "psoriasis", "status": "bogus"}, {"condition": "psoriasis", "intervention": []},
+])
+def test_trials_validates_arguments(monkeypatch, arguments):
+    monkeypatch.setattr(medical, "_get", lambda url: pytest.fail("invalid arguments made a request"))
+    with pytest.raises(ValueError):
+        medical.clinical_trial_search(**arguments)

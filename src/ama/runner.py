@@ -24,8 +24,10 @@ An imaging catalog does not release report findings. Do not guess or abbreviate 
 For abstention use answer=null, citations=[], and explain the uncertainty in reasoning_summary.'''
 
 
-def render(turn, folder: Path) -> list:
+def render(turn, folder: Path, *, tools=()) -> list:
     parts = [f"Turn: {turn.id}"]
+    image_readers = [tool for tool in tools if tool.on_images is not None]
+    released_images = {}
     if turn.available_at:
         parts.append(f"Available at: {turn.available_at.isoformat()}")
     if turn.observation:
@@ -37,10 +39,17 @@ def render(turn, folder: Path) -> list:
         if evidence.file:
             path = folder / evidence.file
             if mimetypes.guess_type(path.name)[0] in IMAGE_TYPES:
-                parts.append(image(path))
+                if image_readers:
+                    released_images[evidence.id] = Path(image(path)["path"])
+                    parts.append("Image available via " + ", ".join(tool.name for tool in image_readers)
+                                 + f": {evidence.id}")
+                else:
+                    parts.append(image(path))
             else:
                 # Unsupported binary files must not silently become invisible evidence.
                 parts.append(path.read_text(encoding="utf-8"))
+    for tool in image_readers:
+        tool.on_images(dict(released_images))
     return parts
 
 
@@ -127,6 +136,7 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                           tools=load_tools(tools_path, dataset_dir=dataset.folder, episode_id=episode.id),
                           max_calls=max_calls)
             recorder.event("episode_start", episode_id=episode.id,
+                           image_delivery="tool_only" if any(t.on_images for t in agent.tools.values()) else "direct",
                            tools=[tool.definition() for tool in agent.tools.values()])
             recorder.history(agent, episode_id=episode.id)
             if mode == "chat":
@@ -140,8 +150,10 @@ def execute(dataset_dir, model, *, mode="run", episode_ids=None, split=None, run
                            "decision": None, "termination": "not_executed", "error": stopped,
                            "model_calls": 0, "duration_ms": 0, "usage": None}
                 else:
-                    visible.update(e.id for e in turn.evidence)
-                    message = render(turn, dataset.folder)
+                    delegated = any(t.on_images for t in agent.tools.values())
+                    visible.update(e.id for e in turn.evidence if not (
+                        delegated and e.file and mimetypes.guess_type(e.file)[0] in IMAGE_TYPES))
+                    message = render(turn, dataset.folder, tools=agent.tools.values())
                     message.append(f"Final Decision turn_id: {turn.id}. Currently citeable evidence IDs: "
                                    + json.dumps(sorted(visible | agent.evidence_ids)))
                     row = exchange(agent, recorder, message,
@@ -184,7 +196,7 @@ def explore(dataset, episode, agent, recorder, input_fn):
     agent.on_event = show_activity
     index = 0
     source = "dataset"
-    message = render(episode.turns[index], dataset.folder)
+    message = render(episode.turns[index], dataset.folder, tools=agent.tools.values())
     while True:
         turn = episode.turns[index]
         if source == "dataset":
@@ -208,7 +220,7 @@ def explore(dataset, episode, agent, recorder, input_fn):
                     print("没有后续材料；仍可继续追问。")
                     continue
                 index += 1
-                message, source = render(episode.turns[index], dataset.folder), "dataset"
+                message, source = render(episode.turns[index], dataset.folder, tools=agent.tools.values()), "dataset"
                 break
             if text:
                 message, source = text, "human"

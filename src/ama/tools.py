@@ -27,6 +27,9 @@ class Tool:
     description: str
     parameters: dict
     handler: Callable
+    # Opt-in image delegation: the runner releases current-turn IDs/paths here
+    # and sends only the image catalog to the main Agent.
+    on_images: Callable[[dict[str, Path]], None] | None = None
 
     def definition(self) -> dict:
         return {"type": "function", "function": {

@@ -21,6 +21,8 @@ from ama.tools import Tool
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+EPMC_REST = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+TRIALS = "https://clinicaltrials.gov/api/v2/studies"
 _NCBI_LOCK = threading.Lock()
 _NCBI_LAST = 0.0
 _MAX_BYTES = 4 * 1024 * 1024
@@ -212,6 +214,132 @@ def guideline_search(query: str, max_results: int = 5, live: bool = True):
     return {"error": "; ".join(errors), "results": results} if errors else results
 
 
+def _article_text(node) -> str:
+    blocks = {"sec", "title", "p", "list-item", "disp-quote", "table-wrap", "tr", "caption"}
+
+    def render(element):
+        pieces = [element.text or ""]
+        for child in element:
+            if child.tag in blocks:
+                pieces.extend(["\n", render(child), "\n"])
+            else:
+                pieces.append(render(child))
+            pieces.append(child.tail or "")
+        return "".join(pieces)
+
+    return "\n".join(line for raw in render(node).splitlines() if (line := " ".join(raw.split())))
+
+
+def paper_fulltext(pmcid: str, section: str = "", max_chars: int = 20000):
+    if not isinstance(pmcid, str) or not re.fullmatch(r"PMC[1-9]\d*", pmcid.strip(), re.I):
+        raise ValueError("pmcid must be a PMC identifier, e.g. PMC7092803")
+    if not isinstance(section, str):
+        raise ValueError("section must be a string")
+    _count(max_chars, "max_chars", 50000)
+    pmcid = pmcid.strip().upper()
+    url = f"https://europepmc.org/articles/{pmcid}"
+    try:
+        article = ET.fromstring(_get(f"{EPMC_REST}/{pmcid}/fullTextXML"))
+        body = article.find("body")
+        if article.tag != "article" or body is None:
+            raise ValueError("Response does not contain a readable article body")
+        sections = []
+        abstract = article.find("./front/article-meta/abstract")
+        if abstract is not None:
+            sections.append({"id": "abstract", "title": "Abstract", "text": _article_text(abstract)})
+        top_sections = body.findall("sec")
+        if top_sections:
+            preamble = ET.Element("body")
+            preamble.text = body.text
+            preamble.extend(child for child in body if child.tag != "sec")
+            if _article_text(preamble):
+                sections.append({"id": "body", "title": "Body preamble", "text": _article_text(preamble)})
+            for index, node in enumerate(top_sections, 1):
+                sections.append({"id": node.get("id") or f"section-{index}",
+                                 "title": _xml_text(node.find("title")) or node.get("sec-type") or f"Section {index}",
+                                 "text": _article_text(node)})
+        else:
+            sections.append({"id": "body", "title": "Body", "text": _article_text(body)})
+        if not any(item["text"] for item in sections):
+            raise ValueError("Article contains no readable section text")
+        available = [{"id": item["id"], "title": item["title"]} for item in sections]
+        if section.strip():
+            requested = section.strip().casefold()
+            exact = [item for item in sections if item["id"].casefold() == requested]
+            sections = exact or [item for item in sections if requested in item["title"].casefold()]
+            if not sections:
+                return {"error": "No matching section; choose an available section ID or title",
+                        "pmcid": pmcid, "url": url, "available_sections": available}
+        returned = []
+        remaining = max_chars
+        total_chars = sum(len(item["text"]) for item in sections)
+        for item in sections:
+            if remaining <= 0:
+                break
+            text = item["text"][:remaining]
+            returned.append(dict(item, text=text, truncated=len(text) < len(item["text"])))
+            remaining -= len(text)
+        return {"pmcid": pmcid, "title": _xml_text(article.find("./front/article-meta/title-group/article-title")),
+                "url": url, "available_sections": available, "sections": returned,
+                "truncated": total_chars > max_chars}
+    except (ValueError, ET.ParseError) as exc:
+        return {"error": f"Full text retrieval failed: {exc}. Full text may not be openly available.",
+                "pmcid": pmcid, "url": url}
+
+
+_TRIAL_STATUSES = ["NOT_YET_RECRUITING", "RECRUITING", "ENROLLING_BY_INVITATION", "ACTIVE_NOT_RECRUITING",
+                   "SUSPENDED", "TERMINATED", "COMPLETED", "WITHDRAWN", "UNKNOWN", "AVAILABLE",
+                   "NO_LONGER_AVAILABLE", "TEMPORARILY_NOT_AVAILABLE", "APPROVED_FOR_MARKETING", "WITHHELD"]
+
+
+def clinical_trial_search(condition: str, intervention: str = "", status: str = "", max_results: int = 5):
+    condition = _query(condition)
+    _count(max_results, "max_results", 50)
+    if not isinstance(intervention, str) or not isinstance(status, str):
+        raise ValueError("intervention and status must be strings")
+    status = status.strip().upper()
+    if status and status not in _TRIAL_STATUSES:
+        raise ValueError("Unsupported trial status; use a ClinicalTrials.gov status such as RECRUITING")
+    params = {"query.cond": condition, "pageSize": max_results, "format": "json"}
+    if intervention.strip():
+        params["query.intr"] = intervention.strip()
+    if status:
+        params["filter.overallStatus"] = status
+    try:
+        studies = json.loads(_get(f"{TRIALS}?{urlencode(params)}"))["studies"]
+        results = []
+        for study in studies[:max_results]:
+            protocol = study["protocolSection"]
+            identification = protocol["identificationModule"]
+            nct_id = identification["nctId"]
+            state = protocol.get("statusModule", {})
+            design = protocol.get("designModule", {})
+            eligibility = protocol.get("eligibilityModule", {})
+            locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+            results.append({"nct_id": nct_id, "title": identification.get("briefTitle", ""),
+                            "url": f"https://clinicaltrials.gov/study/{nct_id}",
+                            "status": state.get("overallStatus", ""), "phase": design.get("phases", []),
+                            "study_type": design.get("studyType", ""),
+                            "last_update": state.get("lastUpdatePostDateStruct", {}).get("date", ""),
+                            "conditions": protocol.get("conditionsModule", {}).get("conditions", []),
+                            "interventions": [{"name": item.get("name", ""), "type": item.get("type", "")}
+                                              for item in protocol.get("armsInterventionsModule", {}).get("interventions", [])],
+                            "summary": protocol.get("descriptionModule", {}).get("briefSummary", "")[:1000],
+                            "eligibility": {"criteria": eligibility.get("eligibilityCriteria", "")[:3000],
+                                            "minimum_age": eligibility.get("minimumAge", ""),
+                                            "maximum_age": eligibility.get("maximumAge", ""),
+                                            "sex": eligibility.get("sex", ""),
+                                            "healthy_volunteers": eligibility.get("healthyVolunteers")},
+                            "locations": [{key: place.get(key, "") for key in ("facility", "city", "state", "country")}
+                                          for place in locations[:5]],
+                            "truncated": {"summary": len(protocol.get("descriptionModule", {}).get("briefSummary", "")) > 1000,
+                                          "eligibility": len(eligibility.get("eligibilityCriteria", "")) > 3000,
+                                          "locations": len(locations) > 5}})
+        return results
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {"error": "ClinicalTrials.gov retrieval failed; no reliable results are available"}
+
+
 def _schema(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
@@ -233,4 +361,30 @@ TOOLS = [
                   "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5,
                                   "description": "Maximum live results; local matches are additional."},
                   "live": {"type": "boolean", "default": True}}, ["query"]), guideline_search),
+    Tool("paper_fulltext",
+         "Fetch an openly available article's full-text XML from Europe PMC using its PMCID. "
+         "Returns title, source URL, available section IDs/titles, and section text. "
+         "Use section to select an exact section ID or match a heading (e.g. Methods, Results, Discussion). "
+         "max_chars limits total returned section text; inspect truncated and request specific sections as needed. "
+         "Not every PubMed article has accessible full text. Failures return an error object.",
+         _schema({"pmcid": {"type": "string", "description": "PMC identifier, e.g. PMC7092803; not a PMID or DOI."},
+                  "section": {"type": "string", "default": "", "description": "Optional section ID or heading; empty returns sections in order."},
+                  "max_chars": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 20000}},
+                 ["pmcid"]), paper_fulltext),
+    Tool("clinical_trial_search",
+         "Search ClinicalTrials.gov online for registered studies by condition, optional intervention and recruitment status. "
+         "Returns NCT IDs, titles, source URLs, status, phase, last update, summaries, eligibility and up to five locations. "
+         "Summary and eligibility text are capped at 1000 and 3000 characters; truncation is reported. "
+         "Registry records do not establish treatment effectiveness or individual eligibility. Failures return an error object.",
+         _schema({"condition": {"type": "string", "description": "Disease or condition, e.g. psoriasis."},
+                  "intervention": {"type": "string", "default": "", "description": "Optional drug or intervention name."},
+                  "status": {"type": "string", "enum": [""] + _TRIAL_STATUSES, "default": "",
+                             "description": "Optional registry status, e.g. RECRUITING or COMPLETED; empty means all statuses."},
+                  "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5}},
+                 ["condition"]), clinical_trial_search),
 ]
+
+
+def make_tools(dataset_dir=None, episode_id=None):
+    from ama.image_analysis_tools import make_image_analysis_tool
+    return list(TOOLS) + [make_image_analysis_tool()]
