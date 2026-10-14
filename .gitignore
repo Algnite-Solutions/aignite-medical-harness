@@ -14,3 +14,6 @@ datasets/mimic_cdm/
 _agent/
 
 local_data/
+
+# Local CXR onboarding plans and validation notes.
+docs/mimic-cxr-rexrank-radgraph-v1*
