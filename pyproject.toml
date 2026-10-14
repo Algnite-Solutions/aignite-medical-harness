@@ -19,6 +19,9 @@ ama = "ama.cli:main"
 where = ["src"]
 include = ["ama*"]
 
+[tool.setuptools.package-data]
+ama = ["guidelines.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

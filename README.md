@@ -61,6 +61,40 @@ Tools return text, JSON or `ToolResult(text="scan", images=["scan.jpg"])`.
 Calls execute sequentially with original IDs; all tool results precede image attachments.
 Tool errors go back to the model. API errors terminate the episode instead of prompting a repair.
 
+Biomedical retrieval is available with `--tools src/ama/medical_tools.py`:
+
+```bash
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools src/ama/medical_tools.py
+```
+
+This registers two tools: `pubmed_search(query, retmax=5, abstract=True)` and
+`guideline_search(query, max_results=5, live=True)`.
+PubMed uses ESearch then EFetch, falling back to ESummary without abstracts. Guideline search
+combines a small bundled KDIGO index with live Europe PMC guideline results, sorted by citations;
+`max_results` limits live results, while local matches are additional. Set `live=False` for offline search.
+Publication-type matches can include reporting guidelines; check scope and date before using results.
+Successful searches return lists; failures return `{"error": ...}` and partial guideline searches
+also include `results`. Requests time out after 20 seconds and downloads are limited to 4 MiB.
+These tools add no third-party dependencies and do not release dataset evidence IDs.
+
+Optional environment variables (also supported in `.env`): `NCBI_EMAIL` for caller contact,
+`NCBI_API_KEY` for NCBI's higher request limit, and `AMA_GUIDELINES_PATH` for a custom UTF-8
+JSON index. The index is a list of objects with `title` and `url`; `org`, `year`, `keywords`,
+`key_points`, `abstract` and `pub_type` are optional. The bundled index is a starter, not comprehensive.
+NCBI requests are spaced within this process; coordinate limits separately for multiple processes.
+See the official [NCBI usage policy](https://www.ncbi.nlm.nih.gov/books/NBK25497/)
+and [Europe PMC API documentation](https://europepmc.org/RestfulWebService).
+
+To combine retrieval with MIMIC case tools, pass a trusted Python file exporting this factory:
+
+```python
+from ama.medical_tools import TOOLS
+from ama.importers.mimic_cdm_tools import make_tools as case_tools
+
+def make_tools(dataset_dir, episode_id):
+    return case_tools(dataset_dir, episode_id) + TOOLS
+```
+
 ## Read in four steps
 
 1. [model.py](src/ama/model.py): registration, image encoding and one request.

@@ -47,6 +47,23 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
 `--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
+联网医学检索通过 `--tools src/ama/medical_tools.py` 启用，注册两个函数：
+
+- `pubmed_search(query, retmax=5, abstract=True)`：检索 PubMed，返回 PMID、标题、期刊、年份、摘要和链接；摘要读取失败时退回无摘要的元数据。
+- `guideline_search(query, max_results=5, live=True)`：合并本地精选索引与 Europe PMC 指南检索；联网结果按被引次数排序。`max_results` 只限制联网结果，本地匹配另计；`live=False` 完全离线。
+
+```bash
+ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 --tools src/ama/medical_tools.py
+```
+
+成功检索返回列表，失败返回 `{"error": ...}`；指南检索部分失败时还会通过 `results` 保留可用结果。
+工具仅使用标准库，单次联网超时 20 秒、下载上限 4 MiB，不注册病例 evidence ID。
+可在环境变量或 `.env` 配置 `NCBI_EMAIL`、`NCBI_API_KEY`；NCBI 限流在当前进程内生效，多进程需另行协调。
+`AMA_GUIDELINES_PATH` 可指定自定义 UTF-8 JSON 索引：对象列表，每项必须有 `title` 和 `url`，
+可附 `org`、`year`、`keywords`、`key_points`、`abstract` 和 `pub_type`。
+内置索引仅提供 KDIGO 2024 CKD 作为起点，完整性依赖联网查询或自行维护索引。
+与 MIMIC 病例工具一起加载的方法见 [英文说明](README.md#optional-tools)。
+
 ## 阅读顺序
 
 按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读
