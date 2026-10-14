@@ -46,7 +46,9 @@ def _eval_run(run_dir: Path, scorer_override=None):
     scorer = scorer_override or (dataset.eval_config.scorer if dataset.eval_config else "unscored")
     if scorer not in REGISTRY:
         raise ValueError(f"unknown scorer: {scorer}")
-    result = REGISTRY[scorer](dataset, decisions)
+    history_path = run_dir / "messages.json"
+    histories = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else None
+    result = REGISTRY[scorer](dataset, decisions, histories=histories)
     quality = output_metrics([row for episode in dataset.episodes
                               for row in expected_rows(episode, decisions)],
                              manifest.get("output_contract_version"))

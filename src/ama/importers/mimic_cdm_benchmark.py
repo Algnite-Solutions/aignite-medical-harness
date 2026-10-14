@@ -185,7 +185,7 @@ def _diagnosis_label(value: object) -> tuple[str | None, str]:
     return matches[0], "mapped"
 
 
-def score_mimic_cdm_open(dataset, decisions: dict[str, list[dict]]) -> dict:
+def score_mimic_cdm_open(dataset, decisions: dict[str, list[dict]], *, histories=None) -> dict:
     """Conservative automatic top-1 score; expose answers needing blinded review."""
     from ..scorer import expected_rows
 

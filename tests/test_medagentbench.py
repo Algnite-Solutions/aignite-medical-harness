@@ -6,6 +6,9 @@ import pytest
 
 from ama.data import load_dataset, validate_dataset
 from ama.importers import medagentbench as med
+from ama.runner import execute
+from ama.tools import load_tools
+from fakes import FakeModel, call, calls, decision
 
 
 @pytest.fixture
@@ -94,7 +97,9 @@ def test_offline_import_structure_and_isolation(source, snapshot, tmp_path, monk
     for name in ("refsol.py", "utils.py"):
         assert (out / "evaluator" / name).read_bytes() == (source / "src/server/tasks/medagentbench" / name).read_bytes()
     assert (out / "DATASET_CARD.zh-CN.md").is_file()
-    assert not report["scorer_implemented"] and not report["tools_implemented"]
+    assert report["scorer_implemented"] and report["tools_implemented"]
+    assert "AMA answer object" in (out / "instructions.txt").read_text()
+    assert "FINISH" not in (out / "instructions.txt").read_text()
 
 
 def test_normalization_preserves_source_facts(resources):
@@ -266,6 +271,200 @@ def test_cli_success_and_failure(source, snapshot, tmp_path, capsys):
     out = tmp_path / "cli"
     args = ["--source", str(source), "--snapshot", str(snapshot), "--out", str(out), "--limit", "1"]
     assert med.main(args) == 0
-    assert "not yet implemented" in capsys.readouterr().out
+    assert "scorer available" in capsys.readouterr().out
     assert med.main(args) == 1
     assert "already exists" in capsys.readouterr().out
+
+
+@pytest.fixture
+def tool_dataset(source, snapshot, tmp_path):
+    out = tmp_path / "dataset"
+    med.import_medagentbench(source, out, snapshot=snapshot, ids=["task3_1", "task9_1"])
+    return out
+
+
+TOOLS_FILE = Path("src/ama/importers/medagentbench.py")
+
+
+def episode_tools(folder, episode="task3_1"):
+    return {t.name: t for t in load_tools(TOOLS_FILE, dataset_dir=folder, episode_id=episode)}
+
+
+def invoke(tool, **arguments):
+    return tool.invoke(json.dumps(arguments))
+
+
+def medication(**fields):
+    return {"order_type": "medication", "patient_id": "P1",
+            "code": {"system": "http://hl7.org/fhir/sid/ndc", "code": "40032-917-01"},
+            "authored_at": "2023-11-13T10:15:00+00:00", "status": "active", "intent": "order",
+            "dose": {"value": 20, "unit": "mEq"}, "route": "oral", **fields}
+
+
+def service(kind="test", **fields):
+    return {"order_type": kind, "patient_id": "P1",
+            "code": {"system": "http://loinc.org", "code": "2823-3"},
+            "authored_at": "2023-11-13T10:15:00+00:00", "status": "active", "intent": "order",
+            "priority": "stat", **fields}
+
+
+def observation(**fields):
+    return {"patient_id": "P1", "code": "BP", "value": "118/77", "unit": "mmHg",
+            "observed_at": "2023-11-13T10:15:00+00:00", "category": "vital-signs",
+            "status": "final", **fields}
+
+
+def test_tools_load_through_existing_file_interface_without_private_data(tool_dataset, monkeypatch):
+    original = Path.open
+    def public_only(path, *args, **kwargs):
+        assert path.name not in {"targets.jsonl", "eval.json", "refsol.py", "utils.py", "funcs_v1.json"}
+        assert "snapshot" not in path.parts and "evaluator" not in path.parts
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", public_only)
+    monkeypatch.setattr(med.urllib.request, "urlopen", lambda *a, **k: pytest.fail("unexpected network"))
+    monkeypatch.setattr(med.urllib.request.OpenerDirector, "open", lambda *a, **k: pytest.fail("unexpected network"))
+    tools = episode_tools(tool_dataset)
+    assert set(tools) == {"patient_search", "patient_information", "laboratory_results",
+                          "submit_order", "record_observation"}
+    for tool in tools.values():
+        assert tool.definition()["function"]["parameters"]["additionalProperties"] is False
+        assert '"$ref"' not in json.dumps(tool.parameters)
+    assert tools["record_observation"].parameters["properties"]["observation"]["type"] == "object"
+    assert tools["submit_order"].parameters["properties"]["order"]["type"] == "object"
+    assert tools["record_observation"].parameters["properties"]["observation"]["properties"]["patient_id"]["type"] == "string"
+    assert json.loads(invoke(tools["patient_search"], identifier="M1").text)["patients"][0]["patient_id"] == "P1"
+    assert json.loads(invoke(tools["laboratory_results"], patient_id="P1", code="GLU").text)["total"] == 2
+    assert json.loads(invoke(tools["submit_order"], order=medication()).text)["status"] == "accepted"
+    assert json.loads(invoke(tools["record_observation"], observation=observation()).text)["status"] == "accepted"
+    with pytest.raises(ValueError, match="require"):
+        med.make_tools(tool_dataset, None)
+
+
+def test_patient_search_uses_source_identifiers_and_name_filters(tool_dataset):
+    rows = med._read_jsonl(tool_dataset / "patients.jsonl")
+    rows[0]["names"].append({"given": ["Jane"], "family": "Alias"})
+    rows.append({**rows[0], "patient_id": "P3"})  # Ambiguity must not pick an answer.
+    med._jsonl(tool_dataset / "patients.jsonl", rows)
+    tools = episode_tools(tool_dataset)
+    result = invoke(tools["patient_search"], identifier="M1", limit=1)
+    page = json.loads(result.text)
+    assert page["total"] == 2 and page["next_offset"] == 1
+    assert result.evidence_ids == ["patient-P1"]
+    assert "age" not in page["patients"][0]
+    result = invoke(tools["patient_search"], given="alice", family="EXAMPLE", birth_date="1980-02-29", offset=1)
+    assert [p["patient_id"] for p in json.loads(result.text)["patients"]] == ["P3"]
+    assert result.evidence_ids == ["patient-P3"]
+    assert json.loads(invoke(tools["patient_search"], given="Alice", family="Alias").text)["patients"] == []
+    assert invoke(tools["patient_search"], identifier="unknown").evidence_ids == []
+    result = invoke(tools["patient_information"], patient_id="P2")
+    assert "birth_date" not in json.loads(result.text)["patient"]
+    assert result.evidence_ids == ["patient-P2"]
+    with pytest.raises(ValueError, match="unknown patient_id"):
+        invoke(tools["patient_information"], patient_id="M1")
+    for args in ({}, {"identifier": 1}, {"identifier": " "}, {"identifier": "M1", "limit": True}):
+        with pytest.raises(ValueError):
+            invoke(tools["patient_search"], **args)
+
+
+def test_laboratory_pages_preserve_units_times_missing_values_and_evidence(tool_dataset):
+    cases = med._read_jsonl(tool_dataset / "cases.jsonl")
+    missing = {**cases[0]["observations"][0], "source_id": "O4", "evidence_id": "observation-O4"}
+    missing.pop("value")
+    cases[0]["observations"].append(missing)
+    med._jsonl(tool_dataset / "cases.jsonl", cases)
+    tool = episode_tools(tool_dataset)["laboratory_results"]
+    first = invoke(tool, patient_id="P1", code="GLU", limit=1)
+    page = json.loads(first.text)
+    assert page["total"] == 3 and page["next_offset"] == 1
+    assert first.evidence_ids == ["observation-O1"]
+    row = page["results"][0]
+    assert row["value"] == 4.25 and row["unit"] == "mmol/L" and row["comparator"] == "<"
+    assert row["observed_at"] == "2023-11-13T10:15:00.123+08:00"
+    last = invoke(tool, patient_id="P1", code="GLU", offset=1)
+    page = json.loads(last.text)
+    assert page["next_offset"] is None
+    assert page["results"][0]["value"] == 93 and page["results"][0]["unit"] == "mg/dL"
+    assert "value" not in page["results"][1]
+    assert last.evidence_ids == ["observation-O2", "observation-O4"]
+    assert invoke(tool, patient_id="P2").evidence_ids == []
+    assert invoke(tool, patient_id="P1", code="MISSING").evidence_ids == []
+    # Source order is unchanged even if a time filter is supplied. Boundaries are inclusive.
+    filtered = invoke(tool, patient_id="P1", code="GLU", after="2023-11-13T02:15:00.123Z",
+                      before="2023-11-13T02:15:00.123+00:00")
+    assert filtered.evidence_ids == ["observation-O1", "observation-O4"]
+    filtered = invoke(tool, patient_id="P1", after="2023-11-12T00:00:00Z")
+    assert "observation-O3" not in filtered.evidence_ids  # Untimed BP stays absent from timed queries.
+    for args in ({"after": "2023-11-13"}, {"after": "2023-11-14T00:00Z", "before": "2023-11-13T00:00Z"},
+                 {"limit": 201}, {"offset": -1}, {"code": []}):
+        with pytest.raises(ValueError):
+            invoke(tool, patient_id="P1", **args)
+
+
+def test_submissions_preserve_wrong_clinical_decisions_without_changing_facts(tool_dataset):
+    before = {name: med._sha(tool_dataset / name) for name in ("patients.jsonl", "cases.jsonl")}
+    tools = episode_tools(tool_dataset)
+    # Incorrect patient, code, dose and time are decisions for the future scorer,
+    # not reasons for the tool to repair the model's output.
+    wrong = medication(patient_id="wrong-patient", dose={"value": -999, "unit": "wrong-unit"},
+                       code={"system": "wrong-system", "code": "wrong-code"}, route="wrong-route",
+                       authored_at="2000-01-01T00:00:00Z")
+    first = json.loads(invoke(tools["submit_order"], order=wrong).text)
+    assert first["order"] == wrong and first["simulation"] is True
+    assert first["submission_id"] == "submission-task3_1-1"
+    assert "rate" not in first["order"]  # No hidden clinical defaults.
+    second = json.loads(invoke(tools["submit_order"], order=wrong).text)
+    assert second["submission_id"] == "submission-task3_1-2"  # Duplicate submits remain distinct.
+    for kind in ("test", "referral"):
+        data = service(kind, occurrence_at="2023-11-14T08:00:00Z", note="SBAR text")
+        assert json.loads(invoke(tools["submit_order"], order=data).text)["order"] == data
+    result = invoke(tools["record_observation"], observation=observation())
+    assert json.loads(result.text)["observation"] == observation()
+    assert result.evidence_ids == ["submission-task3_1-5"]
+    other = episode_tools(tool_dataset, "task9_1")
+    assert json.loads(invoke(other["submit_order"], order=medication()).text)["submission_id"] == "submission-task9_1-1"
+    restart = episode_tools(tool_dataset)
+    assert json.loads(invoke(restart["submit_order"], order=medication()).text)["submission_id"] == "submission-task3_1-1"
+    assert before == {name: med._sha(tool_dataset / name) for name in before}
+    assert json.loads(invoke(tools["laboratory_results"], patient_id="P1").text)["total"] == 3
+
+
+def test_malformed_submissions_are_rejected_without_receipts(tool_dataset):
+    tools = episode_tools(tool_dataset)
+    missing = medication()
+    del missing["route"]
+    invalid = [missing, medication(dose={"value": True, "unit": "g"}), medication(extra="unexpected"),
+               medication(authored_at="2023-11-13T10:15:00"), medication(dose={"value": float("nan"), "unit": "g"}),
+               medication(order_type="unsupported"), medication(patient_id=" "), service(occurrence_at="bad"),
+               service(authored_at="2023-11-13T10:15:00"), service(authored_at="bad")]
+    for order in invalid:
+        with pytest.raises(ValueError):
+            invoke(tools["submit_order"], order=order)
+    for row in (observation(observed_at="bad"), observation(value=True), observation(value=""), observation(unit=None)):
+        with pytest.raises(ValueError):
+            invoke(tools["record_observation"], observation=row)
+    assert json.loads(invoke(tools["submit_order"], order=medication()).text)["submission_id"] == "submission-task3_1-1"
+
+
+def test_runner_persists_calls_errors_receipts_in_order_and_native_answer(tool_dataset, tmp_path):
+    order = medication()
+    followup = service(occurrence_at="2023-11-14T08:00:00+00:00")
+    bad = {**order, "authored_at": "no-time"}
+    model = FakeModel(calls(call("submit_order", json.dumps({"order": bad}), id="bad")),
+                      calls(call("submit_order", json.dumps({"order": order}), id="med"),
+                            call("submit_order", json.dumps({"order": followup}), id="lab")),
+                      decision(answer={"completed": True, "value": 3.3},
+                               citations=["submission-task9_1-1", "submission-task9_1-2"]))
+    run = execute(tool_dataset, model, episode_ids=["task9_1"], tools_path=TOOLS_FILE,
+                  runs_root=tmp_path / "runs")
+    history = json.loads((run / "messages.json").read_text())["task9_1"]
+    results = [row for row in history if row["role"] == "tool"]
+    assert [row["tool_call_id"] for row in results] == ["bad", "med", "lab"]
+    assert "error" in json.loads(results[0]["content"])
+    receipts = [json.loads(row["content"].split("\nCiteable evidence IDs:")[0]) for row in results[1:]]
+    assert [row["order"] for row in receipts] == [order, followup]
+    assert [row["submission_id"] for row in receipts] == ["submission-task9_1-1", "submission-task9_1-2"]
+    output = json.loads((run / "decisions.jsonl").read_text())
+    assert output["termination"] == "completed"
+    assert output["decision"]["answer"] == {"completed": True, "value": 3.3}
+    assert "PRIVATE_MRN" not in json.dumps(model.requests) and "PRIVATE_ANSWER" not in json.dumps(model.requests)
+    assert json.loads((run / "manifest.json").read_text())["tools"] == str(TOOLS_FILE.resolve())
