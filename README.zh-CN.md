@@ -69,7 +69,9 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 
 内置 importer 支持 ROCOv2 和 MIMIC-CXR。ROCOv2 每张图像是一例、一轮，也支持有序多轮数据。
 MIMIC-CXR 每个 study 是一例，同一轮提供该 study 的全部图片，报告仅供评测读取；
-当前 scorer 为 `unscored`。见 [MIMIC-CXR 数据卡与使用说明](datasets/mimic_cxr/DATASET_CARD.zh-CN.md)。
+raw importer 的 scorer 为 `unscored`；另有固定 100 例 ReXrank/RadGraph 任务。
+见 [MIMIC-CXR 数据卡与使用说明](datasets/mimic_cxr/DATASET_CARD.zh-CN.md)，
+或执行 `bash scripts/run_mimic_cxr.sh --help`。完整数据位于 `processed/`，运行记录单独保存。
 
 ```bash
 ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100

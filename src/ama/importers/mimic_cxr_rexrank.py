@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 
 from ..data import validate_dataset
-from .mimic_cxr import decode_image, digest, json_file, jsonl, safe_path, staging
+from .mimic_cxr import TASK_INSTRUCTIONS, decode_image, digest, json_file, jsonl, safe_path, staging
 
 REVISION = "0a18a41e580992ac7cd32a8a9463009654f0d390"
 SOURCE_SHA256 = "39fe05a446cebd7af4507681cc423b04409eaf8d205ad40b6a043168a14059df"
@@ -146,10 +146,7 @@ def materialize(source: Path, cohort: Path, image_root: Path, out: Path) -> dict
         json_file(stage / "cohort.json", {**frozen, "materialized": True,
                                          "cohort_sha256": digest(cohort),
                                          "split_csv_sha256": digest(split_path)})
-        (stage / "instructions.txt").write_text(
-            'Write an English chest X-ray report using all supplied images and views. '
-            'Return answer {"findings": "...", "impression": "..."} in the required Decision. '
-            'Cite supplied image Evidence IDs. Do not invent prior-study comparisons.\n', encoding="utf-8")
+        (stage / "instructions.txt").write_text(TASK_INSTRUCTIONS, encoding="utf-8")
         errors = validate_dataset(stage)
         if errors:
             raise ValueError("invalid dataset: " + "; ".join(errors))

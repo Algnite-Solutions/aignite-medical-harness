@@ -14,6 +14,11 @@ from ..dataset_card import write_dataset_cards
 
 PARSER = "explicit-sections-v1"
 OFFICIAL_REFERENCE = "31901464793d0bb23835092f05bd1aba6af7baff"
+TASK_INSTRUCTIONS = (
+    'Write an English chest X-ray report using all supplied images and views of the current study.\n'
+    'Put the report in answer as {"findings": "...", "impression": "..."}; both values must be strings.\n'
+    'Do not invent prior-study comparisons.\n'
+)
 
 
 def parse_sections(text: str) -> dict[str, str]:
@@ -169,10 +174,7 @@ def import_mimic_cxr(source: Path, out: Path, split: str = "validate",
         jsonl(stage / "provenance.jsonl", provenance)
         json_file(stage / "import_report.json", report)
         json_file(stage / "eval.json", {"scorer": "unscored"})
-        (stage / "instructions.txt").write_text(
-            'Write findings and impression in English from all supplied images of the current chest study.\n'
-            'Use answer {"findings": "...", "impression": "..."}. Cite only supplied image Evidence IDs; '
-            'citing every image is not required and does not measure clinical correctness.\n', encoding="utf-8")
+        (stage / "instructions.txt").write_text(TASK_INSTRUCTIONS, encoding="utf-8")
         write_dataset_cards(stage, name=out.name, source="MIMIC-CXR-JPG 2.1.0; standalone raw package",
             license_name="PhysioNet credentialed data terms apply; no redistribution of real cases.",
             purpose_en="Onboarding derived current-study-only report generation task.", purpose_zh="Onboarding 派生任务：仅当前 study 的报告生成。",

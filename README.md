@@ -86,6 +86,11 @@ The later-added Symptom2Disease importer and text demo are documented in the
 [Symptom2Disease demo data card](datasets/symptom2disease_demo/DATASET_CARD.md),
 including import, validation, and run instructions.
 
+MIMIC-CXR report generation and the fixed100 ReXrank/RadGraph subset are documented in the
+[CXR data card](datasets/mimic_cxr/DATASET_CARD.md). Start with
+`bash scripts/run_mimic_cxr.sh --help`; prepared datasets live under `processed/`,
+and run records remain separate.
+
 ### Credentialed MIMIC-CDM import
 
 The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and

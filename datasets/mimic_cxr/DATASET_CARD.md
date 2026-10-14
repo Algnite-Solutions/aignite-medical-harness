@@ -28,9 +28,9 @@ cases, not an independent test set. The offline suite passed 83 tests. Three GLM
 passed output-format validation in 2/3, 2/3, and 3/3 cases respectively; these are not clinical
 accuracy scores or evidence of long-term reliability.
 
-Scorer: `unscored`; evaluation aggregate is null. Report-quality scoring and public-baseline
-numerical reproduction remain unfinished. Current-only inputs and strict section extraction
-are not guaranteed to match a published evaluation protocol.
+The raw importer above remains `unscored`. Use the separate ReXrank preparation route below
+for report-quality scoring. Its authoritative references differ; overriding the scorer name
+alone does not convert a raw-importer dataset into the ReXrank task.
 
 ## Usage
 
@@ -72,6 +72,58 @@ ama run local_data/mimic_cxr/processed_validate_demo \
 ama eval local_data/mimic_cxr/runs/<run-directory>
 ```
 
-The supplied prompt is the v3 text used in the third trial; `--instruction-file` overrides
-the importer's default prompt. Keep real images, reports, and individual run records in
+The supplied prompt now specifies only the task and inner answer fields; the runner defines
+the Decision envelope. Historical format results do not validate this revised prompt.
+Keep real images, reports, and individual run records in
 ignored `local_data/`, outside the code submission.
+
+## ReXrank fixed100 and RadGraph scoring
+
+Use `data/mimic-cxr/ReXRank_MIMICCXR_test.json` from the
+[pinned ReXrank revision](https://github.com/rajpurkarlab/ReXrank/tree/0a18a41e580992ac7cd32a8a9463009654f0d390).
+Sort numeric study IDs, sample 100 without replacement using seed 42, then sort the sample:
+100 studies, 164 images. The official `report` is the evaluator-only reference, bypassing
+the raw section parser. Missing impression NaN values become empty strings only in the
+auxiliary answer fields. Inputs include all current-study images and views, without context/history.
+
+```bash
+python3 -m pip install -e '.[dev,mimic-cxr,cxr-radgraph]'
+export AMA_DATA_PATH=local_data
+export REXRANK_JSON=/path/to/ReXRank_MIMICCXR_test.json
+export IMAGE_ROOT=/path/to/mimic-cxr-jpg-2.1.0
+bash scripts/run_mimic_cxr.sh freeze
+bash scripts/run_mimic_cxr.sh import
+bash scripts/run_mimic_cxr.sh setup
+bash scripts/run_mimic_cxr.sh validate
+```
+
+`IMAGE_ROOT` must contain `files/` and the official split CSV. The complete runnable dataset
+is `$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset/`, with the frozen
+manifest in the adjacent `cohort/`. Override `BENCHMARK_DIR` as needed. Prepared run/eval
+does not require the original JSON or NAS images. freeze/import reject existing destinations.
+
+```bash
+bash scripts/run_mimic_cxr.sh --help
+bash scripts/run_mimic_cxr.sh run YOUR_VISION_MODEL_ALIAS
+bash scripts/run_mimic_cxr.sh eval runs/mimic-cxr-rexrank-fixed100-seed42/RUN_ID
+# Existing CLI works directly too:
+ama run "$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset" \
+  --model YOUR_VISION_MODEL_ALIAS --split test --max-calls 1 --timeout 300
+ama eval runs/RUN_ID
+```
+
+The script reuses the AMA runner and adds no envelope contract or batch resume/retry logic.
+Run records default to local `runs/mimic-cxr-rexrank-fixed100-seed42`, outside processed data.
+
+`mimic_cxr_radgraph_v1` implements the entity/relation F1 average defined by
+[ReXrank-metric](https://github.com/rajpurkarlab/ReXrank-metric/tree/d6be67831ef933dc91f01892303a40ebc6cc9549),
+then macro-averages across expected studies. Invalid/missing reports score zero; valid-report
+mean, failures and output format quality are reported separately. Extractor failures raise errors.
+Inference uses pinned `radgraph==0.1.18`, `model_type=radgraph`, weights and tokenizer/config
+on CPU offline. Setup accepts `HF_ENDPOINT` while retaining pinned hash checks; set
+`AMA_RADGRAPH_CACHE` for a custom cache directory.
+
+This is an image-only onboarding subset. Official metric functions agree on shared annotations;
+equivalence to the legacy extractor remains unverified. Scores are neither full official leaderboard
+results nor clinical diagnosis accuracy. Commit code, task instructions, dataset cards and synthetic
+tests; keep real data, per-case results, plans and audit artifacts local.

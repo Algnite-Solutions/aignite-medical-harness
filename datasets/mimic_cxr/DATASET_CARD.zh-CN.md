@@ -24,8 +24,8 @@ study 胸片报告生成任务。完整报告来自 MIMIC-CXR，需另行准备�
 它们是提示词调试样本，不是独立测试集。离线测试 83 项通过；GLM 三轮输出格式通过数
 依次为 2/3、2/3、3/3，不能据此推断医学正确率或长期稳定性。
 
-Scorer 为 `unscored`，eval 的 aggregate 为 null。报告质量指标和公开基线数值对齐
-尚未完成；当前输入和严格章节规则不保证与公开基线一致。
+上述 raw importer 的 scorer 仍为 `unscored`。带报告质量评分的 ReXrank 子集使用下文
+单独的准备入口；两条路线的参考报告构造不同，不能仅覆盖 scorer 名称混用。
 
 ## 使用方法
 
@@ -65,5 +65,53 @@ ama run local_data/mimic_cxr/processed_validate_demo \
 ama eval local_data/mimic_cxr/runs/<运行目录>
 ```
 
-本目录提示词为第三轮实际使用的 v3，通过 `--instruction-file` 替换 importer 默认指令。
+本目录提示词现只说明任务和 answer 内部字段，外层 Decision 由 runner 统一规定。
+上述三轮历史格式结果不代表新提示词已经完成模型验证。
 真实图片、报告和逐例运行记录应保留在忽略的 `local_data/`，不随代码提交。
+
+## ReXrank 100 例与 RadGraph 评分
+
+从 [ReXrank 固定版本](https://github.com/rajpurkarlab/ReXrank/tree/0a18a41e580992ac7cd32a8a9463009654f0d390)
+的 `data/mimic-cxr/ReXRank_MIMICCXR_test.json` 抽样。先按 study_id 数值排序，再以 seed=42
+无放回选 100 例，输出再排序；共 164 张图。保留官方 `report` 作为 evaluator-only reference，
+不经 raw importer 的 section parser。官方缺失 impression 的 NaN 转为空字符串，仅影响
+辅助 answer 字段，不改 reference。输入为当前 study 全部图片和视角，不含 context/history。
+
+```bash
+python3 -m pip install -e '.[dev,mimic-cxr,cxr-radgraph]'
+export AMA_DATA_PATH=local_data
+export REXRANK_JSON=/path/to/ReXRank_MIMICCXR_test.json
+export IMAGE_ROOT=/path/to/mimic-cxr-jpg-2.1.0
+bash scripts/run_mimic_cxr.sh freeze
+bash scripts/run_mimic_cxr.sh import
+bash scripts/run_mimic_cxr.sh setup
+bash scripts/run_mimic_cxr.sh validate
+```
+
+`IMAGE_ROOT` 须包含 `files/` 与官方 split CSV。完整可运行数据位于
+`$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset/`，相邻 `cohort/` 保存
+固定清单。可覆盖 `BENCHMARK_DIR`；准备后 run/eval 不再读取源 JSON 或 NAS 图片。
+`freeze/import` 拒绝覆盖已有输出。
+
+```bash
+bash scripts/run_mimic_cxr.sh --help
+bash scripts/run_mimic_cxr.sh run YOUR_VISION_MODEL_ALIAS
+bash scripts/run_mimic_cxr.sh eval runs/mimic-cxr-rexrank-fixed100-seed42/RUN_ID
+# 也可直接使用原有 CLI：
+ama run "$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset" \
+  --model YOUR_VISION_MODEL_ALIAS --split test --max-calls 1 --timeout 300
+ama eval runs/RUN_ID
+```
+
+脚本复用 AMA runner，不另定义外层格式。当前 run 入口没有批量续跑/重试能力。
+运行记录默认放本地 `runs/mimic-cxr-rexrank-fixed100-seed42`，不进入 processed 数据集。
+
+`mimic_cxr_radgraph_v1` 按 [ReXrank-metric 的定义](https://github.com/rajpurkarlab/ReXrank-metric/tree/d6be67831ef933dc91f01892303a40ebc6cc9549)
+计算实体集合 F1、关系集合 F1，再取平均，最后逐 study 宏平均。无有效报告的病例记 0，
+保留在期望例数分母；有效报告均分、失败数、输出格式质量分开报告。抽取器故障直接报错。
+使用固定权重的 `radgraph==0.1.18`、`model_type=radgraph`，本地 CPU 离线推理；setup 的下载
+可设置 `HF_ENDPOINT`，下载仍校验固定 hash。自定义缓存时设置 `AMA_RADGRAPH_CACHE`。
+
+这是 image-only 的 100 例 onboarding 子集；同一 annotations 上的官方评分函数对账通过，
+新版包与 legacy 抽取环境等价性未验证。分数不是完整官方榜单成绩，也不是临床诊断准确率。
+这里只提交代码、数据卡、任务指令和 synthetic 测试；真实数据、逐例结果、计划和审计文件留本地。
