@@ -32,7 +32,7 @@ def expected_rows(episode, decisions):
              **indexed.get(turn.id, {})} for turn in episode.turns]
 
 
-def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def score_unscored(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]], *, histories=None) -> dict[str, Any]:
     per = {}
     for ep in dataset.episodes:
         rows = expected_rows(ep, decisions)
@@ -71,7 +71,7 @@ def _prf(overlap: int, predicted: int, gold: int) -> dict[str, dict[str, Any]]:
     }
 
 
-def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]], *, histories=None) -> dict[str, Any]:
     """Score normalized caption token overlap and unordered UMLS CUI overlap."""
     per_episode: dict[str, Any] = {}
     totals = {"caption_overlap": 0, "caption_predicted": 0, "caption_gold": 0,
@@ -141,8 +141,9 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
 
 from .importers.mimic_cdm import score_mimic_cdm
 from .importers.mimic_cdm_benchmark import score_mimic_cdm_open
+from .importers.medagentbench import score_medagentbench
 from .importers.symptom2disease import SCORER as SYMPTOM2DISEASE_SCORER, score_symptom2disease
 
 REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored,
             "mimic_cdm": score_mimic_cdm, "mimic_cdm_open": score_mimic_cdm_open,
-            SYMPTOM2DISEASE_SCORER: score_symptom2disease}
+            SYMPTOM2DISEASE_SCORER: score_symptom2disease, "medagentbench": score_medagentbench}
