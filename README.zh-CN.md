@@ -64,6 +64,17 @@ ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 -
 内置索引仅提供 KDIGO 2024 CKD 作为起点，完整性依赖联网查询或自行维护索引。
 与 MIMIC 病例工具一起加载的方法见 [英文说明](README.md#optional-tools)。
 
+真实 API 工具调用测试（PowerShell；从本地 `.env` 读取 `DEEPSEEK_API_KEY`）：
+
+```powershell
+$env:RUN_API_TESTS = "1"
+python -X utf8 -m pytest -q tests/test_medical_tools_api.py
+Remove-Item Env:RUN_API_TESTS
+```
+
+两个用例分别检查 DeepSeek 调用 PubMed 检索与离线指南检索，并使用工具返回值回答。
+默认测试会跳过它们；显式启用会消耗模型 API 额度，PubMed 用例还需访问 NCBI。
+
 ## 阅读顺序
 
 按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读

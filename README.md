@@ -85,6 +85,12 @@ NCBI requests are spaced within this process; coordinate limits separately for m
 See the official [NCBI usage policy](https://www.ncbi.nlm.nih.gov/books/NBK25497/)
 and [Europe PMC API documentation](https://europepmc.org/RestfulWebService).
 
+For a real DeepSeek tool-call smoke test, set `DEEPSEEK_API_KEY` in the environment or local
+`.env`, then run `RUN_API_TESTS=1 python -m pytest -q tests/test_medical_tools_api.py`.
+The two cases check PubMed search and offline guideline search, including use of the returned
+value in the final answer. They are skipped by default; opting in consumes model API credits
+and the PubMed case also requires NCBI access.
+
 To combine retrieval with MIMIC case tools, pass a trusted Python file exporting this factory:
 
 ```python
