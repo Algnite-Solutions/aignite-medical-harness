@@ -7,7 +7,7 @@ name = "ama"
 version = "0.1.0"
 description = "ama — aigne-medical-agent: minimal research runner (Episode → Turn → Evidence → Decision)"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.7"]
+dependencies = ["pydantic>=2.7", "openpyxl>=3.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

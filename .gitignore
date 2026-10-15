@@ -10,5 +10,8 @@ runs/
 **/provenance.jsonl
 dist/
 .DS_Store
+
+# SRRSH ICC 真实临床数据（PHI）：脱敏前不得进入仓库
+datasets/srrsh_icc*/
 datasets/mimic_cdm/
 _agent/
