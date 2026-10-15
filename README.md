@@ -74,21 +74,17 @@ The [Chinese code walkthrough](docs/minimal-agent.zh-CN.md) includes runnable re
 
 ```bash
 ama import rocov2 --source /path/to/ROCOv2 --out datasets/rocov2 --split test --limit 100
-ama import icc-xlsx --source ICC临床数据.xlsx --out datasets/srrsh_icc [--id ID ...] [--mri-source ICC核磁影像报告.xlsx]
 ```
 
 For a subset, use `ama run datasets/rocov2 --model qwen36 --split test`, or repeat
 `--episode ID` instead of `--split`. Use `--runs-root path` to choose the output parent.
 
-Built-in importers/demos: ROCOv2 (each image is one episode/turn; ordered multi-turn datasets
-also work — see the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md))
-and SRRSH ICC (each patient is one single-turn episode with 5 table-derived evidence items:
-clinical baseline / lab panel / pre-op TACE / surgery / pathology, plus an optional 6th MRI-report
-evidence `mri-report-1` holding the full report verbatim when `--mri-source` is passed; the Turn is
-a structural container only, and outcome columns are never read — turn design and targets belong to
-the evaluation side). Timing and missingness provenance go to `provenance.jsonl`; the run loader
-never reads it. ⚠ ICC output contains real patient data (PHI): `datasets/srrsh_icc*/` is
-gitignored and must not be committed or shared before de-identification.
+ROCOv2 is the built-in `ama import` demo. Each image is one episode/turn; ordered multi-turn datasets
+also work. See the [format](docs/ama-dataset.md) and [data card](datasets/rocov2_demo/DATASET_CARD.md).
+
+The later-added Symptom2Disease importer and text demo are documented in the
+[Symptom2Disease demo data card](datasets/symptom2disease_demo/DATASET_CARD.md),
+including import, validation, and run instructions.
 
 ### Credentialed MIMIC-CDM import
 

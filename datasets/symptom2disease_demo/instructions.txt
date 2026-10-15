@@ -1,0 +1,3 @@
+Classify the patient's symptom description into exactly one of these 24 dataset labels:
+Acne, Arthritis, Bronchial Asthma, Cervical spondylosis, Chicken pox, Common Cold, Dengue, Dimorphic Hemorrhoids, Fungal infection, Hypertension, Impetigo, Jaundice, Malaria, Migraine, Pneumonia, Psoriasis, Typhoid, Varicose Veins, allergy, diabetes, drug reaction, gastroesophageal reflux disease, peptic ulcer disease, urinary tract infection.
+The answer must be an object with exactly one disease label in the disease field, for example {"disease": "Acne"}.

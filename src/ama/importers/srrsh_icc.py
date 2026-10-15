@@ -1,11 +1,12 @@
-"""SRRSH ICC 临床表 → AMA Dataset（ama-dataset 契约）。
+"""SRRSH ICC 临床表与多模态文件夹 → AMA Dataset。
 
 映射全部硬编码，不调用 LLM。每位患者生成一个单轮 Episode；该 Turn 只是
 结构性容器，不按术前/术后拆分。每例输出 5 条临床表 Evidence（id/type/text）：
 临床基线、血清学、术前 TACE、手术记录、术后病理与分期。
 MRI 报告全文可选：传入 mri_source 时按住院号 join 为第 6 条 evidence
 （mri-report-1，完整检查所见+诊断，检查日期未提供按术前解释）。
-MRI 序列影像、WSI、结局和评分 target 仍不在本 importer 范围内。
+多模态入口额外登记 MRI NIfTI 与病理 SVS 文件；这些文件只作为可追溯
+artifact 暴露给 runner，不在 importer 中解析像素。结局和评分 target 不导入。
 
 ama-dataset 契约对 Evidence/Turn 禁止额外字段，因此可审计信息不放数据集本体：
 - 逐条 Evidence 的 event_time 三件套 / 缺失清单 → provenance.jsonl（按 episode 一行）
@@ -16,12 +17,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
 
+from ..data import validate_dataset
 from ..dataset_card import write_dataset_cards
 
 SHEET_NAME = "ICC临床数据(合并版)"
@@ -640,3 +644,498 @@ def import_srrsh_icc(
         limitations_zh=limitations_zh,
     )
     return report
+
+
+# ---------------------------------------------------------------- multimodal folder importer
+
+CLINICAL_XLSX = Path("ICC临床数据.xlsx")
+REPORT_XLSX = Path("影像数据/ICC核磁影像报告.xlsx")
+MRI_DIR = Path("影像数据/初期182例ICC_MRI")
+WSI_DIR = Path("病理数据")
+REPORT_SHEET = "sheet1"
+REPORT_COLUMNS = ("住院号", "检查所见", "诊断")
+
+MRI_SEQUENCES = ("DWI", "T1_ART", "T1_DL", "T1_NC", "T1_PV", "T2")
+MRI_VARIANTS = ("raw", "n4", "roi")
+MRI_VARIANT_LABELS = {"raw": "原始", "n4": "N4 偏置场校正", "roi": "ROI 分割掩膜"}
+EXPECTED_MRI_KEYS = tuple(
+    (sequence, variant)
+    for sequence in MRI_SEQUENCES
+    for variant in MRI_VARIANTS
+)
+MULTIMODAL_TURN_MESSAGE = "ICC 临床、影像报告、MRI 与病理全切片资料。"
+
+
+@dataclass
+class _MultimodalInventory:
+    root: Path
+    clinical_rows: dict[str, dict[str, Any]]
+    selected_ids: list[str]
+    reports: dict[str, dict[str, str]]
+    mri: dict[str, dict[tuple[str, str], Path]]
+    wsi: dict[str, list[Path]]
+    ignored_files: list[str]
+
+
+def _patient_id(value: Any) -> str:
+    if value is None:
+        raise ValueError("患者 ID 不能为空")
+    patient_id = _fmt(value).strip()
+    if not patient_id:
+        raise ValueError("患者 ID 不能为空")
+    return patient_id
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_ignored(path: Path) -> bool:
+    return (
+        path.name == ".DS_Store"
+        or path.name.startswith("._")
+        or path.suffix.lower() in {".zip", ".dcm"}
+    )
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    root_resolved = root.resolve()
+    path_resolved = path.resolve()
+    if path_resolved != root_resolved and root_resolved not in path_resolved.parents:
+        raise ValueError(f"artifact 路径逃逸数据集根目录: {path}")
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError(f"artifact 不在数据集根目录内: {path}") from exc
+
+
+def _read_clinical_rows(path: Path) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for row in _read_main_table(path):
+        patient_id = _patient_id(row.get("ID"))
+        if patient_id in indexed:
+            raise ValueError(f"临床主表存在重复 ID: {patient_id}")
+        indexed[patient_id] = row
+    return indexed
+
+
+def _read_reports(path: Path) -> dict[str, dict[str, str]]:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if REPORT_SHEET not in workbook.sheetnames:
+            raise FileNotFoundError(
+                f"sheet '{REPORT_SHEET}' not in {path} (have {workbook.sheetnames})"
+            )
+        rows = workbook[REPORT_SHEET].iter_rows(values_only=True)
+        try:
+            header_values = next(rows)
+        except StopIteration as exc:
+            raise ValueError(f"影像报告表为空: {path}") from exc
+        header = [str(value).strip() if value is not None else "" for value in header_values]
+        missing = sorted(set(REPORT_COLUMNS) - set(header))
+        if missing:
+            raise ValueError(f"影像报告表缺少必需列: {missing}")
+
+        indexed: dict[str, dict[str, str]] = {}
+        for values in rows:
+            if not any(value is not None for value in values):
+                continue
+            row = dict(zip(header, values))
+            patient_id = _patient_id(row.get("住院号"))
+            if patient_id in indexed:
+                raise ValueError(f"影像报告表存在重复住院号: {patient_id}")
+            indexed[patient_id] = {
+                "findings": str(row.get("检查所见") or "").strip(),
+                "diagnosis": str(row.get("诊断") or "").strip(),
+            }
+        return indexed
+    finally:
+        workbook.close()
+
+
+def _mri_key(path: Path) -> tuple[str, str] | None:
+    lowered = path.name.lower()
+    if lowered.endswith(".nii.gz"):
+        stem = path.name[:-7]
+    elif lowered.endswith(".nii"):
+        stem = path.name[:-4]
+    else:
+        return None
+    expected = {sequence.upper(): (sequence, "raw") for sequence in MRI_SEQUENCES}
+    expected.update({
+        f"{sequence}_N4".upper(): (sequence, "n4")
+        for sequence in MRI_SEQUENCES
+    })
+    expected.update({
+        f"{sequence}_ROI".upper(): (sequence, "roi")
+        for sequence in MRI_SEQUENCES
+    })
+    return expected.get(stem.upper())
+
+
+def _directory_patient_id(name: str) -> str | None:
+    match = re.fullmatch(r"([0-9]+)(?:_.+)?", name)
+    return match.group(1) if match else None
+
+
+def _scan_mri(
+    root: Path,
+    directory: Path,
+) -> tuple[dict[str, dict[tuple[str, str], Path]], list[str]]:
+    indexed: dict[str, dict[tuple[str, str], Path]] = {}
+    ignored: list[str] = []
+    for entry in sorted(directory.iterdir(), key=lambda item: item.name):
+        if _is_ignored(entry) or not entry.is_dir():
+            ignored.append(_relative_path(root, entry))
+            continue
+        patient_id = _directory_patient_id(entry.name)
+        if patient_id is None:
+            ignored.append(_relative_path(root, entry))
+            continue
+        if patient_id in indexed:
+            raise ValueError(f"MRI 目录存在重复患者 ID: {patient_id}")
+        artifacts: dict[tuple[str, str], Path] = {}
+        for path in sorted(entry.iterdir(), key=lambda item: item.name):
+            if _is_ignored(path) or not path.is_file():
+                ignored.append(_relative_path(root, path))
+                continue
+            key = _mri_key(path)
+            if key is None:
+                ignored.append(_relative_path(root, path))
+                continue
+            if key in artifacts:
+                raise ValueError(
+                    f"MRI 患者 {patient_id} 存在重复序列文件: {key[0]} {key[1]}"
+                )
+            _relative_path(root, path)
+            artifacts[key] = path
+        indexed[patient_id] = artifacts
+    return indexed, ignored
+
+
+def _wsi_patient_id(path: Path) -> str | None:
+    match = re.match(r"^([0-9]+)(?:-|$)", path.stem)
+    return match.group(1) if match else None
+
+
+def _scan_wsi(root: Path, directory: Path) -> tuple[dict[str, list[Path]], list[str]]:
+    indexed: dict[str, list[Path]] = {}
+    ignored: list[str] = []
+    for path in sorted(directory.iterdir(), key=lambda item: item.name):
+        if _is_ignored(path) or not path.is_file() or path.suffix.lower() != ".svs":
+            ignored.append(_relative_path(root, path))
+            continue
+        patient_id = _wsi_patient_id(path)
+        if patient_id is None:
+            ignored.append(_relative_path(root, path))
+            continue
+        _relative_path(root, path)
+        indexed.setdefault(patient_id, []).append(path)
+    return indexed, ignored
+
+
+def _collect_multimodal_inventory(
+    source: Path,
+    ids: list[str] | None,
+) -> _MultimodalInventory:
+    root = Path(source).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"数据根目录不存在: {source}")
+    required = [root / CLINICAL_XLSX, root / REPORT_XLSX, root / MRI_DIR, root / WSI_DIR]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"缺少必需输入: {missing}")
+
+    clinical_rows = _read_clinical_rows(root / CLINICAL_XLSX)
+    reports = _read_reports(root / REPORT_XLSX)
+    mri, ignored_mri = _scan_mri(root, root / MRI_DIR)
+    wsi, ignored_wsi = _scan_wsi(root, root / WSI_DIR)
+
+    wanted = {_patient_id(value) for value in ids} if ids else None
+    unknown = sorted(wanted - set(clinical_rows)) if wanted is not None else []
+    if unknown:
+        raise ValueError(f"指定 ID 不在临床主表中: {unknown}")
+    selected_ids = sorted(wanted if wanted is not None else clinical_rows)
+    return _MultimodalInventory(
+        root=root,
+        clinical_rows=clinical_rows,
+        selected_ids=selected_ids,
+        reports=reports,
+        mri=mri,
+        wsi=wsi,
+        ignored_files=sorted(ignored_mri + ignored_wsi),
+    )
+
+
+def _artifact_record(root: Path, path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "path": _relative_path(root, path),
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _multimodal_audit_payload(
+    inventory: _MultimodalInventory,
+    ids: list[str] | None,
+) -> dict[str, Any]:
+    clinical_ids = set(inventory.clinical_rows)
+    report_ids = set(inventory.reports)
+    mri_ids = set(inventory.mri)
+    wsi_ids = set(inventory.wsi)
+    selected = set(inventory.selected_ids)
+    empty_reports = sorted(
+        patient_id
+        for patient_id, report in inventory.reports.items()
+        if not report["findings"] and not report["diagnosis"]
+    )
+    mri_missing_files = {
+        patient_id: [
+            f"{sequence}:{variant}"
+            for sequence, variant in EXPECTED_MRI_KEYS
+            if (sequence, variant) not in inventory.mri[patient_id]
+        ]
+        for patient_id in sorted(selected & mri_ids)
+    }
+    mri_missing_files = {
+        patient_id: missing
+        for patient_id, missing in mri_missing_files.items()
+        if missing
+    }
+    artifact_paths = [
+        path
+        for patient_id in inventory.selected_ids
+        for path in (
+            list(inventory.mri.get(patient_id, {}).values())
+            + inventory.wsi.get(patient_id, [])
+        )
+    ]
+    return {
+        "source_root": str(inventory.root),
+        "inputs": {
+            "clinical_xlsx": {
+                "path": CLINICAL_XLSX.as_posix(),
+                "sha256": _sha256(inventory.root / CLINICAL_XLSX),
+            },
+            "radiology_report_xlsx": {
+                "path": REPORT_XLSX.as_posix(),
+                "sha256": _sha256(inventory.root / REPORT_XLSX),
+            },
+        },
+        "ids_filter": sorted({_patient_id(value) for value in ids}) if ids else None,
+        "cohort": {
+            "clinical_patients": len(clinical_ids),
+            "report_patients": len(report_ids),
+            "mri_patients": len(mri_ids),
+            "wsi_patients": len(wsi_ids),
+            "selected_patients": len(selected),
+        },
+        "coverage": {
+            "selected_with_report": len(selected & report_ids),
+            "selected_with_mri": len(selected & mri_ids),
+            "selected_with_wsi": len(selected & wsi_ids),
+            "clinical_with_all_modalities": len(clinical_ids & report_ids & mri_ids & wsi_ids),
+        },
+        "missing": {
+            "selected_without_report": sorted(selected - report_ids),
+            "selected_without_mri": sorted(selected - mri_ids),
+            "selected_without_wsi": sorted(selected - wsi_ids),
+            "empty_report_ids": empty_reports,
+            "mri_expected_files": mri_missing_files,
+        },
+        "orphans": {
+            "report_without_clinical": sorted(report_ids - clinical_ids),
+            "mri_without_clinical": sorted(mri_ids - clinical_ids),
+            "wsi_without_clinical": sorted(wsi_ids - clinical_ids),
+        },
+        "ignored_files": inventory.ignored_files,
+        "artifacts": [
+            _artifact_record(inventory.root, path)
+            for path in sorted(artifact_paths, key=lambda item: item.as_posix())
+        ],
+    }
+
+
+def audit_srrsh_icc_multimodal(
+    source: Path,
+    ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """只读扫描 ICC 多模态数据根目录并返回覆盖与缺失报告。"""
+    inventory = _collect_multimodal_inventory(source, ids)
+    return _multimodal_audit_payload(inventory, ids)
+
+
+def _report_evidence(report: dict[str, str]) -> dict[str, Any] | None:
+    if not report["findings"] and not report["diagnosis"]:
+        return None
+    parts = []
+    if report["findings"]:
+        parts.append(f"检查所见：{report['findings']}")
+    if report["diagnosis"]:
+        parts.append(f"诊断：{report['diagnosis']}")
+    return {
+        "id": "rad-report-1",
+        "type": "radiology_report",
+        "text": "\n".join(parts),
+    }
+
+
+def _mri_evidence(root: Path, artifacts: dict[tuple[str, str], Path]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for sequence, variant in EXPECTED_MRI_KEYS:
+        path = artifacts.get((sequence, variant))
+        if path is None:
+            continue
+        relative_path = _relative_path(root, path)
+        sequence_id = sequence.lower().replace("_", "-")
+        is_mask = variant == "roi"
+        if is_mask:
+            text = (
+                f"MRI NIfTI 分割掩膜：{sequence} 序列 ROI；"
+                f"原始文件：{relative_path}；像素内容未转写为文本。"
+            )
+        else:
+            text = (
+                f"MRI NIfTI 文件：{sequence} 序列，{MRI_VARIANT_LABELS[variant]}版本；"
+                f"原始文件：{relative_path}；像素内容未转写为文本。"
+            )
+        evidence.append({
+            "id": f"mri-{sequence_id}-{variant}",
+            "type": "image_mask" if is_mask else "medical_image",
+            "text": text,
+        })
+    return evidence
+
+
+def _slug(value: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z]+", "-", value).strip("-").lower()
+    return slug or "slide"
+
+
+def _wsi_evidence(root: Path, paths: list[Path]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for path in sorted(paths, key=lambda item: item.name):
+        evidence_id = f"wsi-{_slug(path.stem)}"
+        if evidence_id in used_ids:
+            raise ValueError(f"WSI 文件名规范化后 Evidence ID 重复: {evidence_id}")
+        used_ids.add(evidence_id)
+        evidence.append({
+            "id": evidence_id,
+            "type": "whole_slide_image",
+            "text": (
+                "病理全切片 SVS 文件；"
+                f"原始文件：{_relative_path(root, path)}；切片像素内容未转写为文本。"
+            ),
+        })
+    return evidence
+
+
+def build_multimodal_episode(source: Path, patient_id: str) -> dict[str, Any]:
+    """从多模态数据根目录只读构建一个指定患者 Episode。"""
+    inventory = _collect_multimodal_inventory(source, [patient_id])
+    return _build_multimodal_episode(inventory, _patient_id(patient_id))
+
+
+def _build_multimodal_episode(
+    inventory: _MultimodalInventory,
+    patient_id: str,
+) -> dict[str, Any]:
+    episode, _ = build_episode(inventory.clinical_rows[patient_id])
+    turn = episode["turns"][0]
+    turn["observation"] = MULTIMODAL_TURN_MESSAGE
+    report = inventory.reports.get(patient_id)
+    if report is not None:
+        report_evidence = _report_evidence(report)
+        if report_evidence is not None:
+            turn["evidence"].append(report_evidence)
+    turn["evidence"].extend(_mri_evidence(inventory.root, inventory.mri.get(patient_id, {})))
+    turn["evidence"].extend(_wsi_evidence(inventory.root, inventory.wsi.get(patient_id, [])))
+    return episode
+
+
+def import_srrsh_icc_multimodal(
+    source: Path,
+    out: Path,
+    ids: list[str] | None = None,
+    dataset_name: str = "srrsh-icc-multimodal",
+) -> dict[str, Any]:
+    """在 ICC NAS 根目录原位生成无 target 的 AMA Dataset。"""
+    source_root = Path(source).expanduser().resolve()
+    out_root = Path(out).expanduser().resolve()
+    if source_root != out_root:
+        raise ValueError("icc-multimodal 要求 --source 与 --out 指向同一数据根目录")
+    if (source_root / "targets.jsonl").exists():
+        raise FileExistsError("数据根目录已存在 targets.jsonl，为避免混入评分标签已停止导入")
+
+    inventory = _collect_multimodal_inventory(source_root, ids)
+    episodes = [
+        _build_multimodal_episode(inventory, patient_id)
+        for patient_id in inventory.selected_ids
+    ]
+    episode_ids = [episode["id"] for episode in episodes]
+    dataset = {
+        "schema": "ama-dataset",
+        "name": dataset_name,
+        "splits": {"all": episode_ids},
+    }
+    (source_root / "dataset.json").write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (source_root / "episodes.jsonl").write_text(
+        "".join(json.dumps(episode, ensure_ascii=False) + "\n" for episode in episodes),
+        encoding="utf-8",
+    )
+
+    counts_by_type: dict[str, int] = {}
+    for episode in episodes:
+        for evidence in episode["turns"][0]["evidence"]:
+            evidence_type = evidence["type"]
+            counts_by_type[evidence_type] = counts_by_type.get(evidence_type, 0) + 1
+    report = _multimodal_audit_payload(inventory, ids)
+    report.update({
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "dataset_name": dataset_name,
+        "counts": {
+            "episodes": len(episodes),
+            "turns": len(episodes),
+            "evidence": sum(counts_by_type.values()),
+            "evidence_by_type": counts_by_type,
+        },
+    })
+    (source_root / "import_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    errors = validate_dataset(source_root)
+    if errors:
+        raise ValueError(f"AMA Dataset 校验失败: {errors}")
+    return report
+
+
+def configure_clinical_cli(parser: Any) -> None:
+    parser.add_argument("--id", dest="ids", action="append")
+    parser.add_argument("--mri-source", type=Path)
+
+
+def import_clinical_from_cli(args: Any) -> dict[str, Any]:
+    return import_srrsh_icc(args.source, args.out, ids=args.ids, mri_source=args.mri_source)
+
+
+def configure_multimodal_cli(parser: Any) -> None:
+    parser.add_argument("--id", dest="ids", action="append")
+    parser.add_argument("--name", default="srrsh-icc-multimodal")
+
+
+def import_multimodal_from_cli(args: Any) -> dict[str, Any]:
+    return import_srrsh_icc_multimodal(
+        args.source,
+        args.out,
+        ids=args.ids,
+        dataset_name=args.name,
+    )
