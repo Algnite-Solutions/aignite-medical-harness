@@ -16,7 +16,15 @@ def test_nas_multimodal_source_can_be_audited_without_writes():
     root = Path(NAS_ROOT)
     generated = {
         name: (root / name).stat().st_mtime_ns
-        for name in ("dataset.json", "episodes.jsonl", "import_report.json")
+        for name in (
+            "dataset.json",
+            "episodes.jsonl",
+            "provenance.jsonl",
+            "import_report.json",
+            "instructions.txt",
+            "DATASET_CARD.md",
+            "DATASET_CARD.zh-CN.md",
+        )
         if (root / name).exists()
     }
 

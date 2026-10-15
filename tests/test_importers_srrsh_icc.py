@@ -2,42 +2,32 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from ama.cli import main
-from ama.data import validate_dataset
+from ama.data import load_dataset, validate_dataset
 from ama.importers.srrsh_icc import (
     CLIN_FIELDS,
     LAB_FIELDS,
     MISSING_TEXT,
-    MRI_EVIDENCE_ID,
-    MRI_REPORT_PREFIX,
-    MRI_SHEET_NAME,
-    MRI_SOURCE_LOCATOR,
     NOT_EVALUATED_MARK,
     ORIGIN_TABLE1,
     ORIGIN_TABLE2,
     PATH_FIELDS,
     SHEET_NAME,
     TURN_ID,
-    TURN_MESSAGE,
     _fmt,
     _table_origin,
     build_episode,
-    build_pathology,
     import_srrsh_icc,
 )
+from ama.runner import execute
 
 TEST_PATIENT_ID = "2272542"
 SYNTHETIC_SOURCE = f"ICC临床数据.xlsx#主表!ID={TEST_PATIENT_ID}"
-SYNTHETIC_CONTEXT = {
-    "surg_date": date(2025, 1, 15),
-    "surg_iso": "2025-01-15T00:00:00+08:00",
-    "locator": SYNTHETIC_SOURCE,
-}
 HEADERS = [
     "ID",
     "surg_time",
@@ -104,20 +94,6 @@ def _write_synthetic_workbook(path: Path, rows: list[dict]) -> None:
     workbook.close()
 
 
-MRI_HEADERS = ["住院号", "检查所见", "诊断"]
-
-
-def _write_synthetic_mri_workbook(path: Path, rows: list[dict]) -> None:
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = MRI_SHEET_NAME
-    sheet.append(MRI_HEADERS)
-    for row in rows:
-        sheet.append([row.get(header) for header in MRI_HEADERS])
-    workbook.save(path)
-    workbook.close()
-
-
 EXPECTED_EVIDENCE_TEXTS = {
     "clin-1": (
         "50 岁女性。身高 165 cm，体重 60 kg，BMI 22。吸烟：否；饮酒：否。"
@@ -158,7 +134,6 @@ def test_episode_is_single_structural_turn_with_five_evidence():
         "id": f"icc-{TEST_PATIENT_ID}",
         "turns": [{
             "id": TURN_ID,
-            "observation": TURN_MESSAGE,
             "evidence": [
                 {"id": evidence_id, "type": EXPECTED_EVIDENCE_TYPES[evidence_id],
                  "text": EXPECTED_EVIDENCE_TEXTS[evidence_id]}
@@ -215,6 +190,9 @@ def test_importer_outputs_contract_files_and_validates(tmp_path):
 
     provenance_rows = (out / "provenance.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(provenance_rows) == 2
+    assert (out / "instructions.txt").is_file()
+    assert (out / "DATASET_CARD.md").is_file()
+    assert (out / "DATASET_CARD.zh-CN.md").is_file()
     assert not (out / "targets.jsonl").exists()
 
 
@@ -267,105 +245,47 @@ def test_cli_imports_synthetic_workbook(tmp_path, capsys):
     assert "imported ->" in capsys.readouterr().out
 
 
-SYNTHETIC_MRI_REPORT = {
-    "检查所见": "扫描序列:AX(T1WI,T2WI)\n肝IV段见病灶。",
-    "诊断": "占位，胆管细胞癌首先考虑。",
-}
-
-
-def test_episode_with_mri_report_adds_sixth_evidence():
-    episode, provenance = build_episode(_synthetic_row(), mri_report=SYNTHETIC_MRI_REPORT)
-
-    evidence = episode["turns"][0]["evidence"]
-    assert [item["id"] for item in evidence] == [
-        "clin-1", "lab-1", "tx-tace-1", MRI_EVIDENCE_ID, "tx-surg-1", "path-1",
-    ]
-    assert evidence[3] == {
-        "id": MRI_EVIDENCE_ID,
-        "type": "radiology_report",
-        "text": (
-            f"{MRI_REPORT_PREFIX}\n"
-            f"检查所见：{SYNTHETIC_MRI_REPORT['检查所见']}\n"
-            f"诊断：{SYNTHETIC_MRI_REPORT['诊断']}"
-        ),
-    }
-    mri_provenance = provenance["evidence"][MRI_EVIDENCE_ID]
-    assert mri_provenance["event_time_basis"] == "proxy_preop_anchor_surg_day"
-    assert mri_provenance["source"] == MRI_SOURCE_LOCATOR.format(id=TEST_PATIENT_ID)
-
-
-def test_missing_report_marks_provenance_only_when_source_loaded():
-    episode, provenance = build_episode(_synthetic_row())
-    assert len(episode["turns"][0]["evidence"]) == 5
-    assert "mri_report_missing" not in provenance
-
-    episode, provenance = build_episode(_synthetic_row(), mri_source_loaded=True)
-    assert len(episode["turns"][0]["evidence"]) == 5
-    assert provenance["mri_report_missing"] is True
-
-
-def test_postop_keywords_flagged_in_provenance():
-    _, provenance = build_episode(
-        _synthetic_row(),
-        mri_report={"检查所见": "术后改变，肝内新发病灶。", "诊断": "考虑肿瘤复发。"},
-    )
-
-    assert provenance["evidence"][MRI_EVIDENCE_ID]["postop_suspicion_keywords"] == [
-        "术后", "复发",
-    ]
-
-
-def test_importer_joins_mri_reports_and_reports_unmatched(tmp_path):
-    source = tmp_path / "synthetic_icc.xlsx"
-    mri_path = tmp_path / "synthetic_mri.xlsx"
-    out = tmp_path / "srrsh_icc"
-    _write_synthetic_workbook(source, [
-        _synthetic_row(),
-        _synthetic_row(ID="90020003", surg_time="2025-02-20", T=None),
-    ])
-    _write_synthetic_mri_workbook(mri_path, [
-        {"住院号": TEST_PATIENT_ID, **SYNTHETIC_MRI_REPORT},
-        {"住院号": "99999999", "检查所见": "肝VIII段见病灶。", "诊断": "占位。"},
-        {"住院号": TEST_PATIENT_ID, "检查所见": "重复报告。", "诊断": "重复。"},
-    ])
-
-    report = import_srrsh_icc(source, out, mri_source=mri_path)
-
-    assert report["counts"] == {"episodes": 2, "turns": 2, "evidence": 11}
-    assert report["mri_report"]["matched"] == 1
-    assert report["mri_report"]["patients_without_report"]["ids"] == ["90020003"]
-    assert "99999999" in report["mri_report"]["unmatched_report_ids"]["ids"]
-    assert {"id": TEST_PATIENT_ID, "reason": "duplicate MRI report ID"} in (
-        report["mri_report"]["skipped"]
-    )
-    episodes_text = (out / "episodes.jsonl").read_text(encoding="utf-8")
-    assert "肝IV段" in episodes_text
-    assert "重复报告" not in episodes_text
-    assert validate_dataset(out) == []
-
-
-def test_cli_imports_with_mri_source(tmp_path, capsys):
+def test_cli_rejects_removed_mri_source_option(tmp_path):
     source = tmp_path / "synthetic_icc.xlsx"
     mri_path = tmp_path / "synthetic_mri.xlsx"
     out = tmp_path / "srrsh_icc"
     _write_synthetic_workbook(source, [_synthetic_row()])
-    _write_synthetic_mri_workbook(mri_path, [
-        {"住院号": TEST_PATIENT_ID, **SYNTHETIC_MRI_REPORT},
-    ])
+    with pytest.raises(SystemExit):
+        main([
+            "import", "icc-xlsx", "--source", str(source), "--out", str(out),
+            "--mri-source", str(mri_path),
+        ])
 
-    exit_code = main([
-        "import",
-        "icc-xlsx",
-        "--source",
-        str(source),
-        "--out",
-        str(out),
-        "--id",
-        TEST_PATIENT_ID,
-        "--mri-source",
-        str(mri_path),
-    ])
 
-    assert exit_code == 0
-    assert validate_dataset(out) == []
-    assert "imported ->" in capsys.readouterr().out
+class _ToyModel:
+    name = "toy"
+    config = {"offline": True}
+    timeout = 1
+    last_usage = None
+
+    def complete(self, history, tools=None):
+        del history, tools
+        return {"role": "assistant", "content": json.dumps({
+            "turn_id": "t1",
+            "answer": {"summary": "Synthetic clinical summary."},
+            "citations": ["clin-1"],
+            "reasoning_summary": "Synthetic offline test.",
+        })}
+
+
+def test_clinical_output_runs_without_instruction_override(tmp_path):
+    source = tmp_path / "synthetic_icc.xlsx"
+    out = tmp_path / "srrsh_icc"
+    _write_synthetic_workbook(source, [_synthetic_row()])
+    import_srrsh_icc(source, out)
+
+    run_dir = execute(
+        out,
+        _ToyModel(),
+        episode_ids=[f"icc-{TEST_PATIENT_ID}"],
+        runs_root=tmp_path / "runs",
+    )
+
+    assert load_dataset(out).episode(f"icc-{TEST_PATIENT_ID}").turns[0].observation is None
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["termination"] == "completed"

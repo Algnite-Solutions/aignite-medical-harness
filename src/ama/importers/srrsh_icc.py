@@ -1,12 +1,8 @@
 """SRRSH ICC 临床表与多模态文件夹 → AMA Dataset。
 
-映射全部硬编码，不调用 LLM。每位患者生成一个单轮 Episode；该 Turn 只是
-结构性容器，不按术前/术后拆分。每例输出 5 条临床表 Evidence（id/type/text）：
-临床基线、血清学、术前 TACE、手术记录、术后病理与分期。
-MRI 报告全文可选：传入 mri_source 时按住院号 join 为第 6 条 evidence
-（mri-report-1，完整检查所见+诊断，检查日期未提供按术前解释）。
-多模态入口额外登记 MRI NIfTI 与病理 SVS 文件；这些文件只作为可追溯
-artifact 暴露给 runner，不在 importer 中解析像素。结局和评分 target 不导入。
+映射全部硬编码，不调用 LLM。icc-xlsx 每例固定输出 5 条临床表 Evidence；
+icc-multimodal 复用这 5 条映射，并追加 MRI 报告与可用的 NIfTI/SVS 目录
+Evidence。NIfTI/SVS 像素不进入 runner，结局和评分 target 不导入。
 
 ama-dataset 契约对 Evidence/Turn 禁止额外字段，因此可审计信息不放数据集本体：
 - 逐条 Evidence 的 event_time 三件套 / 缺失清单 → provenance.jsonl（按 episode 一行）
@@ -50,7 +46,14 @@ REQUIRED_COLUMNS = set(
 ORIGIN_TABLE1 = "临床数据总表"
 ORIGIN_TABLE2 = "表2"
 TURN_ID = "t1"
-TURN_MESSAGE = "ICC 临床表资料。"
+
+CLINICAL_INSTRUCTIONS_TEXT = """本数据集用于无评分的证据检查。
+仅依据当前轮已提供的 Evidence，在 answer 中返回 {"summary": "简明、基于证据的总结"}。
+"""
+MULTIMODAL_INSTRUCTIONS_TEXT = CLINICAL_INSTRUCTIONS_TEXT + (
+    "NIfTI 和 SVS Evidence 仅登记原始文件的相对路径，模型未读取其像素内容；"
+    "不得据此推断影像或病理所见。\n"
+)
 
 GENDER_TEXT = {"Male": "男性", "Female": "女性"}
 YES_NO_TEXT = {
@@ -98,24 +101,15 @@ TIME_PROXY_NOTE = (
 
 # MRI 报告表（ICC核磁影像报告.xlsx）join 用常量：单 sheet、表头在第 0 行、无检查日期列。
 MRI_SHEET_NAME = "sheet1"
-MRI_HEADER_ROW_INDEX = 0
-MRI_ID_COLUMN = "住院号"
 MRI_FINDINGS_COLUMN = "检查所见"
 MRI_DIAGNOSIS_COLUMN = "诊断"
-MRI_REQUIRED_COLUMNS = [MRI_ID_COLUMN, MRI_FINDINGS_COLUMN, MRI_DIAGNOSIS_COLUMN]
-MRI_SOURCE_LOCATOR = "ICC核磁影像报告.xlsx#sheet1!住院号={id}"
+MRI_SOURCE_LOCATOR = "影像数据/ICC核磁影像报告.xlsx#sheet1!住院号={id}"
 MRI_EVIDENCE_ID = "mri-report-1"
 MRI_EVIDENCE_TYPE = "radiology_report"
 MRI_REPORT_PREFIX = "腹部 MRI 检查报告全文（检查日期源数据未提供，按术前检查解释）。"
-MRI_TIME_PROXY_NOTE = (
-    "MRI 检查日期源数据未提供，按术前检查解释，event_time 锚定手术日仅用于排序"
-)
-# 术后/随访语境关键词：命中只在 provenance 打标（postop_suspicion_keywords），不改文本。
+MRI_TIME_NOTE = "MRI 检查日期源数据未提供；仅标记为术前相对时间，不生成精确 event_time"
+# 术后/随访语境关键词：命中只在 provenance 打标，不改文本。
 POSTOP_SUSPICION_KEYWORDS = ["术后", "复发", "随访", "复查", "TACE后", "介入后"]
-MRI_POLICY_NOTE = (
-    "完整报告（检查所见+诊断）进 evidence（2026-10-07 决策）；诊断列=放射科医生结论，"
-    "t1 诊断弱金标因此部分可见，评测侧知悉"
-)
 
 
 def _fmt(value: Any) -> str:
@@ -256,7 +250,10 @@ def build_tace(row: dict[str, Any], ctx: dict[str, Any]) -> tuple[dict[str, Any]
     }, provenance
 
 
-def build_mri_report(pid: str, report: dict[str, str], ctx: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def build_mri_report(
+    pid: str,
+    report: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """MRI 报告全文 → (evidence, provenance 片段)。检查所见/诊断保持源文本原样。"""
     findings = report.get(MRI_FINDINGS_COLUMN) or MISSING_TEXT
     diagnosis = report.get(MRI_DIAGNOSIS_COLUMN) or MISSING_TEXT
@@ -266,10 +263,11 @@ def build_mri_report(pid: str, report: dict[str, str], ctx: dict[str, Any]) -> t
         "text": f"{MRI_REPORT_PREFIX}\n检查所见：{findings}\n诊断：{diagnosis}",
     }
     provenance = {
-        "event_time": ctx["surg_iso"],
-        "event_time_basis": BASIS_PROXY_PREOP,
-        "event_time_note": MRI_TIME_PROXY_NOTE,
+        "relative_time": "preoperative",
+        "event_time_missing": True,
+        "event_time_note": MRI_TIME_NOTE,
         "source": MRI_SOURCE_LOCATOR.format(id=pid),
+        "fields": [MRI_FINDINGS_COLUMN, MRI_DIAGNOSIS_COLUMN],
     }
     # 术后/随访语境仅打标（按常量列表顺序），供评测侧甄别，绝不改写或剔除文本。
     suspected = [
@@ -348,17 +346,8 @@ def build_pathology(row: dict[str, Any], ctx: dict[str, Any]) -> tuple[dict[str,
     }, provenance
 
 
-def build_episode(
-    row: dict[str, Any],
-    mri_report: dict[str, str] | None = None,
-    mri_source_loaded: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """一行患者 → (episode, provenance 行)。纯函数，无 IO。
-
-    mri_report 提供时在 tx-tace-1 与 tx-surg-1 之间插入 MRI 报告 evidence；
-    MRI 源已加载但该患者无报告时不加 evidence，仅在 provenance 标记缺失。
-    两者都不提供时与历史行为完全一致。
-    """
+def build_episode(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """一行患者 → 5 条临床 Evidence 的 (episode, provenance 行)。"""
     pid = _fmt(row["ID"])
     surg_date = _parse_surg_date(row["surg_time"])
     ctx = {
@@ -370,15 +359,13 @@ def build_episode(
         build_clinical_baseline(row, ctx),
         build_lab_panel(row, ctx),
         build_tace(row, ctx),
+        build_surgery(row, ctx),
+        build_pathology(row, ctx),
     ]
-    if mri_report is not None:
-        built.append(build_mri_report(pid, mri_report, ctx))
-    built.append(build_surgery(row, ctx))
-    built.append(build_pathology(row, ctx))
     evidence = [item[0] for item in built]
     episode = {
         "id": f"icc-{pid}",
-        "turns": [{"id": TURN_ID, "observation": TURN_MESSAGE, "evidence": evidence}],
+        "turns": [{"id": TURN_ID, "evidence": evidence}],
     }
     provenance_row = {
         "id": episode["id"],
@@ -387,8 +374,6 @@ def build_episode(
         "table_origin": _table_origin(row),
         "evidence": {item[0]["id"]: item[1] for item in built},
     }
-    if mri_report is None and mri_source_loaded:
-        provenance_row["mri_report_missing"] = True
     return episode, provenance_row
 
 
@@ -413,77 +398,22 @@ def _read_main_table(source: Path) -> list[dict[str, Any]]:
     return data
 
 
-def _read_mri_reports(source: Path) -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]]:
-    """读取 MRI 报告表 → (按住院号索引的报告 dict, 跳过清单)。
-
-    报告文本保持源单元格原样（仅去外层空白，内部换行保留）；住院号经 _fmt
-    格式化以与临床表 ID 一致。重复住院号保留首条，双列全空行跳过。
-    """
-    wb = load_workbook(source, read_only=True, data_only=True)
-    try:
-        if MRI_SHEET_NAME not in wb.sheetnames:
-            raise FileNotFoundError(f"sheet '{MRI_SHEET_NAME}' not in {source} (have {wb.sheetnames})")
-        rows = list(wb[MRI_SHEET_NAME].iter_rows(values_only=True))
-    finally:
-        wb.close()
-
-    header = [str(value).strip() if value is not None else "" for value in rows[MRI_HEADER_ROW_INDEX]]
-    missing_columns = sorted(set(MRI_REQUIRED_COLUMNS) - set(header))
-    if missing_columns:
-        raise ValueError(f"MRI 报告表缺少必需列: {missing_columns}")
-
-    def _text(value: Any) -> str | None:
-        return str(value).strip() if value is not None else None
-
-    reports: dict[str, dict[str, str]] = {}
-    skipped: list[dict[str, Any]] = []
-    for values in rows[MRI_HEADER_ROW_INDEX + 1:]:
-        if all(value is None for value in values):
-            continue
-        record = dict(zip(header, values))
-        pid = _fmt(record[MRI_ID_COLUMN])
-        if pid in reports:
-            skipped.append({"id": pid, "reason": "duplicate MRI report ID"})
-            continue
-        findings = _text(record.get(MRI_FINDINGS_COLUMN))
-        diagnosis = _text(record.get(MRI_DIAGNOSIS_COLUMN))
-        if not findings and not diagnosis:
-            skipped.append({"id": pid, "reason": "empty MRI report"})
-            continue
-        reports[pid] = {MRI_FINDINGS_COLUMN: findings, MRI_DIAGNOSIS_COLUMN: diagnosis}
-    return reports, skipped
-
-
 def import_srrsh_icc(
     source: Path,
     out: Path,
     ids: list[str] | None = None,
-    mri_source: Path | None = None,
 ) -> dict[str, Any]:
-    """把 ICC 临床主表导入为无 target 的 ama-dataset 目录。
-
-    mri_source 提供时按住院号 join MRI 报告全文，作为第 6 条 evidence。
-    """
+    """把 ICC 临床主表导入为固定 5 条 Evidence 的无 target 数据集。"""
     source = Path(source)
     out = Path(out)
     rows = _read_main_table(source)
     out.mkdir(parents=True, exist_ok=True)
-
-    mri_reports: dict[str, dict[str, str]] = {}
-    mri_skipped: list[dict[str, Any]] = []
-    if mri_source is not None:
-        mri_source = Path(mri_source)
-        mri_reports, mri_skipped = _read_mri_reports(mri_source)
 
     wanted = {str(value).strip() for value in ids} if ids else None
     episodes: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    mri_matched = 0
-    patients_without_report: list[str] = []
-    postop_keyword_counts: dict[str, int] = {}
-
     for row in sorted(rows, key=lambda item: _fmt(item["ID"])):
         pid = _fmt(row["ID"])
         if wanted is not None and pid not in wanted:
@@ -492,27 +422,13 @@ def import_srrsh_icc(
             skipped.append({"id": pid, "reason": "duplicate ID"})
             continue
         try:
-            mri_report = mri_reports.get(pid)
-            episode, provenance_row = build_episode(
-                row,
-                mri_report=mri_report,
-                mri_source_loaded=mri_source is not None,
-            )
+            episode, provenance_row = build_episode(row)
         except (KeyError, TypeError, ValueError) as exc:
             skipped.append({"id": pid, "reason": f"{type(exc).__name__}: {exc}"})
             continue
         seen_ids.add(pid)
         episodes.append(episode)
         provenance.append(provenance_row)
-        if mri_report is not None:
-            mri_matched += 1
-            for keyword in provenance_row["evidence"][MRI_EVIDENCE_ID].get(
-                "postop_suspicion_keywords", []
-            ):
-                postop_keyword_counts[keyword] = postop_keyword_counts.get(keyword, 0) + 1
-        elif mri_source is not None:
-            patients_without_report.append(pid)
-
     episode_ids = [episode["id"] for episode in episodes]
     (out / "dataset.json").write_text(
         json.dumps({"schema": "ama-dataset", "name": out.name,
@@ -557,91 +473,34 @@ def import_srrsh_icc(
         "counts": {
             "episodes": len(episodes),
             "turns": len(episodes),
-            "evidence": 5 * len(episodes) + mri_matched,
+            "evidence": 5 * len(episodes),
         },
     }
-    if mri_source is not None:
-        unmatched_report_ids = [pid for pid in mri_reports if pid not in seen_ids]
-        report["mri_report"] = {
-            "source_file": str(mri_source),
-            "source_sha256": hashlib.sha256(mri_source.read_bytes()).hexdigest(),
-            "sheet": MRI_SHEET_NAME,
-            "n_rows": len(mri_reports) + len(mri_skipped),
-            "policy": MRI_POLICY_NOTE,
-            "time_proxy": MRI_TIME_PROXY_NOTE,
-            "matched": mri_matched,
-            "patients_without_report": {
-                "count": len(patients_without_report),
-                "ids": patients_without_report,
-            },
-            "unmatched_report_ids": {
-                "count": len(unmatched_report_ids),
-                "ids": unmatched_report_ids,
-            },
-            "postop_keyword_counts": postop_keyword_counts,
-            "skipped": mri_skipped,
-        }
     (out / "import_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if mri_source is None:
-        purpose_en = ("SRRSH ICC clinical-table import: one single-turn episode per patient with "
-                      "5 table-derived evidence items (baseline / lab panel / TACE history / "
-                      "surgery / pathology).")
-        purpose_zh = "邵逸夫 ICC 临床表导入：每位患者 1 个单轮 Episode、5 条临床表 Evidence。"
-        construction_en = ("Hard-coded column mapping, no LLM. Outcome columns (RFS/OS/follow-up) "
-                           "are never read; turn design and targets belong to the evaluation side. "
-                           "Per-evidence timing and missingness go to provenance.jsonl, "
-                           "which the run loader never reads.")
-        construction_zh = ("列→Evidence 映射硬编码，无 LLM。结局列（RFS/OS/随访）不读取；"
-                           "turn 划分与评测 target 属评测侧。逐条时间与缺失信息在 provenance.jsonl，"
-                           "run loader 不读取。")
-        limitations_en = ("Time anchors are declared proxies (only surg_time is real). Lab values "
-                          "carry no units (source provided none). Output contains real patient "
-                          "identifiers: keep out of the repository and do not redistribute before "
-                          "re-encoding.")
-        limitations_zh = ("时间锚为声明的代理（唯一真实时间=surg_time）。检验值不带单位（源数据未提供）。"
-                          "产物含真实患者标识：不入仓库、再分发前必须重编码。")
-    else:
-        purpose_en = ("SRRSH ICC clinical-table import with joined MRI reports: one single-turn "
-                      "episode per patient with 6 evidence items where available (patients with "
-                      "a matched MRI report get the full radiology_report text; the rest keep "
-                      "the 5 table-derived items).")
-        purpose_zh = ("邵逸夫 ICC 临床表 + MRI 报告导入：每位患者 1 个单轮 Episode、"
-                      "6 条 evidence（有 MRI 报告的患者含影像报告全文 radiology_report）。")
-        construction_en = ("Hard-coded column mapping, no LLM. Outcome columns (RFS/OS/follow-up) "
-                           "are never read; turn design and targets belong to the evaluation side. "
-                           "MRI findings and impression are joined per patient from "
-                           "ICC核磁影像报告.xlsx and included verbatim as a radiology_report "
-                           "evidence item. Per-evidence timing and missingness go to "
-                           "provenance.jsonl, which the run loader never reads.")
-        construction_zh = ("列→Evidence 映射硬编码，无 LLM。结局列（RFS/OS/随访）不读取；"
-                           "turn 划分与评测 target 属评测侧。MRI 报告（检查所见+诊断）按住院号 "
-                           "join、原文进入 radiology_report evidence。逐条时间与缺失信息在 "
-                           "provenance.jsonl，run loader 不读取。")
-        limitations_en = ("Time anchors are declared proxies (only surg_time is real). Lab values "
-                          "carry no units (source provided none). MRI reports carry no exam date "
-                          "(treated as pre-operative proxy) and contain radiologist conclusions "
-                          "(诊断列), partially visible to the t1 diagnosis weak gold standard. "
-                          "Output contains real patient identifiers: keep out of the repository "
-                          "and do not redistribute before re-encoding.")
-        limitations_zh = ("时间锚为声明的代理（唯一真实时间=surg_time）。检验值不带单位（源数据未提供）。"
-                          "MRI 报告无检查日期，按术前检查代理；报告含放射科结论（诊断列），"
-                          "t1 诊断弱金标部分可见。产物含真实患者标识：不入仓库、再分发前必须重编码。")
+    (out / "instructions.txt").write_text(CLINICAL_INSTRUCTIONS_TEXT, encoding="utf-8")
     write_dataset_cards(
         out,
         name=out.name,
         source=f"{source}#{SHEET_NAME}",
         license_name=DATASET_LICENSE,
-        purpose_en=purpose_en,
-        purpose_zh=purpose_zh,
-        construction_en=construction_en,
-        construction_zh=construction_zh,
+        purpose_en=("SRRSH ICC clinical-table import: one single-turn episode per patient with "
+                    "5 table-derived evidence items."),
+        purpose_zh="邵逸夫 ICC 临床表导入：每位患者 1 个单轮 Episode、5 条临床表 Evidence。",
+        construction_en=("Hard-coded column mapping, no LLM. Outcome columns are never read. "
+                         "Per-evidence timing and missingness are stored in provenance.jsonl, "
+                         "which the run loader never reads."),
+        construction_zh=("列到 Evidence 的映射硬编码，无 LLM；结局列不读取。逐条时间与缺失信息"
+                         "保存在 provenance.jsonl，run loader 不读取。"),
         episodes=len(episodes), turns=len(episodes),
-        evidence=5 * len(episodes) + mri_matched,
-        scorer="none", targets=0,
-        limitations_en=limitations_en,
-        limitations_zh=limitations_zh,
+        evidence=5 * len(episodes),
+        scorer="unscored", targets=0,
+        limitations_en=("Time anchors are declared proxies (only surg_time is real). Lab values "
+                        "carry no units. Output contains patient identifiers: keep it out of the "
+                        "repository and do not redistribute before re-encoding."),
+        limitations_zh=("时间锚为声明的代理（唯一真实时间为 surg_time）；检验值不带单位。产物含"
+                        "患者标识：不得进入仓库，再分发前必须重编码。"),
     )
     return report
 
@@ -652,7 +511,7 @@ CLINICAL_XLSX = Path("ICC临床数据.xlsx")
 REPORT_XLSX = Path("影像数据/ICC核磁影像报告.xlsx")
 MRI_DIR = Path("影像数据/初期182例ICC_MRI")
 WSI_DIR = Path("病理数据")
-REPORT_SHEET = "sheet1"
+REPORT_SHEET = MRI_SHEET_NAME
 REPORT_COLUMNS = ("住院号", "检查所见", "诊断")
 
 MRI_SEQUENCES = ("DWI", "T1_ART", "T1_DL", "T1_NC", "T1_PV", "T2")
@@ -663,7 +522,6 @@ EXPECTED_MRI_KEYS = tuple(
     for sequence in MRI_SEQUENCES
     for variant in MRI_VARIANTS
 )
-MULTIMODAL_TURN_MESSAGE = "ICC 临床、影像报告、MRI 与病理全切片资料。"
 
 
 @dataclass
@@ -675,6 +533,8 @@ class _MultimodalInventory:
     mri: dict[str, dict[tuple[str, str], Path]]
     wsi: dict[str, list[Path]]
     ignored_files: list[str]
+    mri_directory_exists: bool
+    wsi_directory_exists: bool
 
 
 def _patient_id(value: Any) -> str:
@@ -845,15 +705,23 @@ def _collect_multimodal_inventory(
     root = Path(source).expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"数据根目录不存在: {source}")
-    required = [root / CLINICAL_XLSX, root / REPORT_XLSX, root / MRI_DIR, root / WSI_DIR]
-    missing = [str(path) for path in required if not path.exists()]
+    required = [root / CLINICAL_XLSX, root / REPORT_XLSX]
+    missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"缺少必需输入: {missing}")
 
+    mri_directory = root / MRI_DIR
+    wsi_directory = root / WSI_DIR
+    for path in (mri_directory, wsi_directory):
+        if path.exists() and not path.is_dir():
+            raise NotADirectoryError(f"可选模态路径存在但不是目录: {path}")
+    mri_directory_exists = mri_directory.is_dir()
+    wsi_directory_exists = wsi_directory.is_dir()
+
     clinical_rows = _read_clinical_rows(root / CLINICAL_XLSX)
     reports = _read_reports(root / REPORT_XLSX)
-    mri, ignored_mri = _scan_mri(root, root / MRI_DIR)
-    wsi, ignored_wsi = _scan_wsi(root, root / WSI_DIR)
+    mri, ignored_mri = _scan_mri(root, mri_directory) if mri_directory_exists else ({}, [])
+    wsi, ignored_wsi = _scan_wsi(root, wsi_directory) if wsi_directory_exists else ({}, [])
 
     wanted = {_patient_id(value) for value in ids} if ids else None
     unknown = sorted(wanted - set(clinical_rows)) if wanted is not None else []
@@ -868,6 +736,8 @@ def _collect_multimodal_inventory(
         mri=mri,
         wsi=wsi,
         ignored_files=sorted(ignored_mri + ignored_wsi),
+        mri_directory_exists=mri_directory_exists,
+        wsi_directory_exists=wsi_directory_exists,
     )
 
 
@@ -926,6 +796,14 @@ def _multimodal_audit_payload(
                 "path": REPORT_XLSX.as_posix(),
                 "sha256": _sha256(inventory.root / REPORT_XLSX),
             },
+            "mri_directory": {
+                "path": MRI_DIR.as_posix(),
+                "exists": inventory.mri_directory_exists,
+            },
+            "wsi_directory": {
+                "path": WSI_DIR.as_posix(),
+                "exists": inventory.wsi_directory_exists,
+            },
         },
         "ids_filter": sorted({_patient_id(value) for value in ids}) if ids else None,
         "cohort": {
@@ -947,6 +825,14 @@ def _multimodal_audit_payload(
             "selected_without_wsi": sorted(selected - wsi_ids),
             "empty_report_ids": empty_reports,
             "mri_expected_files": mri_missing_files,
+            "missing_source_directories": [
+                path.as_posix()
+                for path, exists in (
+                    (MRI_DIR, inventory.mri_directory_exists),
+                    (WSI_DIR, inventory.wsi_directory_exists),
+                )
+                if not exists
+            ],
         },
         "orphans": {
             "report_without_clinical": sorted(report_ids - clinical_ids),
@@ -954,6 +840,13 @@ def _multimodal_audit_payload(
             "wsi_without_clinical": sorted(wsi_ids - clinical_ids),
         },
         "ignored_files": inventory.ignored_files,
+        "evidence_policy": {
+            "radiology_report_id": MRI_EVIDENCE_ID,
+            "radiology_report_time": "preoperative; exact event_time unavailable",
+            "binary_artifacts": (
+                "NIfTI/SVS are catalogued by safe relative path; pixels are not loaded by ama run"
+            ),
+        },
         "artifacts": [
             _artifact_record(inventory.root, path)
             for path in sorted(artifact_paths, key=lambda item: item.as_posix())
@@ -970,23 +863,24 @@ def audit_srrsh_icc_multimodal(
     return _multimodal_audit_payload(inventory, ids)
 
 
-def _report_evidence(report: dict[str, str]) -> dict[str, Any] | None:
+def _report_evidence(
+    patient_id: str,
+    report: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     if not report["findings"] and not report["diagnosis"]:
         return None
-    parts = []
-    if report["findings"]:
-        parts.append(f"检查所见：{report['findings']}")
-    if report["diagnosis"]:
-        parts.append(f"诊断：{report['diagnosis']}")
-    return {
-        "id": "rad-report-1",
-        "type": "radiology_report",
-        "text": "\n".join(parts),
-    }
+    return build_mri_report(patient_id, {
+        MRI_FINDINGS_COLUMN: report["findings"],
+        MRI_DIAGNOSIS_COLUMN: report["diagnosis"],
+    })
 
 
-def _mri_evidence(root: Path, artifacts: dict[tuple[str, str], Path]) -> list[dict[str, Any]]:
+def _mri_evidence(
+    root: Path,
+    artifacts: dict[tuple[str, str], Path],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     evidence: list[dict[str, Any]] = []
+    provenance: dict[str, dict[str, Any]] = {}
     for sequence, variant in EXPECTED_MRI_KEYS:
         path = artifacts.get((sequence, variant))
         if path is None:
@@ -1004,12 +898,22 @@ def _mri_evidence(root: Path, artifacts: dict[tuple[str, str], Path]) -> list[di
                 f"MRI NIfTI 文件：{sequence} 序列，{MRI_VARIANT_LABELS[variant]}版本；"
                 f"原始文件：{relative_path}；像素内容未转写为文本。"
             )
+        evidence_id = f"mri-{sequence_id}-{variant}"
         evidence.append({
-            "id": f"mri-{sequence_id}-{variant}",
+            "id": evidence_id,
             "type": "image_mask" if is_mask else "medical_image",
             "text": text,
         })
-    return evidence
+        provenance[evidence_id] = {
+            "source": relative_path,
+            "modality": "MRI",
+            "sequence": sequence,
+            "variant": variant,
+            "format": "NIfTI",
+            "relative_time": "preoperative",
+            "event_time_missing": True,
+        }
+    return evidence, provenance
 
 
 def _slug(value: str) -> str:
@@ -1017,46 +921,68 @@ def _slug(value: str) -> str:
     return slug or "slide"
 
 
-def _wsi_evidence(root: Path, paths: list[Path]) -> list[dict[str, Any]]:
+def _wsi_evidence(
+    root: Path,
+    paths: list[Path],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     evidence: list[dict[str, Any]] = []
+    provenance: dict[str, dict[str, Any]] = {}
     used_ids: set[str] = set()
     for path in sorted(paths, key=lambda item: item.name):
         evidence_id = f"wsi-{_slug(path.stem)}"
         if evidence_id in used_ids:
             raise ValueError(f"WSI 文件名规范化后 Evidence ID 重复: {evidence_id}")
         used_ids.add(evidence_id)
+        relative_path = _relative_path(root, path)
         evidence.append({
             "id": evidence_id,
             "type": "whole_slide_image",
             "text": (
                 "病理全切片 SVS 文件；"
-                f"原始文件：{_relative_path(root, path)}；切片像素内容未转写为文本。"
+                f"原始文件：{relative_path}；切片像素内容未转写为文本。"
             ),
         })
-    return evidence
+        provenance[evidence_id] = {
+            "source": relative_path,
+            "modality": "pathology",
+            "format": "SVS",
+            "relative_time": "postoperative_pathology",
+            "event_time_missing": True,
+        }
+    return evidence, provenance
 
 
 def build_multimodal_episode(source: Path, patient_id: str) -> dict[str, Any]:
     """从多模态数据根目录只读构建一个指定患者 Episode。"""
     inventory = _collect_multimodal_inventory(source, [patient_id])
-    return _build_multimodal_episode(inventory, _patient_id(patient_id))
+    episode, _ = _build_multimodal_episode(inventory, _patient_id(patient_id))
+    return episode
 
 
 def _build_multimodal_episode(
     inventory: _MultimodalInventory,
     patient_id: str,
-) -> dict[str, Any]:
-    episode, _ = build_episode(inventory.clinical_rows[patient_id])
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    episode, provenance = build_episode(inventory.clinical_rows[patient_id])
     turn = episode["turns"][0]
-    turn["observation"] = MULTIMODAL_TURN_MESSAGE
     report = inventory.reports.get(patient_id)
     if report is not None:
-        report_evidence = _report_evidence(report)
-        if report_evidence is not None:
-            turn["evidence"].append(report_evidence)
-    turn["evidence"].extend(_mri_evidence(inventory.root, inventory.mri.get(patient_id, {})))
-    turn["evidence"].extend(_wsi_evidence(inventory.root, inventory.wsi.get(patient_id, [])))
-    return episode
+        report_item = _report_evidence(patient_id, report)
+        if report_item is not None:
+            report_evidence, report_provenance = report_item
+            turn["evidence"].insert(3, report_evidence)
+            provenance["evidence"][report_evidence["id"]] = report_provenance
+    mri_evidence, mri_provenance = _mri_evidence(
+        inventory.root, inventory.mri.get(patient_id, {})
+    )
+    wsi_evidence, wsi_provenance = _wsi_evidence(
+        inventory.root, inventory.wsi.get(patient_id, [])
+    )
+    turn["evidence"].extend(mri_evidence)
+    turn["evidence"].extend(wsi_evidence)
+    provenance["evidence"].update(mri_provenance)
+    provenance["evidence"].update(wsi_provenance)
+    return episode, provenance
 
 
 def import_srrsh_icc_multimodal(
@@ -1074,10 +1000,12 @@ def import_srrsh_icc_multimodal(
         raise FileExistsError("数据根目录已存在 targets.jsonl，为避免混入评分标签已停止导入")
 
     inventory = _collect_multimodal_inventory(source_root, ids)
-    episodes = [
+    built = [
         _build_multimodal_episode(inventory, patient_id)
         for patient_id in inventory.selected_ids
     ]
+    episodes = [item[0] for item in built]
+    provenance = [item[1] for item in built]
     episode_ids = [episode["id"] for episode in episodes]
     dataset = {
         "schema": "ama-dataset",
@@ -1089,6 +1017,10 @@ def import_srrsh_icc_multimodal(
     )
     (source_root / "episodes.jsonl").write_text(
         "".join(json.dumps(episode, ensure_ascii=False) + "\n" for episode in episodes),
+        encoding="utf-8",
+    )
+    (source_root / "provenance.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in provenance),
         encoding="utf-8",
     )
 
@@ -1111,6 +1043,43 @@ def import_srrsh_icc_multimodal(
     (source_root / "import_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    (source_root / "instructions.txt").write_text(
+        MULTIMODAL_INSTRUCTIONS_TEXT, encoding="utf-8"
+    )
+    write_dataset_cards(
+        source_root,
+        name=dataset_name,
+        source=(f"{CLINICAL_XLSX.as_posix()}; {REPORT_XLSX.as_posix()}; optional "
+                f"{MRI_DIR.as_posix()} and {WSI_DIR.as_posix()}"),
+        license_name=DATASET_LICENSE,
+        purpose_en=("SRRSH ICC import with clinical evidence and radiology reports, plus available "
+                    "MRI NIfTI and pathology SVS catalog entries."),
+        purpose_zh=("邵逸夫 ICC 临床与 MRI 报告导入，并按实际可用情况登记 MRI NIfTI 和病理 "
+                    "SVS 文件目录。"),
+        construction_en=("Hard-coded mapping, no LLM. The clinical workbook defines the cohort. "
+                         "MRI and WSI directories are optional; missing modalities do not remove "
+                         "patients. Evidence provenance is stored in provenance.jsonl and is not "
+                         "read by the runner."),
+        construction_zh=("硬编码映射，无 LLM；临床表定义患者队列。MRI 与 WSI 目录可选，缺失模态"
+                         "不剔除患者。逐条 Evidence 的溯源信息保存在 provenance.jsonl，runner "
+                         "不读取该文件。"),
+        episodes=len(episodes),
+        turns=len(episodes),
+        evidence=sum(counts_by_type.values()),
+        scorer="unscored",
+        targets=0,
+        artifacts_en=("NIfTI and SVS files remain in place below the dataset root and are not "
+                      "copied. Evidence text records safe relative paths; ama run does not load "
+                      "their pixels. Paths, sizes and modification times are audited in "
+                      "import_report.json."),
+        artifacts_zh=("NIfTI 与 SVS 保留在数据集根目录原位，不复制。Evidence 文本仅登记安全相对"
+                      "路径，ama run 不读取其像素；路径、大小和修改时间记录在 import_report.json。"),
+        limitations_en=("Output contains patient identifiers and must never enter the repository "
+                        "before de-identification. Radiology reports have no exact examination "
+                        "date. Catalog entries do not expose image or slide pixels to the model."),
+        limitations_zh=("产物含患者标识，脱敏前不得进入仓库。MRI 报告无准确检查日期；NIfTI/SVS "
+                        "目录 Evidence 不向模型提供影像或切片像素。"),
+    )
 
     errors = validate_dataset(source_root)
     if errors:
@@ -1120,11 +1089,10 @@ def import_srrsh_icc_multimodal(
 
 def configure_clinical_cli(parser: Any) -> None:
     parser.add_argument("--id", dest="ids", action="append")
-    parser.add_argument("--mri-source", type=Path)
 
 
 def import_clinical_from_cli(args: Any) -> dict[str, Any]:
-    return import_srrsh_icc(args.source, args.out, ids=args.ids, mri_source=args.mri_source)
+    return import_srrsh_icc(args.source, args.out, ids=args.ids)
 
 
 def configure_multimodal_cli(parser: Any) -> None:
