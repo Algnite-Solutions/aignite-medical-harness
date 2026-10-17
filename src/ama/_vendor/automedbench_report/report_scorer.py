@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Report-generation scorer for chest X-ray studies."""
+"""AutoMedBench lightweight pair metrics; unused corpus backends removed.
+
+See SOURCE.json for the pinned upstream source and local modifications.
+"""
 
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
-
-try:
-    from .mlrg_metrics import compute_mlrg_scores
-except ImportError:
-    from mlrg_metrics import compute_mlrg_scores
-
 
 OBSERVATION_SCHEMA = {
     "support_devices": {
@@ -304,134 +299,3 @@ def score_report_pair(
         "reference_char_count": len(reference_text),
         "predicted_char_count": len(prediction_text),
     }
-
-
-def load_reference_labels(case_dir: Path) -> dict[str, int]:
-    labels_path = case_dir / "labels.json"
-    if labels_path.is_file():
-        payload = json.loads(labels_path.read_text(encoding="utf-8"))
-        return payload["labels"]
-    report_path = case_dir / "report.txt"
-    reference_text = extract_findings_text(report_path.read_text(encoding="utf-8"), strict=False)
-    return extract_observations(reference_text)
-
-
-def _build_clinical_components(
-    task_config: dict | None,
-    references: list[str],
-    predictions: list[str],
-    fallback_metrics: dict,
-) -> tuple[dict, str, dict]:
-    task_config = task_config or {}
-    backend = str(task_config.get("clinical_score_backend", "lightweight")).strip().lower()
-
-    if backend == "mlrg":
-        if not any(normalize_text(text) for text in predictions):
-            zero_components = {
-                "BLEU": 0.0,
-                "METEOR": 0.0,
-                "ROUGE_L": 0.0,
-                "F1RadGraph": 0.0,
-                "micro_average_precision": 0.0,
-                "micro_average_recall": 0.0,
-                "micro_average_f1": 0.0,
-            }
-            return zero_components, backend, zero_components.copy()
-        mlrg_scores = compute_mlrg_scores(references, predictions, task_config)
-        return {
-            "BLEU": mlrg_scores.get("BLEU", 0.0),
-            "METEOR": mlrg_scores.get("METEOR", 0.0),
-            "ROUGE_L": mlrg_scores.get("ROUGE_L", 0.0),
-            "F1RadGraph": mlrg_scores.get("F1RadGraph", 0.0),
-            "micro_average_precision": mlrg_scores.get("micro_average_precision", 0.0),
-            "micro_average_recall": mlrg_scores.get("micro_average_recall", 0.0),
-            "micro_average_f1": mlrg_scores.get("micro_average_f1", 0.0),
-        }, backend, mlrg_scores
-
-    return {
-        "observation_f1": fallback_metrics.get("mean_observation_f1", 0.0),
-        "report_similarity": fallback_metrics.get("mean_report_similarity", 0.0),
-    }, backend, {}
-
-
-def score_all(
-    pred_dir: str | Path,
-    gt_dir: str | Path,
-    case_ids: list[str],
-    task_config: dict | None = None,
-) -> dict:
-    pred_dir = Path(pred_dir)
-    gt_dir = Path(gt_dir)
-
-    per_case: dict[str, dict] = {}
-    total_tp = total_fp = total_fn = 0
-    sum_obs_f1 = 0.0
-    sum_similarity = 0.0
-    sum_exact = 0
-    references: list[str] = []
-    predictions: list[str] = []
-
-    for case_id in case_ids:
-        gt_case_dir = gt_dir / case_id
-        ref_path = gt_case_dir / "report.txt"
-        pred_path = pred_dir / case_id / "report.txt"
-
-        reference_text = extract_findings_text(
-            ref_path.read_text(encoding="utf-8"),
-            strict=False,
-        )
-        reference_labels = load_reference_labels(gt_case_dir)
-
-        if pred_path.is_file():
-            prediction_text = extract_findings_text(
-                pred_path.read_text(encoding="utf-8", errors="replace"),
-                strict=False,
-            )
-            missing = False
-        else:
-            prediction_text = ""
-            missing = True
-        references.append(reference_text)
-        predictions.append(prediction_text)
-
-        case_metrics = score_report_pair(
-            reference_text=reference_text,
-            prediction_text=prediction_text,
-            reference_labels=reference_labels,
-        )
-        case_metrics["missing_prediction"] = missing
-        case_metrics["prediction_path"] = str(pred_path)
-        per_case[case_id] = case_metrics
-
-        total_tp += case_metrics["tp"]
-        total_fp += case_metrics["fp"]
-        total_fn += case_metrics["fn"]
-        sum_obs_f1 += case_metrics["observation_f1"]
-        sum_similarity += case_metrics["report_similarity"]
-        sum_exact += case_metrics["label_exact_match"]
-
-    count = max(len(case_ids), 1)
-    micro_precision, micro_recall, micro_f1 = _f1(total_tp, total_fp, total_fn)
-
-    result = {
-        "cases_total": len(case_ids),
-        "mean_observation_f1": round(sum_obs_f1 / count, 4),
-        "mean_report_similarity": round(sum_similarity / count, 4),
-        "mean_label_exact_match": round(sum_exact / count, 4),
-        "micro_precision": micro_precision,
-        "micro_recall": micro_recall,
-        "micro_f1": micro_f1,
-        "label_set_size": len(LABEL_ORDER),
-        "per_case": per_case,
-    }
-    clinical_components, backend, backend_metrics = _build_clinical_components(
-        task_config,
-        references,
-        predictions,
-        result,
-    )
-    result["clinical_score_backend"] = backend
-    result["clinical_components"] = clinical_components
-    if backend_metrics:
-        result.update(backend_metrics)
-    return result

@@ -5,11 +5,8 @@
   "files": {
     "report_scorer.py": {
       "upstream_path": "eval_report_gen/report_scorer.py",
-      "sha256": "07ab7e49b345f5f6ff7a7733e6642e4107613cce7ef8ede7968b78f5e7f5b197"
-    },
-    "mlrg_metrics.py": {
-      "upstream_path": "eval_report_gen/mlrg_metrics.py",
-      "sha256": "318f1c4784aa7b4b4484910b97d8a1320d977762e10ea83b9692f11b275bd3cd"
+      "sha256": "07ab7e49b345f5f6ff7a7733e6642e4107613cce7ef8ede7968b78f5e7f5b197",
+      "vendored_sha256": "b601b46cc1c007477042392e6acafa48535c7413ed0fce12d780e0005477c684"
     },
     "format_checker.py": {
       "upstream_path": "eval_report_gen/format_checker.py",
@@ -20,23 +17,18 @@
       "sha256": "02ed0a63faedaa39f35eb19a83d1b921bb08c8ee8a6f86925e969b1bf57e2141"
     }
   },
-  "modifications": "None; AMA adaptation is in ama/cxr_report.py.",
-  "default_task_backend": "mlrg",
+  "modifications": {
+    "report_scorer.py": "Removed backend imports, load_reference_labels, _build_clinical_components and score_all; retained pair-scoring functions and constants unchanged. Updated module docstring.",
+    "format_checker.py": "None.",
+    "LICENSE": "None."
+  },
   "lightweight_weights": {
     "observation_f1": 0.7,
     "report_similarity": 0.3
   },
-  "mlrg_weights": {
-    "BLEU": 0.142857,
-    "METEOR": 0.142857,
-    "ROUGE_L": 0.142857,
-    "F1RadGraph": 0.142857,
-    "micro_average_precision": 0.142857,
-    "micro_average_recall": 0.142857,
-    "micro_average_f1": 0.142857
-  },
   "weight_source": {
     "upstream_path": "eval_report_gen/aggregate.py",
     "sha256": "31a0ce12d69eea19949493bf6e9321c4fb9aedc5da4adaea078b127b5311e441"
-  }
+  },
+  "included_backend": "lightweight"
 }

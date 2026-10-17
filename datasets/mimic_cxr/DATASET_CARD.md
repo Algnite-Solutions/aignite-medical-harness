@@ -10,8 +10,7 @@ are evaluator-only in `targets.jsonl`; the inference loader does not read them.
 Sources: [paper](https://arxiv.org/abs/2606.01961) and [pinned task configuration](https://github.com/AutoMedBench/AutoMedBench/blob/a4e64e5502c728cee744edce2b596000fcd60fdd/eval_report_gen/mimic-cxr-report-task/config.yaml).
 This preserves study grouping, multiple views and findings-only generation while adapting
 execution and output to AMA. It does not reproduce the paper's agent protocol or official
-cohort. Default scoring uses upstream's lightweight backend; the seven-metric MLRG backend
-is optional. Docker is not required for this migration.
+cohort. Scoring uses upstream's lightweight metrics. Docker is not required.
 
 ## Import from raw data
 
@@ -79,12 +78,14 @@ comparability with the paper's leaderboard.
 
 ## Report scoring
 
-Unmodified upstream report_scorer.py, format_checker.py and mlrg_metrics.py are vendored
-at revision a4e64e5502c728cee744edce2b596000fcd60fdd. Their hashes, source manifest and
-research-use license ship in src/ama/_vendor/automedbench_report/. AMA adapts only data
-access and aggregation; scoring calls no remote model or judge API.
+The lightweight pair metrics and format checker are retained from upstream revision
+a4e64e5502c728cee744edce2b596000fcd60fdd. Unused backend imports and corpus helpers
+are removed; pair-scoring functions are unchanged. Upstream and retained-file hashes,
+modifications and the research-use license are recorded in
+src/ama/_vendor/automedbench_report/. AMA adapts data access and aggregation; scoring
+calls no remote model or judge API and requires no clinical model weights.
 
-The default upstream **lightweight** backend uses 12 regex-derived observation labels
+This adapter uses upstream's **lightweight** metrics: 12 regex-derived observation labels
 and the upstream ROUGE-L tokenizer/LCS/F1 implementation. These are not CheXbert or
 RadGraph labels. Upstream pair metrics round to four decimal places.
 
@@ -105,26 +106,6 @@ Re-score existing outputs without model API calls:
 ```bash
 bash scripts/run_mimic_cxr.sh eval /path/to/run --scorer mimic_cxr_automedbench_v1
 ```
-
-### Optional default-paper MLRG backend
-
-The optional backend preserves upstream corpus aggregation: BLEU (mean of BLEU1–4),
-METEOR, ROUGE_L, RadGraph **partial** F1, and CheXbert micro precision/recall/F1, weighted
-0.142857 each. Raw corpus results and the complete-submission gate are separate. Corpus
-micro-F1 is never multiplied by coverage and described as a per-case average.
-
-Provide a compatible local MLRG environment and its CheXbert, BERT and RadGraph resources.
-Copy mlrg.example.json to an ignored local file and set the real paths:
-
-```bash
-AMA_CXR_MLRG_CONFIG=local_data/mimic_cxr/mlrg.json \
-  bash scripts/run_mimic_cxr.sh eval /path/to/run --scorer mimic_cxr_automedbench_mlrg_v1
-```
-
-Resources are not downloaded automatically. Missing resources/dependencies/metrics fail
-explicitly, with no lightweight fallback. Seven-metric fields are null in lightweight
-runs, not zero scores. S1–S5 and Overall are not produced without the full agent protocol.
-
 
 ## Directory convention
 

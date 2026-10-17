@@ -224,8 +224,8 @@ def _write_dataset(stage, name, split, episodes, targets, provenance, report):
         construction_zh="一个 study、一轮，包含全部 JPEG 视角；要求的报告字段只写入评测 targets。",
         episodes=len(episodes), turns=len(episodes), evidence=report["n_images"],
         scorer=scorer, targets=len(targets),
-        limitations_en="Findings-only uses AutoMedBench's lightweight report metrics (rule observation F1 and ROUGE-L), not its default seven-metric MLRG backend. Invalid cases score zero in AMA case means; complete-submission scores also apply upstream's all-cases-valid gate. These are not official leaderboard results or verified clinical accuracy. Source selection and hashes are in import_report.json.",
-        limitations_zh="Findings-only 使用 AutoMedBench 轻量评分（规则观察项 F1 与 ROUGE-L），非默认七指标 MLRG。AMA 逐例均值将无效病例计零；整批提交分数另遵循全部病例有效的门槛。结果不等同官方榜单或经验证的临床正确率。抽样来源与 hash 见 import_report.json。",
+        limitations_en="Findings-only uses AutoMedBench's lightweight report metrics (rule observation F1 and ROUGE-L), not the paper's default seven-metric backend. Invalid cases score zero in AMA case means; complete-submission scores also apply upstream's all-cases-valid gate. These are not official leaderboard results or verified clinical accuracy. Source selection and hashes are in import_report.json.",
+        limitations_zh="Findings-only 使用 AutoMedBench 轻量评分（规则观察项 F1 与 ROUGE-L），非论文默认七指标。AMA 逐例均值将无效病例计零；整批提交分数另遵循全部病例有效的门槛。结果不等同官方榜单或经验证的临床正确率。抽样来源与 hash 见 import_report.json。",
         artifacts_en="Verified JPEG copies in artifacts; source metadata stays in local provenance.",
         artifacts_zh="校验后的 JPEG 复制到 artifacts；来源元数据保留在本地 provenance。")
     errors = validate_dataset(stage)

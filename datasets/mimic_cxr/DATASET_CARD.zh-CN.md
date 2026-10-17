@@ -8,7 +8,7 @@
 
 任务依据：[AutoMedBench 论文](https://arxiv.org/abs/2606.01961) 及其 [官方配置](https://github.com/AutoMedBench/AutoMedBench/blob/a4e64e5502c728cee744edce2b596000fcd60fdd/eval_report_gen/mimic-cxr-report-task/config.yaml)。
 本接入保留 findings-only、按 study 分组和多视角输入；使用 AMA 的 JSON Decision 和 API 调用方式。
-本接入不复现论文的 agent 研究流程、Docker 环境或官方测试病例；默认使用官方代码中的轻量评分，七指标通过可选 MLRG 入口接入。无需为此安装 Docker。
+本接入不复现论文的 agent 研究流程、Docker 环境或官方测试病例；使用上游提供的轻量评分，无需 Docker。
 
 ## 两种导入来源
 
@@ -72,8 +72,9 @@ findings-only 导入默认注册 `mimic_cxr_automedbench_v1`，`ama eval` 同时
 
 ## 报告内容评分
 
-评分代码从 AutoMedBench 固定 revision `a4e64e5502c728cee744edce2b596000fcd60fdd` 原样保留，文件 SHA256、来源和研究使用许可见 `src/ama/_vendor/automedbench_report/`。
-只适配 AMA 数据读写和汇总，不调用外部 judge 或报告生成 API。
+轻量逐例评分与格式检查来自 AutoMedBench 固定 revision `a4e64e5502c728cee744edce2b596000fcd60fdd`。
+已删除未使用的后端导入和批量评分辅助函数，逐例评分函数保持不变。上游及当前文件 SHA256、修改说明和研究使用许可见 `src/ama/_vendor/automedbench_report/`。
+AMA 适配数据读写和汇总；评分不调用外部 judge 或报告生成 API，也不需要临床模型权重。
 
 默认使用上游提供的 **lightweight backend**：
 
@@ -94,24 +95,6 @@ findings-only 导入默认注册 `mimic_cxr_automedbench_v1`，`ama eval` 同时
 bash scripts/run_mimic_cxr.sh eval /path/to/existing/run \
   --scorer mimic_cxr_automedbench_v1
 ```
-
-### 可选：官方默认 MLRG 七指标
-
-完整 backend 保留上游 corpus aggregation：BLEU（BLEU1–4 的均值）、METEOR、ROUGE_L、RadGraph partial F1、CheXbert micro precision/recall/F1，权重均为配置中的 0.142857。
-它不把 corpus micro-F1 乘以覆盖率冒充逐例均值；原始 corpus 得分与整批完成门槛后的得分分别记录。
-
-需要在兼容的本地环境准备 MLRG 源码和依赖、CheXbert、BERT tokenizer/model 资源、RadGraph archive。当前代码不会自动下载这些资源。
-将 `mlrg.example.json` 复制到忽略的本地目录并填写实际路径：
-
-```bash
-AMA_CXR_MLRG_CONFIG=local_data/mimic_cxr/mlrg.json \
-  bash scripts/run_mimic_cxr.sh eval /path/to/existing/run \
-    --scorer mimic_cxr_automedbench_mlrg_v1
-```
-
-缺资源、依赖异常或缺失指标时明确报错，不静默退回轻量评分。轻量运行中的七指标值为 null，不能按零分或已计算解读。
-不输出 S1–S5/Overall，因为此接入没有执行论文的完整 agent 工作流。
-
 
 ## 目录约定
 

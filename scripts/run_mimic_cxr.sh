@@ -25,8 +25,7 @@ instructions.txt, eval.json and copied artifacts. Run records stay separate.
 import/reuse default to SPLIT=test; set SPLIT=validate for validation data.
 run defaults to TIMEOUT=180 and MAX_CALLS=1. Import never overwrites data.
 Default findings-only scoring uses the pinned AutoMedBench lightweight backend.
-No Docker or clinical model download is required. For the optional seven-metric
-backend, set AMA_CXR_MLRG_CONFIG and --scorer mimic_cxr_automedbench_mlrg_v1.
+No Docker or clinical model download is required.
 
 Example:
   bash scripts/run_mimic_cxr.sh reuse local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
