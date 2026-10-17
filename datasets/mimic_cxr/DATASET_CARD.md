@@ -14,6 +14,10 @@ cohort. Scoring uses upstream's lightweight metrics. Docker is not required.
 
 ## Import from raw data
 
+Install the image dependency first: `python3 -m pip install -e ".[mimic-cxr]"`.
+The preparation script and helper default to `.venv/bin/python`; set `PYTHON_BIN`
+for the helper if using another environment, and use that interpreter for preparation.
+
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/prepare_mimic_cxr_raw.py \
   --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_findings100 \
@@ -46,8 +50,7 @@ local validation subset, not the official AutoMedBench cohort.
 ## Run and inspect
 
 ```bash
-CONFIG=local_data/mimic_cxr/glm-coding-smoke-config.json \
-  bash scripts/run_mimic_cxr.sh run glm-5.3-flash
+bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding
 bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 ```
 
@@ -55,6 +58,27 @@ The helper wraps native `ama import/run/eval`. Override `DATASET_DIR`, `CONFIG`,
 `TIMEOUT` or `MAX_CALLS` as needed. Extra AMA run options such as `--episode` pass through.
 Keys are read from environment variables or local `.env`, never committed. The runner runs
 on the machine launching it; model inference uses the configured API. References are not sent.
+
+The following aliases are available in the committed `ama.json`. Add your own keys
+to local `.env` using the variable names in `.env.example`.
+
+| AMA alias | Provider model ID | Key variable |
+| --- | --- | --- |
+| `glm-5.3-flash-coding` | `glm-5.3-flash` (GLM Coding endpoint) | `GLM_API_KEY` |
+| `qwen3.8-flash` | `qwen3.8-flash` (DashScope endpoint) | `DASHSCOPE_API_KEY` |
+| `deepseek-v4.1-flash-1017` | `deepseek-flash` (DeepSeek endpoint) | `DEEPSEEK_API_KEY` |
+
+Replace the alias in the run command to select a model. Each run sends study images
+to the selected provider; confirm source access terms and permission for that destination.
+The existing `glm-5.3-flash` alias still uses the standard GLM endpoint; the separate
+Coding alias matches the endpoint used in the local CXR experiment. The DeepSeek
+alias records the experiment's version label, but its provider model ID is mutable.
+
+These configurations preserve the recorded request settings: Qwen and DeepSeek
+use `max_tokens=8192`; GLM leaves it unset. All request `temperature=0` and leave
+thinking behavior to the provider. This does not ensure identical effective
+generation settings or token budgets across providers. Use a separate `CONFIG`
+for a new controlled comparison and report its settings with the results.
 
 Acceptance checks are valid import structure, correct image/reference pairing, hidden
 references and saved predictions from native AMA. Findings-only import defaults to `mimic_cxr_automedbench_v1`, which adds lightweight

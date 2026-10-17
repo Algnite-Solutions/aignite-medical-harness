@@ -29,7 +29,7 @@ No Docker or clinical model download is required.
 
 Example:
   bash scripts/run_mimic_cxr.sh reuse local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
-  CONFIG=local_data/mimic_cxr/glm-coding-smoke-config.json bash scripts/run_mimic_cxr.sh run glm-5.3-flash
+  bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding
   bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 EOF
 }

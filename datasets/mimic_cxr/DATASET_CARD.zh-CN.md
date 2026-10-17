@@ -14,6 +14,9 @@
 
 ### 独立 raw package
 
+先安装图像依赖：`python3 -m pip install -e ".[mimic-cxr]"`。
+以下准备命令及辅助脚本默认使用 `.venv/bin/python`；使用其他环境时，准备命令改用对应解释器，辅助脚本设置 `PYTHON_BIN`。
+
 先从已取得访问权限的 MIMIC-CXR-JPG 源目录准备数据：
 
 ```bash
@@ -46,14 +49,28 @@ bash scripts/run_mimic_cxr.sh reuse \
 ## 原生 AMA 运行与验收
 
 ```bash
-CONFIG=local_data/mimic_cxr/glm-coding-smoke-config.json \
-  bash scripts/run_mimic_cxr.sh run glm-5.3-flash
+bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding
 bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 ```
 
 脚本只包装 `ama import/run/eval`。通过 `DATASET_DIR`、`CONFIG`、`RUNS_DIR`、`TIMEOUT`、`MAX_CALLS` 修改运行参数。
 可在 `run MODEL` 后追加 `--episode` 等 AMA 参数。API key 由相应环境变量或本地 `.env` 提供，不能提交到仓库。
 运行在发起命令的机器上，模型推理通过配置中的外部 API 完成；参考报告不发送到模型服务。
+
+仓库中的 `ama.json` 已提供以下别名；按照 `.env.example` 中的变量名，将自己的 key 填入本地 `.env`。
+
+| AMA 别名 | 接口请求的 model ID | 密钥环境变量 |
+| --- | --- | --- |
+| `glm-5.3-flash-coding` | `glm-5.3-flash`（GLM Coding 接口） | `GLM_API_KEY` |
+| `qwen3.8-flash` | `qwen3.8-flash`（DashScope 接口） | `DASHSCOPE_API_KEY` |
+| `deepseek-v4.1-flash-1017` | `deepseek-flash`（DeepSeek 接口） | `DEEPSEEK_API_KEY` |
+
+替换运行命令中的别名即可切换模型。运行会向所选服务商发送胸片，应确认数据访问条款及向该目的地发送的授权。
+原有 `glm-5.3-flash` 别名仍使用标准 GLM 接口，新增 Coding 别名对应本地 CXR 实验使用的接口。
+DeepSeek 别名记录本次实验的版本标签，但实际请求的服务商 model ID 会随服务更新。
+
+配置保留已有实验的请求参数：Qwen、DeepSeek 为 `max_tokens=8192`，GLM 未设置；三者均请求 `temperature=0`，思考行为使用服务商默认值。
+这不保证服务商实际生效的生成设置或 token 预算一致。新的严格对照实验应通过独立 `CONFIG` 明确设置，并随结果报告参数。
 
 验收包括：导入结构有效、输入/标注对应正确、参考答案隔离、AMA 能保存模型预测。
 findings-only 导入默认注册 `mimic_cxr_automedbench_v1`，`ama eval` 同时计算轻量内容指标与独立的 AMA 格式诊断。旧 findings-impression 模式仍为 `unscored`。
