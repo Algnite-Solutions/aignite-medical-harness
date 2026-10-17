@@ -1,0 +1,3 @@
+Write an English chest X-ray report using all supplied images and views of the current study.
+Put the report in answer as {"findings": "...", "impression": "..."}; both values must be strings.
+Do not invent prior-study comparisons.

@@ -142,7 +142,9 @@ def score_rocov2(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) -
 from .importers.mimic_cdm import score_mimic_cdm
 from .importers.mimic_cdm_benchmark import score_mimic_cdm_open
 from .importers.symptom2disease import SCORER as SYMPTOM2DISEASE_SCORER, score_symptom2disease
+from .cxr_report import SCORER as CXR_REPORT_SCORER, score_mimic_cxr_report
 
 REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored,
             "mimic_cdm": score_mimic_cdm, "mimic_cdm_open": score_mimic_cdm_open,
-            SYMPTOM2DISEASE_SCORER: score_symptom2disease}
+            SYMPTOM2DISEASE_SCORER: score_symptom2disease,
+            CXR_REPORT_SCORER: score_mimic_cxr_report}
