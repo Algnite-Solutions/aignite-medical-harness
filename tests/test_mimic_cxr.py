@@ -10,7 +10,7 @@ from PIL import Image
 
 from ama.cli import main
 from ama.data import load_dataset, validate_dataset
-from ama.importers.mimic_cxr import digest, import_mimic_cxr, parse_sections
+from ama.importers.mimic_cxr import digest, import_mimic_cxr, parse_sections, reuse_mimic_cxr
 from ama.importers.mimic_cxr_raw import prepare_raw
 
 
@@ -268,3 +268,122 @@ def test_raw_package_damage(tmp_path, kind):
     with pytest.raises((ValueError, OSError)):
         import_mimic_cxr(raw, tmp_path / 'out')
     assert not (tmp_path / 'out').exists()
+
+
+def test_findings_only_without_impression_and_cli(tmp_path):
+    source = synthetic_source(tmp_path)
+    archive = source / 'mimic-cxr-reports.zip'
+    with zipfile.ZipFile(archive) as z:
+        reports = {n: z.read(n) for n in z.namelist()}
+    reports['files/p10/p10000001/s10.txt'] = b'FINDINGS: SYNTHETIC_FINDINGS_ONLY'
+    with zipfile.ZipFile(archive, 'w') as z:
+        for name, body in reports.items():
+            z.writestr(name, body)
+    raw = tmp_path / 'raw'
+    prepare_raw(source, raw, study_ids=['10'], limit=1, report_mode='findings-only')
+    with pytest.raises(ValueError, match='required report sections'):
+        import_mimic_cxr(raw, tmp_path / 'default')
+    out = tmp_path / 'findings'
+    assert main(['import', 'mimic-cxr', '--source', str(raw), '--out', str(out),
+                 '--report-mode', 'findings-only']) == 0
+    ds = load_dataset(out, with_targets=True)
+    assert ds.targets['mimic-cxr-s10'].turns['t1']['answer'] == {'findings': 'SYNTHETIC_FINDINGS_ONLY'}
+    report = json.loads((out / 'import_report.json').read_text())
+    assert report['task']['task_id'] == 'mimic-cxr-report-task'
+    assert report['task']['official_cohort_reproduced'] is False
+
+
+def frozen_dataset(tmp_path):
+    source = synthetic_source(tmp_path)
+    raw, frozen = tmp_path / 'raw', tmp_path / 'frozen'
+    prepare_raw(source, raw)
+    import_mimic_cxr(raw, frozen)
+    # The reused structured sections must win over any flattened full report.
+    rows = [json.loads(s) for s in (frozen / 'targets.jsonl').read_text().splitlines()]
+    for row in rows:
+        row['turns']['t1']['report'] = 'SYNTHETIC_FULL_REPORT_NOT_A_FINDINGS_REFERENCE'
+    (frozen / 'targets.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    return frozen
+
+
+def test_reuse_frozen_cohort_and_native_run(tmp_path, capsys):
+    from ama.runner import execute
+    source = frozen_dataset(tmp_path)
+    source_hashes = {p.name: digest(p) for p in source.iterdir() if p.is_file()}
+    out = tmp_path / 'reused'
+    assert main(['import', 'mimic-cxr', '--source', str(source), '--out', str(out),
+                 '--source-format', 'ama', '--report-mode', 'findings-only']) == 0
+    original, reused = load_dataset(source, True), load_dataset(out, True)
+    assert reused.info.splits == original.info.splits
+    for before, after in zip(original.episodes, reused.episodes):
+        assert before.id == after.id
+        for old, new in zip(before.turns[0].evidence, after.turns[0].evidence):
+            assert (old.id, old.text) == (new.id, new.text)
+            assert digest(source / old.file) == digest(out / new.file)
+        assert reused.targets[after.id].turns['t1']['answer'] == {'findings': 'SYNTHETIC_FINDINGS'}
+    assert source_hashes == {p.name: digest(p) for p in source.iterdir() if p.is_file()}
+    report = json.loads((out / 'import_report.json').read_text())
+    assert report['n_imported'] == 3 and report['n_images'] == 4
+    assert report['source_sha256']['targets.jsonl'] == digest(source / 'targets.jsonl')
+    assert reused.eval_config.scorer == 'mimic_cxr_automedbench_v1'
+
+    # Identical synthetic JPEG bytes may share a copied artifact. Their distinct
+    # evidence IDs and per-view provenance must survive a second migration too.
+    again = tmp_path / 'reused-again'
+    reuse_mimic_cxr(out, again, split='validate')
+    assert load_dataset(again).info.splits == reused.info.splits
+    assert json.loads((again / 'import_report.json').read_text())['n_images'] == 4
+
+    class Model:
+        name, config, timeout, last_usage = 'fake', {}, 1, None
+
+        def complete(self, history, tools=None):
+            assert 'SYNTHETIC_FINDINGS' not in json.dumps(history)
+            assert 'SYNTHETIC_FULL_REPORT' not in json.dumps(history)
+            text = [p['text'] for p in history[-1]['content'] if p['type'] == 'text']
+            evidence_id = next(s.split()[1] for s in text if s.startswith('Evidence:'))
+            return {'role': 'assistant', 'content': json.dumps({
+                'turn_id': 't1', 'answer': {'findings': 'A generated synthetic observation.'},
+                'citations': [evidence_id], 'reasoning_summary': 'Based on the supplied image.'})}
+
+    # Enforce the same evaluator boundary as production: a run must not open targets.
+    target_path = out / 'targets.jsonl'
+    saved = target_path.read_text()
+    target_path.write_text('not readable target JSON')
+    run = execute(out, Model(), runs_root=tmp_path / 'runs', max_calls=1)
+    target_path.write_text(saved)
+    assert main(['eval', str(run)]) == 0
+    metrics = json.loads((run / 'metrics.json').read_text())
+    assert metrics['scorer'] == 'mimic_cxr_automedbench_v1'
+    assert metrics['scored']['aggregate']['output_quality']['strict_output_compliance']['num'] == 3
+
+
+@pytest.mark.parametrize('kind', ['image_hash', 'missing_findings', 'duplicate_origin',
+                                 'visible_report', 'no_images', 'invalid_answer_type'])
+def test_reuse_rejects_damage_and_leakage(tmp_path, kind):
+    source = frozen_dataset(tmp_path)
+    if kind == 'image_hash':
+        rows = [json.loads(s) for s in (source / 'provenance.jsonl').read_text().splitlines()]
+        rows[0]['images'][0]['sha256'] = 'tampered'
+        (source / 'provenance.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    elif kind in {'missing_findings', 'invalid_answer_type'}:
+        rows = [json.loads(s) for s in (source / 'targets.jsonl').read_text().splitlines()]
+        if kind == 'invalid_answer_type':
+            rows[0]['turns']['t1']['answer'] = 'not structured sections'
+        else:
+            rows[0]['turns']['t1']['answer']['findings'] = ''
+        (source / 'targets.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    elif kind == 'duplicate_origin':
+        path = source / 'provenance.jsonl'
+        path.write_text(path.read_text() + path.read_text().splitlines()[0]+'\n')
+    else:
+        rows = [json.loads(s) for s in (source / 'episodes.jsonl').read_text().splitlines()]
+        if kind == 'no_images':
+            rows[0]['turns'][0]['evidence'] = []
+        else:
+            rows[0]['turns'][0]['evidence'][0]['text'] = 'SYNTHETIC_GOLD_LEAK'
+        (source / 'episodes.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    out = tmp_path / 'out'
+    with pytest.raises(ValueError):
+        reuse_mimic_cxr(source, out, split='validate')
+    assert not out.exists()

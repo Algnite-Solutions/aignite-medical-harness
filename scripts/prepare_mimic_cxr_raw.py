@@ -15,9 +15,12 @@ def main(argv=None):
     parser.add_argument('--split', choices=['train', 'validate', 'test'], default='validate')
     parser.add_argument('--limit', type=int, default=3)
     parser.add_argument('--study-id', action='append', dest='study_ids')
+    parser.add_argument('--report-mode', choices=['findings-impression', 'findings-only'],
+                        default='findings-impression')
     args = parser.parse_args(argv)
     try:
-        report = prepare_raw(args.source, args.out, args.split, args.limit, args.study_ids)
+        report = prepare_raw(args.source, args.out, args.split, args.limit, args.study_ids,
+                             report_mode=args.report_mode)
     except (OSError, ValueError, KeyError, ImportError, zipfile.BadZipFile) as exc:
         parser.exit(1, f'ERROR: {exc}\n')
     # Individual identifiers and excluded case origins remain in the local report.

@@ -1,4 +1,4 @@
-"""Current-study-only MIMIC-CXR onboarding, explicit-sections-v1 (not a benchmark)."""
+"""MIMIC-CXR tasks in native AMA format; references stay evaluator-only."""
 from __future__ import annotations
 
 import hashlib
@@ -9,8 +9,9 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from ..data import validate_dataset
+from ..data import load_dataset, validate_dataset
 from ..dataset_card import write_dataset_cards
+from ..cxr_report import SCORER as REPORT_SCORER
 
 PARSER = "explicit-sections-v1"
 OFFICIAL_REFERENCE = "31901464793d0bb23835092f05bd1aba6af7baff"
@@ -19,6 +20,29 @@ TASK_INSTRUCTIONS = (
     'Put the report in answer as {"findings": "...", "impression": "..."}; both values must be strings.\n'
     'Do not invent prior-study comparisons.\n'
 )
+FINDINGS_INSTRUCTIONS = (
+    'Write the English findings section of a chest X-ray report using all supplied images '
+    'and views of the current study.\n'
+    'Put the report in answer as {"findings": "..."}, with a non-empty string value.\n'
+    'Describe visible findings only. Do not add an impression section, clinical history, '
+    'or unsupported prior-study comparisons.\n'
+)
+AUTOMEDBENCH_TASK = {
+    "benchmark": "AutoMedBench", "paper": "https://arxiv.org/abs/2606.01961",
+    "task_id": "mimic-cxr-report-task",
+    "task_definition_revision": "a4e64e5502c728cee744edce2b596000fcd60fdd",
+    "reference_text_mode": "findings_only",
+    "adaptation": "AMA Decision.answer.findings; native AMA execution and evaluation",
+    "official_cohort_reproduced": False,
+}
+
+
+def report_fields(report_mode: str) -> tuple[str, ...]:
+    if report_mode == "findings-only":
+        return ("findings",)
+    if report_mode == "findings-impression":
+        return ("findings", "impression")
+    raise ValueError("unknown report mode")
 
 
 def parse_sections(text: str) -> dict[str, str]:
@@ -99,9 +123,11 @@ def staging(out: Path):
 
 
 def import_mimic_cxr(source: Path, out: Path, split: str = "validate",
-                     limit: int | None = None, ids: list[str] | None = None) -> dict:
+                     limit: int | None = None, ids: list[str] | None = None, *,
+                     report_mode: str = "findings-impression") -> dict:
     """Read only a standalone raw package, keeping answers evaluator-only."""
     source, out = Path(source), Path(out)
+    required = report_fields(report_mode)
     if split not in {"train", "validate", "test"} or (limit is not None and limit < 1):
         raise ValueError("invalid split or non-positive limit")
     if out.resolve().is_relative_to(source.resolve()):
@@ -136,10 +162,11 @@ def import_mimic_cxr(source: Path, out: Path, split: str = "validate",
     with staging(out) as stage:
         (stage / "artifacts").mkdir()
         for row in selected:
-            answer = parse_sections(safe_path(source, row["report"]).read_text(encoding="utf-8"))
+            sections = parse_sections(safe_path(source, row["report"]).read_text(encoding="utf-8"))
+            answer = {key: sections[key] for key in required}
             report_hash = digest(safe_path(source, row["report"]))
             if report_hash != row["report_sha256"] or not all(answer.values()):
-                raise ValueError("report hash mismatch or missing findings/impression")
+                raise ValueError("report hash mismatch or missing required report sections")
             eid = f"mimic-cxr-s{row['study_id']}"
             evidence, origins = [], []
             for image in sorted(row["images"], key=lambda i: i["dicom_id"]):
@@ -157,35 +184,134 @@ def import_mimic_cxr(source: Path, out: Path, split: str = "validate",
                 if view:
                     item["text"] = f"ViewPosition: {view}"
                 evidence.append(item)
-                origins.append(dict(image))
+                origins.append({**image, "file": rel, "raw_file": image["file"]})
             episodes.append({"id": eid, "turns": [{"id": "t1", "evidence": evidence}]})
             targets.append({"id": eid, "turns": {"t1": {"answer": answer}}})
             provenance.append({"id": eid, **row, "images": origins})
-        report = {"protocol": PARSER, "official_parser_reference": OFFICIAL_REFERENCE,
+        report = {"protocol": PARSER, "report_mode": report_mode, "source_format": "raw",
+                  "official_parser_reference": OFFICIAL_REFERENCE,
                   "split": split, "n_source_studies": len(records), "n_split_studies": sum(r['split'] == split for r in records),
                   "n_after_id_filter": len(candidates), "n_not_selected_due_id_filter": sum(r["split"] == split for r in records)-len(candidates), "n_not_selected_due_limit": len(candidates)-len(selected),
                   "n_imported": len(selected), "n_images": sum(len(r['images']) for r in selected),
                   "selected_study_ids": [r['study_id'] for r in selected],
                   "manifest_sha256": digest(source / 'manifest.jsonl'), "scorer": "unscored"}
-        json_file(stage / "dataset.json", {"schema": "ama-dataset", "name": out.name,
-                  "splits": {split: [e['id'] for e in episodes]}})
-        jsonl(stage / "episodes.jsonl", episodes)
-        jsonl(stage / "targets.jsonl", targets)
-        jsonl(stage / "provenance.jsonl", provenance)
-        json_file(stage / "import_report.json", report)
-        json_file(stage / "eval.json", {"scorer": "unscored"})
-        (stage / "instructions.txt").write_text(TASK_INSTRUCTIONS, encoding="utf-8")
-        write_dataset_cards(stage, name=out.name, source="MIMIC-CXR-JPG 2.1.0; standalone raw package",
-            license_name="PhysioNet credentialed data terms apply; no redistribution of real cases.",
-            purpose_en="Onboarding derived current-study-only report generation task.", purpose_zh="Onboarding 派生任务：仅当前 study 的报告生成。",
-            construction_en="One study, one turn, all images sorted by dicom_id; explicit findings/impression are evaluator-only.",
-            construction_zh="一个 study、一轮；全部图片按 dicom_id 排序；明确 findings/impression 仅供评测。",
-            episodes=len(episodes), turns=len(episodes), evidence=report['n_images'], scorer="unscored", targets=len(targets),
-            limitations_en="Structural conversion only: no report quality score, no numerical onboarding acceptance, no history=1 reproduction. Parser: explicit-sections-v1, not official rules.",
-            limitations_zh="仅证明转换结构；无报告质量分数，未满足最终 onboarding 数值验收，非 history=1 复现。parser 为 explicit-sections-v1，不等同官方规则。",
-            artifacts_en="JPEG copies in artifacts; source locations, hashes and acquisition dates only in provenance.",
-            artifacts_zh="JPEG 实际复制到 artifacts；来源、hash、采集时间仅在 provenance。")
-        errors = validate_dataset(stage)
-        if errors:
-            raise ValueError("generated dataset is invalid: " + "; ".join(errors))
+        _write_dataset(stage, out.name, split, episodes, targets, provenance, report)
+    return report
+
+
+def _write_dataset(stage, name, split, episodes, targets, provenance, report):
+    """Shared publication boundary for raw imports and reuse of frozen AMA cases."""
+    findings_only = report["report_mode"] == "findings-only"
+    if findings_only:
+        report["task"] = dict(AUTOMEDBENCH_TASK)
+    json_file(stage / "dataset.json", {"schema": "ama-dataset", "name": name,
+              "splits": {split: [e["id"] for e in episodes]}})
+    jsonl(stage / "episodes.jsonl", episodes)
+    jsonl(stage / "targets.jsonl", targets)
+    jsonl(stage / "provenance.jsonl", provenance)
+    scorer = REPORT_SCORER if findings_only else "unscored"
+    report["scorer"] = scorer
+    json_file(stage / "import_report.json", report)
+    json_file(stage / "eval.json", {"scorer": scorer})
+    (stage / "instructions.txt").write_text(
+        FINDINGS_INSTRUCTIONS if findings_only else TASK_INSTRUCTIONS, encoding="utf-8")
+    write_dataset_cards(stage, name=name, source="MIMIC-CXR; " + report["source_format"],
+        license_name="PhysioNet credentialed data terms apply; no redistribution of real cases.",
+        purpose_en=("AutoMedBench findings-generation task adapted to AMA." if findings_only else
+                    "Current-study findings and impression generation."),
+        purpose_zh=("AutoMedBench findings 生成任务接入 AMA。" if findings_only else "当前 study 的 findings/impression 生成。"),
+        construction_en="One study, one turn, all supplied JPEG views. Only requested report sections enter evaluator-only targets.",
+        construction_zh="一个 study、一轮，包含全部 JPEG 视角；要求的报告字段只写入评测 targets。",
+        episodes=len(episodes), turns=len(episodes), evidence=report["n_images"],
+        scorer=scorer, targets=len(targets),
+        limitations_en="Findings-only uses AutoMedBench's lightweight report metrics (rule observation F1 and ROUGE-L), not its default seven-metric MLRG backend. Invalid cases score zero in AMA case means; complete-submission scores also apply upstream's all-cases-valid gate. These are not official leaderboard results or verified clinical accuracy. Source selection and hashes are in import_report.json.",
+        limitations_zh="Findings-only 使用 AutoMedBench 轻量评分（规则观察项 F1 与 ROUGE-L），非默认七指标 MLRG。AMA 逐例均值将无效病例计零；整批提交分数另遵循全部病例有效的门槛。结果不等同官方榜单或经验证的临床正确率。抽样来源与 hash 见 import_report.json。",
+        artifacts_en="Verified JPEG copies in artifacts; source metadata stays in local provenance.",
+        artifacts_zh="校验后的 JPEG 复制到 artifacts；来源元数据保留在本地 provenance。")
+    errors = validate_dataset(stage)
+    if errors:
+        raise ValueError("generated dataset is invalid: " + "; ".join(errors))
+
+
+def reuse_mimic_cxr(source: Path, out: Path, split: str = "test",
+                   limit: int | None = None, *, report_mode: str = "findings-only",
+                   ids: list[str] | None = None) -> dict:
+    """Reuse a frozen CXR cohort, preserving IDs, views and structured sections.
+
+    This deliberately does not reparse a flattened full report, resample cases,
+    carry forward the old scorer, or copy any old instructions/observations.
+    Every image must have a matching source provenance hash.
+    """
+    source, out = Path(source), Path(out)
+    required = report_fields(report_mode)
+    if out.resolve().is_relative_to(source.resolve()):
+        raise ValueError("output must be outside the source dataset")
+    if limit is not None and limit < 1:
+        raise ValueError("non-positive limit")
+    dataset = load_dataset(source, with_targets=True)
+    errors = validate_dataset(source)
+    if errors:
+        raise ValueError("invalid source dataset: " + "; ".join(errors))
+    candidates = dataset.select(split=split)
+    if ids is not None:
+        wanted = {f"mimic-cxr-s{identifier(s, numeric=True)}" for s in ids}
+        if not wanted or len(wanted) != len(ids) or wanted - {e.id for e in candidates}:
+            raise ValueError("duplicate or unknown requested study IDs")
+        candidates = [e for e in candidates if e.id in wanted]
+    selected = candidates[:limit] if limit is not None else candidates
+    if not selected:
+        raise ValueError("no studies selected")
+    origin_rows = [json.loads(s) for s in safe_path(source, "provenance.jsonl").read_text().splitlines() if s.strip()]
+    origins = {r["id"]: r for r in origin_rows}
+    if len(origins) != len(origin_rows):
+        raise ValueError("duplicate source provenance IDs")
+    episodes, targets, provenance = [], [], []
+    with staging(out) as stage:
+        (stage / "artifacts").mkdir()
+        for episode in selected:
+            if len(episode.turns) != 1 or not re.fullmatch(r"mimic-cxr-s[0-9]+", episode.id):
+                raise ValueError("expected one-turn MIMIC-CXR studies")
+            turn = episode.turns[0]
+            target = dataset.targets[episode.id].turns[turn.id]["answer"]
+            if not isinstance(target, dict) or any(
+                    not isinstance(target.get(k), str) or not target[k].strip() for k in required):
+                raise ValueError("missing structured reference section; no full-report fallback")
+            if not turn.evidence:
+                raise ValueError("study has no images")
+            origin = origins[episode.id]
+            image_origins = origin["images"]
+            if [i["file"] for i in image_origins] != [e.file for e in turn.evidence]:
+                raise ValueError("image/provenance association mismatch")
+            evidence, copied = [], []
+            for item, image_origin in zip(turn.evidence, image_origins):
+                if item.type != "image" or not item.file or item.text and not re.fullmatch(
+                        r"View(?:Position)?: [A-Za-z -]+", item.text):
+                    raise ValueError("expected only JPEG views and view-position text")
+                path = safe_path(source, item.file)
+                decode_image(path)
+                checksum = digest(path)
+                if checksum != image_origin["sha256"]:
+                    raise ValueError("source image hash mismatch")
+                relative = f"artifacts/{checksum}.jpg"
+                shutil.copy2(path, stage / relative)
+                if digest(stage / relative) != checksum:
+                    raise ValueError("copied image hash mismatch")
+                evidence.append({**item.model_dump(exclude_none=True), "file": relative})
+                copied.append({**image_origin, "file": relative, "source_file": item.file})
+            episodes.append({"id": episode.id, "turns": [{"id": turn.id, "evidence": evidence}]})
+            targets.append({"id": episode.id, "turns": {turn.id: {
+                "answer": {k: target[k] for k in required}}}})
+            provenance.append({**origin, "images": copied})
+        source_files = ["dataset.json", "episodes.jsonl", "targets.jsonl", "provenance.jsonl"]
+        source_files += [n for n in ("cohort.json", "import_report.json") if (source / n).exists()]
+        report = {"protocol": "mimic-cxr-ama-reuse-v1", "source_format": "ama",
+                  "report_mode": report_mode, "split": split, "scorer": "unscored",
+                  "n_imported": len(episodes), "n_images": sum(len(e["turns"][0]["evidence"]) for e in episodes),
+                  "selected_episode_ids": [e["id"] for e in episodes],
+                  "selection_rule": "preserve source split order; optional ID filter and prefix limit; no resampling",
+                  "reference_extraction": "structured targets.answer sections copied unchanged",
+                  "source_sha256": {n: digest(safe_path(source, n)) for n in source_files}}
+        if "cohort.json" in source_files:
+            json_file(stage / "source_cohort.json", json.loads((source / "cohort.json").read_text()))
+        _write_dataset(stage, out.name, split, episodes, targets, provenance, report)
     return report

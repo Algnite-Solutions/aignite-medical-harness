@@ -1,82 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
 PYTHON_BIN=${PYTHON_BIN:-.venv/bin/python}
 AMA_DATA_PATH=${AMA_DATA_PATH:-local_data}
-BENCHMARK_DIR=${BENCHMARK_DIR:-$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42}
-RUNS_DIR=${RUNS_DIR:-runs/mimic-cxr-rexrank-fixed100-seed42}
+DATASET_DIR=${DATASET_DIR:-$AMA_DATA_PATH/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset}
 CONFIG=${CONFIG:-ama.json}
-export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+RUNS_DIR=${RUNS_DIR:-local_data/automedbench/runs/mimic-cxr-ama}
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_mimic_cxr.sh COMMAND [ARGUMENT]
+Usage: bash scripts/run_mimic_cxr.sh COMMAND [ARGS...]
 
-Commands:
-  freeze           Freeze the official seed-42 cohort (requires REXRANK_JSON).
-  import           Copy/check JPGs and publish the runnable dataset (requires IMAGE_ROOT).
-  setup            Download/check pinned RadGraph resources; no model API call.
-  validate         Validate the prepared dataset offline.
-  run MODEL        Generate reports with one configured vision-model alias; makes API calls.
-  eval RUN_DIR     Score one existing AMA run offline; no model API call.
-  --help           Show this help.
+  import SOURCE [OPTIONS...]  Import a standalone raw package as findings-only.
+  reuse SOURCE [OPTIONS...]   Reuse a frozen AMA CXR dataset as findings-only.
+  run MODEL [OPTIONS...]     Call native ama run; extra options pass through.
+  eval RUN_DIR [OPTIONS...]  Call native ama eval; e.g. --scorer mimic_cxr_automedbench_v1.
 
-Default layout:
-  AMA_DATA_PATH: local_data (or your NAS data root)
-  BENCHMARK_DIR: $AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42
-  cohort:        $BENCHMARK_DIR/cohort/cohort.json
-  dataset:       $BENCHMARK_DIR/dataset (self-contained; usable by ama run/eval)
-  RUNS_DIR:      runs/mimic-cxr-rexrank-fixed100-seed42
+AMA_DATA_PATH defaults to local_data; the runnable dataset is stored under
+  $AMA_DATA_PATH/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset
+Set DATASET_DIR, CONFIG, RUNS_DIR or PYTHON_BIN to override paths.
+The dataset directory contains dataset.json, episodes.jsonl, targets.jsonl,
+instructions.txt, eval.json and copied artifacts. Run records stay separate.
+import/reuse default to SPLIT=test; set SPLIT=validate for validation data.
+run defaults to TIMEOUT=180 and MAX_CALLS=1. Import never overwrites data.
+Default findings-only scoring uses the pinned AutoMedBench lightweight backend.
+No Docker or clinical model download is required. For the optional seven-metric
+backend, set AMA_CXR_MLRG_CONFIG and --scorer mimic_cxr_automedbench_mlrg_v1.
 
-Prepare from the pinned ReXrank JSON and the original directory containing files/:
-  export REXRANK_JSON=/path/to/ReXRank_MIMICCXR_test.json
-  export IMAGE_ROOT=/path/to/mimic-cxr-jpg-2.1.0
-  bash scripts/run_mimic_cxr.sh freeze
-  bash scripts/run_mimic_cxr.sh import
-  bash scripts/run_mimic_cxr.sh setup
-  bash scripts/run_mimic_cxr.sh validate
-
-Run prepared data without reading the original JSON or NAS images:
-  bash scripts/run_mimic_cxr.sh run YOUR_VISION_MODEL_ALIAS
-  bash scripts/run_mimic_cxr.sh eval runs/mimic-cxr-rexrank-fixed100-seed42/RUN_ID
-
-Override BENCHMARK_DIR, RUNS_DIR, PYTHON_BIN, CONFIG and TIMEOUT (default 300) as needed.
-API keys must be configured separately; setup/eval never use a report-generator API.
-freeze/import reject existing destinations; choose new directories for new preparation.
-run uses the existing AMA runner, one model call per study, without batch resume/retries.
-This is a 100-study image-only subset, not a full official ReXrank leaderboard result.
+Example:
+  bash scripts/run_mimic_cxr.sh reuse local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
+  CONFIG=local_data/mimic_cxr/glm-coding-smoke-config.json bash scripts/run_mimic_cxr.sh run glm-5.3-flash
+  bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 EOF
 }
 
 command=${1:---help}
 if [[ $# -gt 0 ]]; then shift; fi
 case "$command" in
-  --help|-h|help) usage ;;
-  freeze)
-    : "${REXRANK_JSON:?Set REXRANK_JSON to the pinned official JSON}"
-    "$PYTHON_BIN" scripts/prepare_mimic_cxr_rexrank.py freeze \
-      --source "$REXRANK_JSON" --out "$BENCHMARK_DIR/cohort"
-    ;;
-  import)
-    : "${REXRANK_JSON:?Set REXRANK_JSON to the pinned official JSON}"
-    : "${IMAGE_ROOT:?Set IMAGE_ROOT to the directory containing files/ and split CSV}"
-    "$PYTHON_BIN" scripts/prepare_mimic_cxr_rexrank.py materialize \
-      --source "$REXRANK_JSON" --cohort "$BENCHMARK_DIR/cohort/cohort.json" \
-      --image-root "$IMAGE_ROOT" --out "$BENCHMARK_DIR/dataset"
-    ;;
-  setup) "$PYTHON_BIN" scripts/setup_cxr_radgraph.py --cache "${AMA_RADGRAPH_CACHE:-local_data/radgraph}" ;;
-  validate)
-    "$PYTHON_BIN" -c 'import sys; from pathlib import Path; from ama.data import validate_dataset; errors=validate_dataset(Path(sys.argv[1])); print(errors or "Dataset valid"); sys.exit(bool(errors))' \
-      "$BENCHMARK_DIR/dataset"
+  help|--help|-h) usage ;;
+  import|reuse)
+    if [[ $# -lt 1 ]]; then usage >&2; exit 2; fi
+    source_dir=$1; shift
+    source_format=raw
+    if [[ $command == reuse ]]; then source_format=ama; fi
+    exec "$PYTHON_BIN" -m ama.cli import mimic-cxr --source "$source_dir" \
+      --out "$DATASET_DIR" --split "${SPLIT:-test}" --source-format "$source_format" \
+      --report-mode findings-only "$@"
     ;;
   run)
-    if [[ $# -ne 1 ]]; then echo "Provide one vision-model alias" >&2; exit 2; fi
-    "$PYTHON_BIN" -m ama.cli run "$BENCHMARK_DIR/dataset" --model "$1" \
-      --config "$CONFIG" --split test --runs-root "$RUNS_DIR" --max-calls 1 --timeout "${TIMEOUT:-300}"
+    if [[ $# -lt 1 ]]; then usage >&2; exit 2; fi
+    model=$1; shift
+    exec "$PYTHON_BIN" -m ama.cli run "$DATASET_DIR" --model "$model" --config "$CONFIG" \
+      --runs-root "$RUNS_DIR" --max-calls "${MAX_CALLS:-1}" --timeout "${TIMEOUT:-180}" "$@"
     ;;
   eval)
-    if [[ $# -ne 1 ]]; then echo "Provide one existing AMA run directory" >&2; exit 2; fi
-    "$PYTHON_BIN" -m ama.cli eval "$1"
+    if [[ $# -lt 1 ]]; then usage >&2; exit 2; fi
+    exec "$PYTHON_BIN" -m ama.cli eval "$@"
     ;;
   *) usage >&2; exit 2 ;;
 esac

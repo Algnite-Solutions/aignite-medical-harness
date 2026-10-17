@@ -11,7 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 from .mimic_cxr import (PARSER, decode_image, digest, identifier, json_file, jsonl,
-                        parse_sections, staging)
+                        parse_sections, report_fields, staging)
 
 
 def csv_rows(path: Path, required: set[str]):
@@ -26,7 +26,7 @@ def csv_rows(path: Path, required: set[str]):
 
 
 def prepare_raw(source: Path, out: Path, split: str = "validate", limit: int = 3,
-                study_ids: list[str] | None = None) -> dict:
+                study_ids: list[str] | None = None, *, report_mode: str = "findings-impression") -> dict:
     """Join all CSV IDs strictly; read only requested-split reports and selected images.
 
     Automatic selection reserves the earliest single- and multi-image eligible
@@ -34,6 +34,7 @@ def prepare_raw(source: Path, out: Path, split: str = "validate", limit: int = 3
     replacing a selected case. Report exclusions retain local provenance.
     """
     source, out = Path(source), Path(out)
+    required = report_fields(report_mode)
     if split not in {"train", "validate", "test"} or limit < 1:
         raise ValueError("invalid split or non-positive limit")
     if out.resolve().is_relative_to(source.resolve()):
@@ -107,7 +108,7 @@ def prepare_raw(source: Path, out: Path, split: str = "validate", limit: int = 3
             else:
                 body = archive.read(location[1])  # ZIP read verifies selected/report CRC
                 answer = parse_sections(body.decode('utf-8'))
-                missing = [key for key, value in answer.items() if not value]
+                missing = [key for key in required if not answer[key]]
                 if missing:
                     reason = 'missing_' + '_and_'.join(missing)
             if reason:
@@ -161,7 +162,7 @@ def prepare_raw(source: Path, out: Path, split: str = "validate", limit: int = 3
                 manifest.append({'study_id': sid, 'subject_id': subject, 'split': split,
                                  'images': copied, 'report': rel_report, 'report_member': group['report_member'],
                                  'report_sha256': checksum})
-            report = {'protocol': PARSER, 'split': split, 'n_source_images': len(images),
+            report = {'protocol': PARSER, 'report_mode': report_mode, 'split': split, 'n_source_images': len(images),
                       'n_split_studies': len(groups), 'n_after_id_filter': len(filtered_groups),
                       'n_not_selected_due_id_filter': len(groups)-len(filtered_groups),
                       'n_eligible': len(eligible), 'excluded': dict(excluded),

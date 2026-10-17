@@ -1,129 +1,131 @@
-# MIMIC-CXR — Dataset Card
+# MIMIC-CXR data and task onboarding in AMA
 
-## Source and purpose
+## Task
 
-Current-study report generation using [MIMIC-CXR-JPG 2.1.0](https://physionet.org/content/mimic-cxr-jpg/2.1.0/).
-Full reports come from MIMIC-CXR and must be supplied separately. PhysioNet credentialed data
-terms apply. This directory contains documentation and a prompt only, with no real images or
-reports; it is not a runnable demo dataset.
+This adapter brings the AutoMedBench MIMIC-CXR findings-generation task into native AMA.
+Each study is one episode and one turn, with every supplied JPEG view as image evidence.
+The model returns an AMA Decision with `answer={"findings":"..."}`. Reference findings
+are evaluator-only in `targets.jsonl`; the inference loader does not read them.
 
-## Construction and target isolation
+Sources: [paper](https://arxiv.org/abs/2606.01961) and [pinned task configuration](https://github.com/AutoMedBench/AutoMedBench/blob/a4e64e5502c728cee744edce2b596000fcd60fdd/eval_report_gen/mimic-cxr-report-task/config.yaml).
+This preserves study grouping, multiple views and findings-only generation while adapting
+execution and output to AMA. It does not reproduce the paper's agent protocol or official
+cohort. Default scoring uses upstream's lightweight backend; the seven-metric MLRG backend
+is optional. Docker is not required for this migration.
 
-One study becomes one single-turn Episode. All current-study images, sorted by dicom_id,
-become Evidence with ViewPosition when available. Findings and impression are stored only
-in evaluator targets. Official train/validate/test splits are preserved. Prior images,
-reports, and disease labels are not inputs.
-
-The custom `explicit-sections-v1` parser requires explicit, nonempty findings and impression
-sections, without official-parser aliases or last-paragraph fallback. Extraction failure does
-not prove that clinical content is absent. Automatic selection reserves the first eligible
-single-image and multi-image studies in numeric study-ID order, then fills in that order.
-IDs do not imply chronology. Repeat `--study-id` for explicit selection and set limit to at
-least the number of requested IDs.
-
-## Validated size and limitations
-
-Local subset: 3 validation studies, 3 turns, 7 JPGs, and 3 targets. These are prompt-development
-cases, not an independent test set. The offline suite passed 83 tests. Three GLM prompt trials
-passed output-format validation in 2/3, 2/3, and 3/3 cases respectively; these are not clinical
-accuracy scores or evidence of long-term reliability.
-
-The raw importer above remains `unscored`. Use the separate ReXrank preparation route below
-for report-quality scoring. Its authoritative references differ; overriding the scorer name
-alone does not convert a raw-importer dataset into the ReXrank task.
-
-## Usage
-
-Run from the repository root with Python 3.11+:
+## Import from raw data
 
 ```bash
-python3 -m pip install -e '.[dev,mimic-cxr]'
-python3 -m pytest -q
+PYTHONPATH=src .venv/bin/python scripts/prepare_mimic_cxr_raw.py \
+  --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_findings100 \
+  --split test --limit 100 --report-mode findings-only
+ama import mimic-cxr --source local_data/mimic_cxr/raw_findings100 \
+  --out local_data/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset \
+  --split test --report-mode findings-only
 ```
 
-The source must contain `files/`, the split and metadata CSV.gz files, and
-`mimic-cxr-reports.zip`. Report ZIP member paths must end in
-`files/pXX/p<subject_id>/s<study_id>.txt`. Replace the source path below; output directories
-must not already exist.
+Explicit FINDINGS sections are required; full reports are never substituted for missing
+findings. The existing default `findings-impression` mode remains available. Set the mode
+on both preparation and import. Automatic raw selection covers single/multiple views and
+then follows study order; it is not a random sample. Selection rules and exclusions stay local.
+
+## Reuse frozen AMA CXR cases
 
 ```bash
-python3 scripts/prepare_mimic_cxr_raw.py \
-  --source /path/to/mimic-cxr-jpg-2.1.0 \
-  --out local_data/mimic_cxr/raw_validate_demo --split validate --limit 3
-
-ama import mimic-cxr \
-  --source local_data/mimic_cxr/raw_validate_demo \
-  --out local_data/mimic_cxr/processed_validate_demo --split validate
+bash scripts/run_mimic_cxr.sh reuse \
+  local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
 ```
 
-The raw package contains actual image/report copies and can be imported independently.
-The importer validates staged output before publishing it, generating bilingual cards,
-provenance, and import counts. Corrupt images, hash mismatches, conflicting associations,
-and existing destinations fail; automatic selection records missing-section exclusions.
+This calls `ama import mimic-cxr --source-format ama --report-mode findings-only --split test`.
+It preserves episode/evidence IDs, split order, views and image bytes; each JPEG is decoded
+and checked against its source provenance hash. References come directly from structured
+`targets.answer.findings`, unchanged. Old full-report references, instructions and scorer
+are not inherited. Existing destinations are rejected. Optional `--study-id` filtering and
+`--limit` prefix selection never resample cases. The previous seed-42 100-study cohort is a
+local validation subset, not the official AutoMedBench cohort.
 
-Configure a vision-model alias in `ama.json` and its key in `.env`, then replace the alias:
+## Run and inspect
 
 ```bash
-ama run local_data/mimic_cxr/processed_validate_demo \
-  --model YOUR_VISION_MODEL_ALIAS --split validate \
-  --instruction-file datasets/mimic_cxr/instructions.txt \
-  --runs-root local_data/mimic_cxr/runs --max-calls 1 --timeout 120
-
-ama eval local_data/mimic_cxr/runs/<run-directory>
+CONFIG=local_data/mimic_cxr/glm-coding-smoke-config.json \
+  bash scripts/run_mimic_cxr.sh run glm-5.3-flash
+bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 ```
 
-The supplied prompt now specifies only the task and inner answer fields; the runner defines
-the Decision envelope. Historical format results do not validate this revised prompt.
-Keep real images, reports, and individual run records in
-ignored `local_data/`, outside the code submission.
+The helper wraps native `ama import/run/eval`. Override `DATASET_DIR`, `CONFIG`, `RUNS_DIR`,
+`TIMEOUT` or `MAX_CALLS` as needed. Extra AMA run options such as `--episode` pass through.
+Keys are read from environment variables or local `.env`, never committed. The runner runs
+on the machine launching it; model inference uses the configured API. References are not sent.
 
-## ReXrank fixed100 and RadGraph scoring
+Acceptance checks are valid import structure, correct image/reference pairing, hidden
+references and saved predictions from native AMA. Findings-only import defaults to `mimic_cxr_automedbench_v1`, which adds lightweight
+content metrics alongside execution/Decision-format diagnostics. The legacy
+findings-impression import remains `unscored`.
+Nonempty findings, format compliance and clinical correctness are distinct. Keep failed
+cases in the denominator.
 
-Use `data/mimic-cxr/ReXRank_MIMICCXR_test.json` from the
-[pinned ReXrank revision](https://github.com/rajpurkarlab/ReXrank/tree/0a18a41e580992ac7cd32a8a9463009654f0d390).
-Sort numeric study IDs, sample 100 without replacement using seed 42, then sort the sample:
-100 studies, 164 images. The official `report` is the evaluator-only reference, bypassing
-the raw section parser. Missing impression NaN values become empty strings only in the
-auxiliary answer fields. Inputs include all current-study images and views, without context/history.
+## Files and limitations
+
+The runnable dataset contains dataset.json, episodes.jsonl, instructions.txt and copied
+JPEG artifacts. targets.jsonl stores only the requested reference sections. Local
+provenance.jsonl and import_report.json record hashes and source selection; cohort reuse
+also retains source file hashes and source_cohort.json when present. Native run records
+contain manifest, messages, decisions and diagnostics, with metrics after eval.
+
+Keep real cases, reports, identifiers, provenance and run outputs under ignored local_data/.
+Respect source data access terms; do not redistribute clinical cases with code. Retain old
+local experiments separately. Migration checks do not establish clinical performance or
+comparability with the paper's leaderboard.
+
+## Report scoring
+
+Unmodified upstream report_scorer.py, format_checker.py and mlrg_metrics.py are vendored
+at revision a4e64e5502c728cee744edce2b596000fcd60fdd. Their hashes, source manifest and
+research-use license ship in src/ama/_vendor/automedbench_report/. AMA adapts only data
+access and aggregation; scoring calls no remote model or judge API.
+
+The default upstream **lightweight** backend uses 12 regex-derived observation labels
+and the upstream ROUGE-L tokenizer/LCS/F1 implementation. These are not CheXbert or
+RadGraph labels. Upstream pair metrics round to four decimal places.
+
+- mean_observation_f1 and mean_rouge_l_f1: per-case means with invalid cases zero-filled.
+- case_mean_score: mean of 0.7 * observation F1 + 0.3 * ROUGE-L F1, an AMA diagnostic.
+- valid_case_mean_score: valid-subset mean, always report coverage with it.
+- complete_submission_score: applies upstream's all-reports-valid gate; otherwise zero.
+
+Report validation uses upstream's exact 40–8000 character, 20-letter and printable-character
+checks. This is distinct from strict AMA JSON compliance. Recovered Decisions can be scored;
+unparsed replies are not reinterpreted by the scorer. Missing/invalid outputs receive zero
+in AMA case means, including cases whose empty rule-label sets would otherwise earn F1=1.
+Higher scores mean greater agreement under these metrics, not verified clinical accuracy.
+Do not present lightweight values as the paper's default seven-metric result.
+
+Re-score existing outputs without model API calls:
 
 ```bash
-python3 -m pip install -e '.[dev,mimic-cxr,cxr-radgraph]'
-export AMA_DATA_PATH=local_data
-export REXRANK_JSON=/path/to/ReXRank_MIMICCXR_test.json
-export IMAGE_ROOT=/path/to/mimic-cxr-jpg-2.1.0
-bash scripts/run_mimic_cxr.sh freeze
-bash scripts/run_mimic_cxr.sh import
-bash scripts/run_mimic_cxr.sh setup
-bash scripts/run_mimic_cxr.sh validate
+bash scripts/run_mimic_cxr.sh eval /path/to/run --scorer mimic_cxr_automedbench_v1
 ```
 
-`IMAGE_ROOT` must contain `files/` and the official split CSV. The complete runnable dataset
-is `$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset/`, with the frozen
-manifest in the adjacent `cohort/`. Override `BENCHMARK_DIR` as needed. Prepared run/eval
-does not require the original JSON or NAS images. freeze/import reject existing destinations.
+### Optional default-paper MLRG backend
+
+The optional backend preserves upstream corpus aggregation: BLEU (mean of BLEU1–4),
+METEOR, ROUGE_L, RadGraph **partial** F1, and CheXbert micro precision/recall/F1, weighted
+0.142857 each. Raw corpus results and the complete-submission gate are separate. Corpus
+micro-F1 is never multiplied by coverage and described as a per-case average.
+
+Provide a compatible local MLRG environment and its CheXbert, BERT and RadGraph resources.
+Copy mlrg.example.json to an ignored local file and set the real paths:
 
 ```bash
-bash scripts/run_mimic_cxr.sh --help
-bash scripts/run_mimic_cxr.sh run YOUR_VISION_MODEL_ALIAS
-bash scripts/run_mimic_cxr.sh eval runs/mimic-cxr-rexrank-fixed100-seed42/RUN_ID
-# Existing CLI works directly too:
-ama run "$AMA_DATA_PATH/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset" \
-  --model YOUR_VISION_MODEL_ALIAS --split test --max-calls 1 --timeout 300
-ama eval runs/RUN_ID
+AMA_CXR_MLRG_CONFIG=local_data/mimic_cxr/mlrg.json \
+  bash scripts/run_mimic_cxr.sh eval /path/to/run --scorer mimic_cxr_automedbench_mlrg_v1
 ```
 
-The script reuses the AMA runner and adds no envelope contract or batch resume/retry logic.
-Run records default to local `runs/mimic-cxr-rexrank-fixed100-seed42`, outside processed data.
+Resources are not downloaded automatically. Missing resources/dependencies/metrics fail
+explicitly, with no lightweight fallback. Seven-metric fields are null in lightweight
+runs, not zero scores. S1–S5 and Overall are not produced without the full agent protocol.
 
-`mimic_cxr_radgraph_v1` implements the entity/relation F1 average defined by
-[ReXrank-metric](https://github.com/rajpurkarlab/ReXrank-metric/tree/d6be67831ef933dc91f01892303a40ebc6cc9549),
-then macro-averages across expected studies. Invalid/missing reports score zero; valid-report
-mean, failures and output format quality are reported separately. Extractor failures raise errors.
-Inference uses pinned `radgraph==0.1.18`, `model_type=radgraph`, weights and tokenizer/config
-on CPU offline. Setup accepts `HF_ENDPOINT` while retaining pinned hash checks; set
-`AMA_RADGRAPH_CACHE` for a custom cache directory.
 
-This is an image-only onboarding subset. Official metric functions agree on shared annotations;
-equivalence to the legacy extractor remains unverified. Scores are neither full official leaderboard
-results nor clinical diagnosis accuracy. Commit code, task instructions, dataset cards and synthetic
-tests; keep real data, per-case results, plans and audit artifacts local.
+## Directory convention
+
+The runnable dataset defaults to `$AMA_DATA_PATH/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset`, with `AMA_DATA_PATH=local_data` unless overridden. Run records stay separate. Set `DATASET_DIR` to use an existing dataset. Historical experiment directories are retained so saved absolute run-manifest paths remain valid.

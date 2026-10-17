@@ -12,8 +12,6 @@ dependencies = ["pydantic>=2.7"]
 [project.optional-dependencies]
 dev = ["pytest>=8", "Pillow>=10"]
 mimic-cxr = ["Pillow>=10"]
-cxr-radgraph = ["radgraph==0.1.18", "transformers==4.51.3", "huggingface-hub==0.30.2",
-                "requests>=2.31,<3", "scipy>=1.11", "scikit-learn>=1.3"]
 
 [project.scripts]
 ama = "ama.cli:main"
@@ -21,6 +19,9 @@ ama = "ama.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["ama*"]
+
+[tool.setuptools.package-data]
+"ama._vendor.automedbench_report" = ["LICENSE", "SOURCE.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

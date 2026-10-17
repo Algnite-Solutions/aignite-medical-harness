@@ -1,0 +1,6 @@
+{
+  "mlrg_repo_path": "/path/to/MLRG",
+  "chexbert_path": "/path/to/checkpoints/chexbert.pth",
+  "bert_path": "/path/to/checkpoints/bert-base-uncased",
+  "radgraph_path": "/path/to/checkpoints/radgraph.tar.gz"
+}
