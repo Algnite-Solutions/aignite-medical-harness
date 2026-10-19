@@ -16,9 +16,10 @@ class ImportCommand(NamedTuple):
 
 def register_importers(subparsers: Any) -> None:
     """Register each importer's arguments and handler in one explicit catalog."""
-    from . import rocov2_cli, symptom2disease
+    from . import rocov2_cli, symptom2disease, vqa_rad
 
     commands = (
+        ImportCommand("vqa-rad", vqa_rad.configure_cli, vqa_rad.import_from_cli),
         ImportCommand("rocov2", rocov2_cli.configure_cli, rocov2_cli.import_from_cli),
         ImportCommand("symptom2disease", symptom2disease.configure_cli,
                       symptom2disease.import_from_cli),

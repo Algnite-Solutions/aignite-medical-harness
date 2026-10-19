@@ -11,6 +11,7 @@ dependencies = ["pydantic>=2.7"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+vqa-rad = ["pyarrow>=17", "Pillow>=10"]
 
 [project.scripts]
 ama = "ama.cli:main"
