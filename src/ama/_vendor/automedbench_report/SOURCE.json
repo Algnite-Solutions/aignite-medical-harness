@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/AutoMedBench/AutoMedBench",
+  "revision": "a4e64e5502c728cee744edce2b596000fcd60fdd",
+  "paper": "2606.01961v2",
+  "files": {
+    "report_scorer.py": {
+      "upstream_path": "eval_report_gen/report_scorer.py",
+      "sha256": "07ab7e49b345f5f6ff7a7733e6642e4107613cce7ef8ede7968b78f5e7f5b197",
+      "vendored_sha256": "b601b46cc1c007477042392e6acafa48535c7413ed0fce12d780e0005477c684"
+    },
+    "format_checker.py": {
+      "upstream_path": "eval_report_gen/format_checker.py",
+      "sha256": "78f61b3c7f06614766bc53f6164fc40eab2a06e2da42a724534cae00c49eb797"
+    },
+    "LICENSE": {
+      "upstream_path": "LICENSE",
+      "sha256": "02ed0a63faedaa39f35eb19a83d1b921bb08c8ee8a6f86925e969b1bf57e2141"
+    }
+  },
+  "modifications": {
+    "report_scorer.py": "Removed backend imports, load_reference_labels, _build_clinical_components and score_all; retained pair-scoring functions and constants unchanged. Updated module docstring.",
+    "format_checker.py": "None.",
+    "LICENSE": "None."
+  },
+  "lightweight_weights": {
+    "observation_f1": 0.7,
+    "report_similarity": 0.3
+  },
+  "weight_source": {
+    "upstream_path": "eval_report_gen/aggregate.py",
+    "sha256": "31a0ce12d69eea19949493bf6e9321c4fb9aedc5da4adaea078b127b5311e441"
+  },
+  "included_backend": "lightweight"
+}

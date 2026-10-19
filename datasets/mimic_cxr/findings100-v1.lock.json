@@ -1,0 +1,9 @@
+{
+  "snapshot": "mimic-cxr-jpg-2.1.0/findings100-v1",
+  "transfer_manifest_sha256": "f25f7c30f352b2e334290a7a8bdbc2fdb7ff43c677e961839431a4610656b0d9",
+  "episodes": 100,
+  "images": 164,
+  "file_count": 174,
+  "split": "test",
+  "scorer": "mimic_cxr_automedbench_v1"
+}
