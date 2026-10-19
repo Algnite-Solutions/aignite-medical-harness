@@ -15,3 +15,8 @@ _agent/
 
 # Local VQA-RAD source data, derived datasets and private manifests
 data/
+local_data/
+
+# Local CXR onboarding plans and validation notes.
+docs/mimic-cxr-rexrank-radgraph-v1*
+docs/mimic-cxr-cli-plan.zh-CN.md

@@ -79,6 +79,11 @@ ama run datasets/rocov2 --model qwen36 --split test
 新增的文本数据集见 [Symptom2Disease demo 数据卡](datasets/symptom2disease_demo/DATASET_CARD.zh-CN.md)，
 其中包含导入、校验和运行方法。
 
+新增的 [MIMIC-CXR 数据卡](datasets/mimic_cxr/DATASET_CARD.zh-CN.md) 说明授权数据的本地导入、
+AutoMedBench findings-only 任务适配、已配置的 API 模型和轻量报告评分。
+通过 `bash scripts/run_mimic_cxr.sh --help` 查看 import/run/eval 脚本用法。
+真实胸片、报告、导入生成的数据集文件和运行记录均保存在被忽略的 `local_data/`，不随代码分发。
+
 运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
 工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
 普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。

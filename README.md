@@ -86,6 +86,12 @@ The later-added Symptom2Disease importer and text demo are documented in the
 [Symptom2Disease demo data card](datasets/symptom2disease_demo/DATASET_CARD.md),
 including import, validation, and run instructions.
 
+The [MIMIC-CXR data card](datasets/mimic_cxr/DATASET_CARD.md) describes credentialed
+local import, AutoMedBench findings-only task adaptation, configured API models,
+and lightweight report scoring. Use `bash scripts/run_mimic_cxr.sh --help` for
+the import/run/eval wrapper. Real images, reports, generated dataset files and
+run records stay in ignored `local_data/`; no MIMIC-CXR cases are distributed here.
+
 ### Credentialed MIMIC-CDM import
 
 The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and
