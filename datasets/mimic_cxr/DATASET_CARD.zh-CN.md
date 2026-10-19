@@ -1,5 +1,9 @@
 # MIMIC-CXR：数据与任务接入 AMA
 
+本目录只包含说明文档及公开的快照校验摘要，**不是可运行 demo**。
+不包含 dataset.json、episodes.jsonl、真实图像、报告或 instructions.txt。
+importer 会在受限存储中生成完整 AMA 数据集，以及与所选模式一致的 instructions.txt。
+
 ## 任务与来源
 
 复用 MIMIC-CXR importer，将 AutoMedBench 的 MIMIC-CXR findings 生成任务接入 AMA 原生运行流程。
@@ -21,25 +25,72 @@
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/prepare_mimic_cxr_raw.py \
-  --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_findings100 \
-  --split test --limit 100 --report-mode findings-only
+  --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_example10 \
+  --split test --limit 10 --report-mode findings-only
 
-ama import mimic-cxr --source local_data/mimic_cxr/raw_findings100 \
-  --out local_data/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset \
+ama import mimic-cxr --source local_data/mimic_cxr/raw_example10 \
+  --out local_data/processed/MIMIC-CXR-example10/dataset \
   --split test --report-mode findings-only
 ```
 
 raw importer 仅提取明确的 FINDINGS 段落，缺失时中止导入；不会将完整报告当成 findings。
 默认 `--report-mode findings-impression` 保留旧 importer 行为。准备与导入时均须指定 findings-only。
 自动选取按照已有的单图/多图覆盖及 study 顺序规则，不等于随机采样；具体规则和排除原因保留在本地选择报告。
+此示例产生新子集；单独指定 --limit 100 或 --study-id 均不能重建历史 seed-42 实验及其冻结参考字段。
 
-### 复用已冻结的 AMA CXR 病例
+## 复现固定 100 例实验
+
+使用 NAS 中受限的 `processed/mimic-cxr-jpg-2.1.0/findings100-v1/` 快照，
+或其未经修改的本地副本，不重新 raw 导入。访问权限需单独取得，仓库不分发真实病例。
+快照含完整 `dataset/` 及同级 `transfer-manifest.json`，固定了病例顺序、
+164 张图像、任务提示和评测专用参考 findings。
+公开的 [快照校验摘要](findings100-v1.lock.json) 固定该 manifest 的 SHA256；
+受限 manifest 再固定全部 174 个数据文件的大小和 SHA256，仓库不公开病例 ID。
+
+安装依赖、取得快照后，在仓库根目录执行：
+
+```bash
+# 替换为可正常读取的 NAS 挂载或本地副本的绝对路径。
+SNAPSHOT=/path/to/data/processed/mimic-cxr-jpg-2.1.0/findings100-v1
+PYTHONPATH=src .venv/bin/python scripts/verify_mimic_cxr_snapshot.py \
+  --dataset "$SNAPSHOT/dataset" --manifest "$SNAPSHOT/transfer-manifest.json"
+export DATASET_DIR="$SNAPSHOT/dataset"
+# 配好自己的 key，并确认向该服务商发送图像的授权后：
+bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding --split test
+# 使用上一步实际打印的运行目录：
+bash scripts/run_mimic_cxr.sh eval /absolute/path/to/run
+```
+
+校验失败即停止，不重新生成参考答案，也不另选 100 例替代。
+测试其他模型时，将别名替换为 `qwen3.8-flash` 或 `deepseek-v4.1-flash-1017`，
+数据和快照内的 instructions.txt 保持不变。
+
+历史参数：temperature=0、timeout=180 秒、max_calls=1、无工具；
+Qwen 和 DeepSeek 请求 max_tokens=8192，GLM 未设置。
+历史本地运行采用两个并发 worker，复用 Symptom2Disease 的重试包装器，
+对可重试的传输/服务端错误最多发起三次 HTTP 请求，已收到的答案不重试。
+上述原生运行命令为顺序执行，不含该包装器；复现的是冻结输入、任务和评分，
+不是历史并发/重试驱动。连接失败及显式重试应如实记录，不能静默替换模型输出。
+API model ID 和服务商默认值可能变化，重新运行不保证分数逐位一致。
+原始轻量分数为 GLM 0.3352（93/100 合格）、Qwen 0.3008（100/100）、
+DeepSeek 0.2326（99/100），不是 AutoMedBench 官方榜单分数。
+
+历史 seed-42 子集来自 ReXrank 固定 revision `0a18a41e580992ac7cd32a8a9463009654f0d390`
+中的 2,347 个 study / 3,858 张图；仅提供 seed 并不能定义完整样本集合。
+此处以冻结快照而非重新抽样作为所报结果的复现标准。官方 AutoMedBench pilot
+和后来整理的完整 test 合格集是独立 cohort，不能替换原实验集合。
+后续严格 raw 导入排查发现，这 100 例中 11 例不满足当前显式 FINDINGS 解析规则，
+但冻结参考文本仍可在原始报告中找到。重新解析会改变病例集或参考字段；
+复现该历史实验应保留快照内已有的结构化 targets。
+
+## 可选：转换其他冻结的 AMA CXR 病例
 
 ```bash
 bash scripts/run_mimic_cxr.sh reuse \
-  local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
+  /absolute/path/to/frozen-cxr/dataset
 ```
 
+此入口用于数据转换；直接使用上述 NAS 快照无需执行 reuse。
 等价于 `ama import mimic-cxr --source-format ama --report-mode findings-only --split test ...`。
 此入口保留已有 split 内的病例顺序、episode/evidence ID、全部图片和视角；逐张解码 JPEG 并校验原 provenance 的 SHA256。
 参考字段直接复制已有结构化 `targets.answer.findings`，不重新切分旧的完整报告，也不继承旧 scorer、提示词或模型输出。

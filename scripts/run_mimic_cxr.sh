@@ -27,9 +27,9 @@ run defaults to TIMEOUT=180 and MAX_CALLS=1. Import never overwrites data.
 Default findings-only scoring uses the pinned AutoMedBench lightweight backend.
 No Docker or clinical model download is required.
 
-Example:
-  bash scripts/run_mimic_cxr.sh reuse local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
-  bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding
+Example (verify the restricted snapshot as described in the data card first):
+  DATASET_DIR=/path/to/processed/mimic-cxr-jpg-2.1.0/findings100-v1/dataset \
+    bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding --split test
   bash scripts/run_mimic_cxr.sh eval local_data/automedbench/runs/mimic-cxr-ama/<run-id>
 EOF
 }

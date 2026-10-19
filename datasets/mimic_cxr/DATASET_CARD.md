@@ -1,5 +1,10 @@
 # MIMIC-CXR data and task onboarding in AMA
 
+This directory contains documentation and a public snapshot checksum lock only; it is
+**not a runnable demo**. It intentionally has no dataset.json, episodes.jsonl, images,
+reference reports or instructions.txt. The importer creates a complete runnable dataset
+and its mode-specific instructions.txt in restricted storage.
+
 ## Task
 
 This adapter brings the AutoMedBench MIMIC-CXR findings-generation task into native AMA.
@@ -20,10 +25,10 @@ for the helper if using another environment, and use that interpreter for prepar
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/prepare_mimic_cxr_raw.py \
-  --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_findings100 \
-  --split test --limit 100 --report-mode findings-only
-ama import mimic-cxr --source local_data/mimic_cxr/raw_findings100 \
-  --out local_data/processed/MIMIC-CXR-AutoMedBench-findings100-v1/dataset \
+  --source /path/to/MIMIC-CXR-JPG --out local_data/mimic_cxr/raw_example10 \
+  --split test --limit 10 --report-mode findings-only
+ama import mimic-cxr --source local_data/mimic_cxr/raw_example10 \
+  --out local_data/processed/MIMIC-CXR-example10/dataset \
   --split test --report-mode findings-only
 ```
 
@@ -31,15 +36,66 @@ Explicit FINDINGS sections are required; full reports are never substituted for 
 findings. The existing default `findings-impression` mode remains available. Set the mode
 on both preparation and import. Automatic raw selection covers single/multiple views and
 then follows study order; it is not a random sample. Selection rules and exclusions stay local.
+This example creates a new subset; neither --limit 100 nor --study-id alone reconstructs
+the historical seed-42 experiment, whose structured reference findings are frozen.
 
-## Reuse frozen AMA CXR cases
+## Reproduce the frozen 100-study experiment
+
+Use the restricted NAS snapshot `processed/mimic-cxr-jpg-2.1.0/findings100-v1/`
+(or an unchanged local copy), not a new raw import. Access must be granted separately;
+the repository does not distribute this credentialed data. The snapshot contains a
+self-contained `dataset/` and its sibling `transfer-manifest.json`. It fixes the exact
+episode order, 164 image files, task prompt and evaluator-only reference findings.
+The public [snapshot lock](findings100-v1.lock.json) pins the SHA256 of that manifest;
+the manifest in restricted storage pins all 174 dataset files. No case IDs are published.
+
+From the repository root, after installing dependencies and obtaining the snapshot:
+
+```bash
+# Replace this absolute path with your working NAS mount or local copy.
+SNAPSHOT=/path/to/data/processed/mimic-cxr-jpg-2.1.0/findings100-v1
+PYTHONPATH=src .venv/bin/python scripts/verify_mimic_cxr_snapshot.py \
+  --dataset "$SNAPSHOT/dataset" --manifest "$SNAPSHOT/transfer-manifest.json"
+export DATASET_DIR="$SNAPSHOT/dataset"
+# Only after configuring your key and permission to send images to this provider:
+bash scripts/run_mimic_cxr.sh run glm-5.3-flash-coding --split test
+# Use the actual run directory printed above:
+bash scripts/run_mimic_cxr.sh eval /absolute/path/to/run
+```
+
+Stop if verification fails; do not regenerate references or select a replacement 100 cases.
+For a different model, replace the alias with `qwen3.8-flash` or
+`deepseek-v4.1-flash-1017`. Keep the snapshot and its instructions unchanged.
+
+Historical settings: temperature 0, timeout 180 seconds, max_calls 1, no tools;
+Qwen and DeepSeek requested max_tokens 8192, GLM left it unset. The local experiment
+used two concurrent workers and up to three HTTP attempts for retryable transport/server
+errors via the existing Symptom2Disease retry wrapper, without retrying received answers.
+The native command above runs sequentially without that wrapper; it reproduces the
+frozen inputs, task and scorer, not the historical scheduling/retry driver. Record
+connection failures and any explicit retries rather than silently replacing outputs.
+Mutable API model IDs and provider defaults mean reruns need not produce identical scores.
+Original lightweight scores were GLM 0.3352 (93/100 valid), Qwen 0.3008 (100/100),
+and DeepSeek 0.2326 (99/100); these are not official AutoMedBench leaderboard values.
+
+The seed-42 sample originated from 2,347 studies / 3,858 images in pinned ReXrank
+revision `0a18a41e580992ac7cd32a8a9463009654f0d390`; seed alone is not a cohort definition.
+The snapshot, not resampling, is the reproducibility standard for the reported results.
+The official AutoMedBench pilot and the later all-eligible-test dataset are separate
+cohorts and must not be substituted. In the later strict raw-import audit, 11 of these
+100 studies lacked findings under the current explicit-section parser, although their
+frozen reference text was present in the source reports. Re-parsing would change the
+evaluation set or references; preserve the frozen structured targets for this experiment.
+
+## Optional reuse of another frozen AMA CXR dataset
 
 ```bash
 bash scripts/run_mimic_cxr.sh reuse \
-  local_data/processed/MIMIC-CXR-ReXrank-fixed100-seed42/dataset
+  /absolute/path/to/frozen-cxr/dataset
 ```
 
-This calls `ama import mimic-cxr --source-format ama --report-mode findings-only --split test`.
+This is a conversion option, not a prerequisite for using the NAS snapshot above.
+It calls `ama import mimic-cxr --source-format ama --report-mode findings-only --split test`.
 It preserves episode/evidence IDs, split order, views and image bytes; each JPEG is decoded
 and checked against its source provenance hash. References come directly from structured
 `targets.answer.findings`, unchanged. Old full-report references, instructions and scorer

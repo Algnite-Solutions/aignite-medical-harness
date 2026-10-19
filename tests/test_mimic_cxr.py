@@ -287,6 +287,8 @@ def test_findings_only_without_impression_and_cli(tmp_path):
     assert main(['import', 'mimic-cxr', '--source', str(raw), '--out', str(out),
                  '--report-mode', 'findings-only']) == 0
     ds = load_dataset(out, with_targets=True)
+    from ama.importers.mimic_cxr import FINDINGS_INSTRUCTIONS
+    assert (out / 'instructions.txt').read_text() == FINDINGS_INSTRUCTIONS
     assert ds.targets['mimic-cxr-s10'].turns['t1']['answer'] == {'findings': 'SYNTHETIC_FINDINGS_ONLY'}
     report = json.loads((out / 'import_report.json').read_text())
     assert report['task']['task_id'] == 'mimic-cxr-report-task'
@@ -387,3 +389,50 @@ def test_reuse_rejects_damage_and_leakage(tmp_path, kind):
     with pytest.raises(ValueError):
         reuse_mimic_cxr(source, out, split='validate')
     assert not out.exists()
+
+
+@pytest.fixture
+def snapshot_package(tmp_path):
+    """A complete synthetic snapshot; the public lock contains no clinical data."""
+    source = synthetic_source(tmp_path)
+    raw, dataset = tmp_path / 'raw', tmp_path / 'dataset'
+    prepare_raw(source, raw, split='test', limit=1, report_mode='findings-only')
+    import_mimic_cxr(raw, dataset, split='test', report_mode='findings-only')
+    files = [{'path': p.relative_to(dataset).as_posix(), 'bytes': p.stat().st_size,
+              'sha256': digest(p)} for p in sorted(dataset.rglob('*')) if p.is_file()]
+    manifest = tmp_path / 'transfer-manifest.json'
+    manifest.write_text(json.dumps({'files': files}))
+    lock = {'snapshot': 'synthetic', 'transfer_manifest_sha256': digest(manifest),
+            'file_count': len(files), 'episodes': 1, 'images': 1, 'split': 'test',
+            'scorer': 'mimic_cxr_automedbench_v1'}
+    return dataset, manifest, lock
+
+
+def test_snapshot_verification(snapshot_package):
+    from scripts.verify_mimic_cxr_snapshot import verify_snapshot
+    dataset, manifest, lock = snapshot_package
+    assert verify_snapshot(dataset, manifest, lock) == {
+        'snapshot': 'synthetic', 'verified_files': lock['file_count'],
+        'episodes': 1, 'images': 1, 'sha256_mismatches': 0}
+
+
+@pytest.mark.parametrize('changed', ['manifest', 'instructions', 'targets', 'image'])
+def test_snapshot_rejects_changed_inputs(snapshot_package, changed):
+    from scripts.verify_mimic_cxr_snapshot import verify_snapshot
+    dataset, manifest, lock = snapshot_package
+    path = {'manifest': manifest, 'instructions': dataset / 'instructions.txt',
+            'targets': dataset / 'targets.jsonl',
+            'image': next((dataset / 'artifacts').glob('*.jpg'))}[changed]
+    with path.open('ab') as stream:
+        stream.write(b'changed')
+    with pytest.raises(ValueError, match='manifest differs|SHA256 mismatch'):
+        verify_snapshot(dataset, manifest, lock)
+
+
+@pytest.mark.parametrize('field,value', [('episodes', 2), ('images', 2),
+                                         ('scorer', 'unscored'), ('file_count', 1)])
+def test_snapshot_rejects_wrong_cohort(snapshot_package, field, value):
+    from scripts.verify_mimic_cxr_snapshot import verify_snapshot
+    dataset, manifest, lock = snapshot_package
+    with pytest.raises(ValueError, match='mismatch'):
+        verify_snapshot(dataset, manifest, {**lock, field: value})
