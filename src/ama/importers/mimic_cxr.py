@@ -252,7 +252,9 @@ def reuse_mimic_cxr(source: Path, out: Path, split: str = "test",
     errors = validate_dataset(source)
     if errors:
         raise ValueError("invalid source dataset: " + "; ".join(errors))
-    candidates = dataset.select(split=split)
+    by_id = {e.id: e for e in dataset.select(split=split)}
+    # Dataset.select filters membership in episode-file order; reuse promises split order.
+    candidates = [by_id[eid] for eid in dataset.info.splits[split]]
     if ids is not None:
         wanted = {f"mimic-cxr-s{identifier(s, numeric=True)}" for s in ids}
         if not wanted or len(wanted) != len(ids) or wanted - {e.id for e in candidates}:

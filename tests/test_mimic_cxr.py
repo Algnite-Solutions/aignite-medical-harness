@@ -360,6 +360,28 @@ def test_reuse_frozen_cohort_and_native_run(tmp_path, capsys):
     assert metrics['scored']['aggregate']['output_quality']['strict_output_compliance']['num'] == 3
 
 
+@pytest.mark.parametrize('ids,limit,expected', [
+    (None, None, ['40', '10', '20']),
+    (None, 2, ['40', '10']),
+    (['20', '40'], None, ['40', '20']),
+    (['20', '40'], 1, ['40']),
+])
+def test_reuse_preserves_split_order_before_filter_and_limit(tmp_path, ids, limit, expected):
+    source = frozen_dataset(tmp_path)
+    info_path = source / 'dataset.json'
+    info = json.loads(info_path.read_text())
+    # Split order deliberately differs from the source episodes.jsonl order.
+    info['splits']['validate'] = [f'mimic-cxr-s{sid}' for sid in ['40', '10', '20']]
+    info_path.write_text(json.dumps(info))
+    out = tmp_path / 'reused'
+    report = reuse_mimic_cxr(source, out, split='validate', ids=ids, limit=limit)
+    reused = load_dataset(out)
+    expected_ids = [f'mimic-cxr-s{sid}' for sid in expected]
+    assert [ep.id for ep in reused.episodes] == expected_ids
+    assert reused.info.splits['validate'] == expected_ids
+    assert report['selected_episode_ids'] == expected_ids
+
+
 @pytest.mark.parametrize('kind', ['image_hash', 'missing_findings', 'duplicate_origin',
                                  'visible_report', 'no_images', 'invalid_answer_type'])
 def test_reuse_rejects_damage_and_leakage(tmp_path, kind):
