@@ -2,9 +2,114 @@
 
 本地 importer、医疗查询工具、模拟提交工具和 `medagentbench` scorer 已实现，均位于 `src/ama/importers/medagentbench.py`。可以通过 `ama run` 运行任务，再通过 `ama eval` 对结构化答案和实际模拟提交记录评分。成绩应标注为 **AMA 对 MedAgentBench 的适配成绩**，简化工具接口与官方 FHIR 接口不同。
 
-Importer 不调用模型、不运行原 grader，也不修改 FHIR。运行期间需要 FHIR 服务；保存快照后可以完全离线重复转换。使用现有 AMA Python 环境，无需新增第三方依赖。
+Importer 不调用模型、不运行原 grader，也不修改 FHIR。从服务器导入时需要 FHIR 服务；已有快照可完全离线重复转换。运行已转换的数据和评分都不需要 FHIR 或 Docker。使用现有 AMA Python 环境，无需新增第三方依赖。
 
 生成数据放在 `datasets/medagentbench/`；该目录及下面示例的 `datasets/medagentbench_subset/` 已加入 Git 忽略规则。Importer 仍支持通过 `--out` 指定其他位置。
+
+## 使用组内 NAS 数据复现
+
+原始项目：[MedAgentBench 官方仓库](https://github.com/stanfordmlgroup/MedAgentBench)。任务文件在原仓库 `data/medagentbench/`，患者与观察资源由官方 FHIR Docker 镜像提供。组内共享的是经过本 importer 转换的 **AMA 适配版**。
+
+完整 processed 数据位于 NAS 的 `data/processed/MedAgentBench/`。macOS 当前挂载路径如下；其他机器将 `AMA_DATA_PATH` 改为自己的 NAS 数据根目录：
+
+```bash
+export AMA_DATA_PATH=/Volumes/10.214.105.104/data
+```
+
+其中包含任务、患者、检验数据、评分参考、原始快照及原 grader 副本。已有这份 processed 数据时，不需要下载原仓库、启动 Docker 或重新导入。
+
+### 环境和 API 配置
+
+先激活已有的 AMA Python 环境（Python >=3.11，依赖见 `pyproject.toml`）。脚本默认使用当前 `python`，也可用 `PYTHON_BIN=/path/to/python` 指定现有解释器，无需为本脚本重装环境。
+
+模型别名从 `ama.json` 读取；可用 `CONFIG=/path/to/config.json` 指定个人配置。每个模型配置的 `api_key_env` 字段给出密钥环境变量名称，将对应密钥写入项目根目录 `.env`，或事先 export。CLI 会读取 `.env`；不要把密钥提交 Git。
+
+例如当前 `deepseek-v4-flash` 的 `api_key_env` 为 `MEDAI_API_KEY`，可在本地 `.env` 中填写：
+
+```dotenv
+MEDAI_API_KEY=替换为自己的密钥
+```
+
+### 一键验证、运行和评分
+
+在项目根目录执行：
+
+```bash
+bash scripts/run_medagentbench.sh --help
+bash scripts/run_medagentbench.sh validate
+bash scripts/run_medagentbench.sh all deepseek-v4-flash
+```
+
+`validate` 校验 300 个任务与评分参考、固定 smoke、患者和观察计数、快照哈希，并读取 processed 事实。`all` 先校验已有数据，再运行、评分；它不会重新导入、重新抽样或写入 NAS。实际模型请求只发生在 `run`/`all`。
+
+默认 temperature=0、max_tokens=2048、每例最多 8 次模型调用、请求超时 120 秒。可用 `TEMPERATURE`、`MAX_TOKENS`、`MAX_CALLS`、`TIMEOUT` 覆盖；其他模型参数（包括 thinking 设置）沿用配置。脚本没有自动重试、续跑或请求限速；失败、不提交、未执行题仍计入分母。
+
+默认 split 为固定 `smoke`，需要完整 300 例时显式设置 `SPLIT=test`。可顺序传入多个模型别名；每次调用建立新的 batch，不覆盖旧实验。
+
+### 固定 30 例参考集
+
+直接复用 importer 的 `SMOKE_IDS`，来自原 MedAgentBench `configs/samples/` 的 seed-42 固定样本，十类任务各 3 例。这是 test 的子集，无需复制患者和观察文件。验证会拒绝被替换或重新排列的 smoke：
+
+| 任务 | 固定任务 ID |
+|---|---|
+| task1 | task1_1, task1_4, task1_21 |
+| task2 | task2_8, task2_9, task2_24 |
+| task3 | task3_5, task3_8, task3_24 |
+| task4 | task4_4, task4_22, task4_24 |
+| task5 | task5_3, task5_18, task5_29 |
+| task6 | task6_2, task6_14, task6_19 |
+| task7 | task7_1, task7_3, task7_7 |
+| task8 | task8_8, task8_17, task8_20 |
+| task9 | task9_1, task9_7, task9_18 |
+| task10 | task10_18, task10_21, task10_23 |
+
+### 输出和重新评分
+
+默认输出到 `runs/medagentbench-smoke/<batch>/model-<序号>/<run-id>/`，可用 `RUNS_DIR` 覆盖输出根目录。脚本自动加载 `src/ama/importers/medagentbench.py` 的工具工厂。
+
+- batch 下的 `validation.json` 保存数据校验值、任务 ID 和资源数量；`code-version.json` 保存代码 commit、工作区修改状态及运行时源代码和脚本哈希。
+- 每个 run 下保留 `manifest.json`、`decisions.jsonl`、`messages.json` 和 `diagnostics.jsonl`；`all`/`eval` 额外生成 `metrics.json` 和 `summary.json`。
+- `summary.json` 报告总成功率、各任务成功率、完成率、API 错误数和终止状态。默认分母为固定 30 题，每类分母为 3。
+- 不能只保留最后分数：MedAgentBench scorer 必须读取工具日志来核验模拟提交。
+
+将下面路径替换为运行输出的实际 run 目录：
+
+```bash
+# 离线重新评分，不需要 API key，不请求模型
+bash scripts/run_medagentbench.sh eval runs/medagentbench-smoke/<batch>/model-1/<run-id>
+
+# 也可分开运行和评分
+bash scripts/run_medagentbench.sh run deepseek-v4-flash
+```
+
+重新评分仍需访问 `manifest.json` 中记录的 `dataset_dir`。跨机器迁移时，在实验记录的工作副本里将该字段改为新机器的数据挂载路径，并保留原始记录。
+
+### 当前验证记录（2026-10-20）
+
+NAS 数据结构验证通过：300 题、固定 smoke 30 题、695 个患者、563,426 条观察记录。NAS 与本地的 17 个有效数据文件 SHA-256 全部一致，快照哈希与其 metadata 一致。
+
+使用 `all deepseek-v4-flash` 实际执行了固定 30 题。配置为 Deepseek-v4、temperature=0、max_tokens=2048、max_calls=8、timeout=120 秒，调用 MedAI 的 `/v1` 接口。结果如下：
+
+| 模型 | 任务成功 | 完成 | API 错误 | 分任务成功 |
+|---|---:|---:|---:|---|
+| Deepseek-v4 | 0/30 | 0/30 | 30/30 | task1–task10 各 0/3 |
+
+**这轮是接口失败记录，不能作为模型能力的参考基准。** 30 题均在首次请求收到 HTTP 402，未获得模型回复；Qwen 和 AntAngelMed2 的单次连通性探测也返回 HTTP 402。需要提供可用接口配置后重新运行，才能补齐参考成绩；不据此判断模型答题能力。
+
+真实请求的本地记录位于 `runs/medagentbench-smoke/20261020T122143Z-51e084c0/model-1/20261020T122143-59c8592b/`，保留逐例结果、工具会话、指标和 summary。工作区运行版本以该 batch 的 `code-version.json` 和脚本/源文件哈希为准；代码基于 `bb01235` 加本 PR 的复现脚本修改。运行记录不提交 Git，分享时需连同对应 processed 数据路径说明提供给接收者。
+
+### 重新导入（可选）
+
+已有 NAS 数据时跳过本步骤。需要重新导入时，指定原仓库、已有完整快照和**尚不存在的新输出目录**：
+
+```bash
+SOURCE_DIR=/path/to/MedAgentBench \
+SNAPSHOT_DIR="$AMA_DATA_PATH/processed/MedAgentBench/snapshot" \
+DATASET_DIR=/path/to/new-medagentbench \
+bash scripts/run_medagentbench.sh import
+```
+
+也可用 `FHIR_BASE` 代替 `SNAPSHOT_DIR` 从服务器导入；两者互斥。输出目录已存在时拒绝覆盖。命令说明可随时用 `--help` 查看。
 
 ## 从 FHIR 导入
 
