@@ -84,19 +84,21 @@ bash scripts/run_medagentbench.sh run deepseek-v4-flash
 
 重新评分仍需访问 `manifest.json` 中记录的 `dataset_dir`。跨机器迁移时，在实验记录的工作副本里将该字段改为新机器的数据挂载路径，并保留原始记录。
 
-### 当前验证记录（2026-10-20）
+### 数据与复现验证
 
-NAS 数据结构验证通过：300 题、固定 smoke 30 题、695 个患者、563,426 条观察记录。NAS 与本地的 17 个有效数据文件 SHA-256 全部一致，快照哈希与其 metadata 一致。
+NAS 数据已通过 AMA 格式校验，包含 300 个任务、695 个患者和 563,426 条观察记录；原始快照校验通过。固定 smoke 为 30 例，十类任务各 3 例。
 
-使用 `all deepseek-v4-flash` 实际执行了固定 30 题。配置为 Deepseek-v4、temperature=0、max_tokens=2048、max_calls=8、timeout=120 秒，调用 MedAI 的 `/v1` 接口。结果如下：
+已通过启动脚本在 NAS 数据上完成一次 30 例评测，并确认保存日志可离线重新评分，结果一致：
 
-| 模型 | 任务成功 | 完成 | API 错误 | 分任务成功 |
-|---|---:|---:|---:|---|
-| Deepseek-v4 | 0/30 | 0/30 | 30/30 | task1–task10 各 0/3 |
+| 模型 | 任务成功率 | 完成率 |
+|---|---:|---:|
+| Qwen3.6-27B（DashScope，关闭 thinking） | 13/30（43.3%） | 29/30（96.7%） |
 
-**这轮是接口失败记录，不能作为模型能力的参考基准。** 30 题均在首次请求收到 HTTP 402，未获得模型回复；Qwen 和 AntAngelMed2 的单次连通性探测也返回 HTTP 402。需要提供可用接口配置后重新运行，才能补齐参考成绩；不据此判断模型答题能力。
+参数为 temperature=0、max_tokens=2048、max_calls=8、timeout=120 秒。所有 30 题计入分母。上述为 **AMA 适配成绩**。
 
-真实请求的本地记录位于 `runs/medagentbench-smoke/20261020T122143Z-51e084c0/model-1/20261020T122143-59c8592b/`，保留逐例结果、工具会话、指标和 summary。工作区运行版本以该 batch 的 `code-version.json` 和脚本/源文件哈希为准；代码基于 `bb01235` 加本 PR 的复现脚本修改。运行记录不提交 Git，分享时需连同对应 processed 数据路径说明提供给接收者。
+分任务成功数（各 3 例）：task1–task10 依次为 0、0、2、3、2、2、1、0、1、2。
+
+本次使用个人配置 `CONFIG=runs/medagentbench-qwen.local.json`，模型别名为 `qwen36-nothink`；该本地配置将 `base_url` 设为 `https://dashscope.aliyuncs.com/compatible-mode/v1`、`model` 设为 `qwen3.6-27b`、`api_key_env` 设为 `QWEN_API_KEY`，并设置 `chat_template_kwargs: {"enable_thinking": false}`。复现时在自己的配置中填写这些字段，密钥仍放在 `.env` 或环境变量中。
 
 ### 重新导入（可选）
 
