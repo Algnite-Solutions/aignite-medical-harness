@@ -14,3 +14,9 @@ datasets/mimic_cdm/
 datasets/medagentbench/
 datasets/medagentbench_subset/
 _agent/
+
+local_data/
+
+# Local CXR onboarding plans and validation notes.
+docs/mimic-cxr-rexrank-radgraph-v1*
+docs/mimic-cxr-cli-plan.zh-CN.md

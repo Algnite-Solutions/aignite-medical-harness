@@ -6,6 +6,26 @@
       "api_key_env": "GLM_API_KEY",
       "temperature": 0
     },
+    "glm-5.3-flash-coding": {
+      "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "model": "glm-5.3-flash",
+      "api_key_env": "GLM_API_KEY",
+      "temperature": 0
+    },
+    "qwen3.8-flash": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen3.8-flash",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "temperature": 0,
+      "max_tokens": 8192
+    },
+    "deepseek-v4.1-flash-1017": {
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "temperature": 0,
+      "max_tokens": 8192
+    },
     "qwen36": {
       "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
       "model": "Qwen3.6-27B",
