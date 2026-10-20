@@ -201,7 +201,7 @@ def import_symptom2disease(source: Path, out: Path, *, limit: int | None = None,
 
 
 def score_symptom2disease(dataset: Dataset,
-                          decisions: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+                          decisions: dict[str, list[dict[str, Any]]], *, histories=None) -> dict[str, Any]:
     """Exact top-1 match among source labels; missing or invalid choices score zero."""
     from ..scorer import _rate, expected_rows
 

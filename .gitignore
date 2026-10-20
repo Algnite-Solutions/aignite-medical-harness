@@ -11,6 +11,8 @@ runs/
 dist/
 .DS_Store
 datasets/mimic_cdm/
+datasets/medagentbench/
+datasets/medagentbench_subset/
 _agent/
 
 local_data/

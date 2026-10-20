@@ -295,7 +295,7 @@ def make_case_tools(data: dict, episode_id: str) -> list[Tool]:
     ]
 
 
-def score_mimic_cdm(dataset, decisions: dict[str, list[dict]]) -> dict:
+def score_mimic_cdm(dataset, decisions: dict[str, list[dict]], *, histories=None) -> dict:
     """Exact four-way diagnosis score; retain treatment answers without judging them."""
     from ..scorer import expected_rows
 

@@ -19,7 +19,7 @@ def _mean(values):
     return round(sum(values) / len(values), 4) if values else None
 
 
-def score_mimic_cxr_report(dataset: Dataset, decisions: dict) -> dict:
+def score_mimic_cxr_report(dataset: Dataset, decisions: dict, *, histories=None) -> dict:
     """Score all expected turns, keeping failed outputs in the denominator."""
     from ._vendor.automedbench_report.format_checker import check_report_file
     from ._vendor.automedbench_report.report_scorer import score_report_pair
