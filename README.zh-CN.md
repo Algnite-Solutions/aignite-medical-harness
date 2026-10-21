@@ -47,6 +47,20 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
 `--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
+## 医学事实与证据检索工具
+
+通过 `--tools src/ama/medical_tools.py` 显式加载四个工具：
+
+- `pubmed_search`：检索 PubMed 文献和摘要。
+- `guideline_search`：检索本地指南索引及 Europe PMC 指南文献。
+- `paper_fulltext`：按 PMCID 读取开放论文的全文或指定章节。
+- `clinical_trial_search`：检索 ClinicalTrials.gov 临床试验注册信息。
+
+这组工具只做资料检索，不加载图片分析模型。检索接口无需额外 API Key；主 Agent 仍使用所选模型的密钥。
+本地索引包括 KDIGO CKD 记录，以及核对过来源的阑尾炎、胆囊炎、憩室炎、重症急性胰腺炎 WSES 历史指南与诊断章节 ID。
+默认也会联网搜索；结果标明文献分类依据、适用范围、年份、PMCID 和摘要截断情况，不代表已验证临床适用性或最新版本。
+参数、使用限制和测试命令见[检索工具说明](docs/medical-search-tools.md)。
+
 ## 阅读顺序
 
 按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读

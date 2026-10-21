@@ -1,0 +1,681 @@
+{
+  "retrieved_at": "2026-10-21",
+  "description": "Minimal metadata from live candidate responses. Used to distinguish guidelines from studies/comments about guidelines. Not clinical ground truth.",
+  "records": [
+    {
+      "pmid": "41604201",
+      "doi": "10.1001/jamasurg.2025.6218",
+      "title": "Diagnosis and Treatment of Acute Appendicitis: 2025 Edition of the World Society of Emergency Surgery Jerusalem Guidelines.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "3",
+        "volume": "161",
+        "journalIssueId": 4147837,
+        "dateOfPublication": "2026 Mar",
+        "monthOfPublication": 3,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "JAMA Surg",
+          "title": "JAMA surgery",
+          "essn": "2168-6262",
+          "issn": "2168-6254",
+          "nlmid": "101589553",
+          "isoabbreviation": "JAMA Surg"
+        },
+        "printPublicationDate": "2026-03-01"
+      }
+    },
+    {
+      "pmid": "42613617",
+      "pmcid": "PMC13488260",
+      "doi": "10.1186/s13017-026-00696-w",
+      "title": "Global practices and attitudes in acute appendicitis management: the PAMAP-W international survey and Delphi consensus study on the WSES appendicitis grading system.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "1",
+        "volume": "21",
+        "journalIssueId": 4240194,
+        "dateOfPublication": "2026 Aug",
+        "monthOfPublication": 8,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "nlmid": "101266603",
+          "isoabbreviation": "World J Emerg Surg"
+        },
+        "printPublicationDate": "2026-08-01"
+      }
+    },
+    {
+      "pmid": "42169135",
+      "pmcid": "PMC13195823",
+      "doi": "10.1186/s13017-026-00703-0",
+      "title": "Methodological limitations of NOM in the WSES acute appendicitis guidelines.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Letter"
+        ]
+      },
+      "journalInfo": {
+        "issue": "1",
+        "volume": "21",
+        "journalIssueId": 4200333,
+        "dateOfPublication": "2026 May",
+        "monthOfPublication": 5,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "nlmid": "101266603",
+          "isoabbreviation": "World J Emerg Surg"
+        },
+        "printPublicationDate": "2026-05-01"
+      }
+    },
+    {
+      "pmid": "41322888",
+      "pmcid": "PMC12658670",
+      "doi": "10.7759/cureus.95565",
+      "title": "Post-colonoscopy Appendicitis: A Literature Review and Guidelines for Management.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "review-article",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "10",
+        "volume": "17",
+        "journalIssueId": 4026302,
+        "dateOfPublication": "2025 Oct",
+        "monthOfPublication": 10,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Cureus",
+          "title": "Cureus",
+          "essn": "2168-8184",
+          "issn": "2168-8184",
+          "nlmid": "101596737",
+          "isoabbreviation": "Cureus"
+        },
+        "printPublicationDate": "2025-10-01"
+      }
+    },
+    {
+      "pmid": "40825891",
+      "pmcid": "PMC12500825",
+      "doi": "10.1007/s00464-025-12038-z",
+      "title": "Complicated appendicitis: value of inflammatory markers based on EAES 2015 guidelines.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "10",
+        "volume": "39",
+        "journalIssueId": 4029016,
+        "dateOfPublication": "2025 Oct",
+        "monthOfPublication": 10,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Surg Endosc",
+          "title": "Surgical endoscopy",
+          "essn": "1432-2218",
+          "issn": "0930-2794",
+          "nlmid": "8806653",
+          "isoabbreviation": "Surg Endosc"
+        },
+        "printPublicationDate": "2025-10-01"
+      }
+    },
+    {
+      "pmid": "42516005",
+      "doi": "10.1177/00031348261472838",
+      "title": "From Guidelines to Practice: Closing the Antibiotic Stewardship Gap in Acute Cholecystitis.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "journalIssueId": 4223568,
+        "dateOfPublication": "2026 Jul",
+        "monthOfPublication": 7,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Am Surg",
+          "title": "The American surgeon",
+          "essn": "1555-9823",
+          "issn": "0003-1348",
+          "nlmid": "0370522",
+          "isoabbreviation": "Am Surg"
+        },
+        "printPublicationDate": "2026-07-01"
+      }
+    },
+    {
+      "pmid": "42112895",
+      "pmcid": "PMC13356518",
+      "doi": "10.1002/wjs.70416",
+      "title": "Safety and Feasibility of Early Laparoscopic Cholecystectomy in High-Risk Acute Cholecystitis: A Critical Evaluation of Tokyo Guidelines 2018 Risk Stratification.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "7",
+        "volume": "50",
+        "journalIssueId": 4229727,
+        "dateOfPublication": "2026 Jul",
+        "monthOfPublication": 7,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "World J Surg",
+          "title": "World journal of surgery",
+          "essn": "1432-2323",
+          "issn": "0364-2313",
+          "nlmid": "7704052",
+          "isoabbreviation": "World J Surg"
+        },
+        "printPublicationDate": "2026-07-01"
+      }
+    },
+    {
+      "pmid": "41928009",
+      "doi": "10.1007/s43678-026-01161-y",
+      "title": "Agreement between point-of-care ultrasonography and the Tokyo guidelines 2018 for acute cholecystitis (PACED study).",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Multicenter Study",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "6",
+        "volume": "28",
+        "journalIssueId": 4214733,
+        "dateOfPublication": "2026 Jun",
+        "monthOfPublication": 6,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "CJEM",
+          "title": "CJEM",
+          "essn": "1481-8043",
+          "issn": "1481-8035",
+          "nlmid": "100893237",
+          "isoabbreviation": "CJEM"
+        },
+        "printPublicationDate": "2026-06-01"
+      }
+    },
+    {
+      "pmid": "42065164",
+      "pmcid": "PMC13138494",
+      "doi": "10.1097/md.0000000000048566",
+      "title": "Clinical outcomes of percutaneous cholecystostomy in patients with acute cholecystitis classified according to the Tokyo guidelines, 2018: A single-center, retrospective, observational study.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article",
+          "Observational Study"
+        ]
+      },
+      "journalInfo": {
+        "issue": "18",
+        "volume": "105",
+        "journalIssueId": 4187288,
+        "dateOfPublication": "2026 May",
+        "monthOfPublication": 5,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Medicine (Baltimore)",
+          "title": "Medicine",
+          "essn": "1536-5964",
+          "issn": "0304-5412",
+          "nlmid": "2985248R",
+          "isoabbreviation": "Medicine (Baltimore)"
+        },
+        "printPublicationDate": "2026-05-01"
+      }
+    },
+    {
+      "pmid": "42390126",
+      "doi": "10.14309/ajg.0000000000004047",
+      "title": "ACG Clinical Guideline: Colonic Diverticulitis.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "7",
+        "volume": "121",
+        "journalIssueId": 4224891,
+        "dateOfPublication": "2026 Jul",
+        "monthOfPublication": 7,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Am J Gastroenterol",
+          "title": "The American journal of gastroenterology",
+          "essn": "1572-0241",
+          "issn": "0002-9270",
+          "isoabbreviation": "Am J Gastroenterol",
+          "nlmid": "0421030"
+        },
+        "printPublicationDate": "2026-07-01"
+      }
+    },
+    {
+      "pmid": "40263135",
+      "doi": "10.1007/s00464-025-11738-w",
+      "title": "SAGES white paper on antibiotic omission in the management of acute uncomplicated diverticulitis: why, when, who, and most importantly, how.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "6",
+        "volume": "39",
+        "journalIssueId": 3948171,
+        "dateOfPublication": "2025 Jun",
+        "monthOfPublication": 6,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Surg Endosc",
+          "title": "Surgical endoscopy",
+          "essn": "1432-2218",
+          "issn": "0930-2794",
+          "isoabbreviation": "Surg Endosc",
+          "nlmid": "8806653"
+        },
+        "printPublicationDate": "2025-06-01"
+      }
+    },
+    {
+      "pmid": "42886614",
+      "doi": "10.1159/dig/acmag017",
+      "title": "Guidelines for Colonic Diverticular Disease-2026, Second Edition: Management of Diverticular Bleeding and Acute Diverticulitis.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "journalIssueId": 4285181,
+        "dateOfPublication": "2026 Oct",
+        "monthOfPublication": 10,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Digestion",
+          "title": "Digestion",
+          "essn": "1421-9867",
+          "issn": "0012-2823",
+          "isoabbreviation": "Digestion",
+          "nlmid": "0150472"
+        },
+        "printPublicationDate": "2026-10-01"
+      }
+    },
+    {
+      "pmid": "42252244",
+      "pmcid": "PMC13434530",
+      "doi": "10.5217/ir.2025.00299",
+      "title": "Evidence-based clinical practice guidelines for diagnosis and medical management of acute colonic diverticulitis developed by the Korean Association for the Study of Intestinal Diseases (KASID).",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "review-article",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "3",
+        "volume": "24",
+        "journalIssueId": 4237627,
+        "dateOfPublication": "2026 Jul",
+        "monthOfPublication": 7,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Intest Res",
+          "title": "Intestinal research",
+          "essn": "2288-1956",
+          "issn": "1598-9100",
+          "isoabbreviation": "Intest Res",
+          "nlmid": "101572802"
+        },
+        "printPublicationDate": "2026-07-01"
+      }
+    },
+    {
+      "pmid": "42478484",
+      "doi": "10.1097/dcr.0000000000004382",
+      "title": "The American Society of Colon and Rectal Surgeons Clinical Practice Guidelines for the Management of Left-Sided Colonic Diverticulitis.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "10",
+        "volume": "69",
+        "journalIssueId": 4265310,
+        "dateOfPublication": "2026 Oct",
+        "monthOfPublication": 10,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "Dis Colon Rectum",
+          "title": "Diseases of the colon and rectum",
+          "essn": "1530-0358",
+          "issn": "0012-3706",
+          "isoabbreviation": "Dis Colon Rectum",
+          "nlmid": "0372764"
+        },
+        "printPublicationDate": "2026-10-01"
+      }
+    },
+    {
+      "pmid": "42299777",
+      "pmcid": "PMC13270348",
+      "doi": "10.1002/ueg2.70230",
+      "title": "European Interdisciplinary Guidelines on Pain Management in Acute Pancreatitis: UEG, EPC, EDS, ESDO, EAGEN, ESPGHAN, ESGAR, and ESPCG Evidence-Based Recommendations.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "other",
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "5",
+        "volume": "14",
+        "journalIssueId": 4203474,
+        "dateOfPublication": "2026 Jun",
+        "monthOfPublication": 6,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "United European Gastroenterol J",
+          "title": "United European gastroenterology journal",
+          "essn": "2050-6414",
+          "issn": "2050-6406",
+          "isoabbreviation": "United European Gastroenterol J",
+          "nlmid": "101606807"
+        },
+        "printPublicationDate": "2026-06-01"
+      }
+    },
+    {
+      "pmid": "42216617",
+      "pmcid": "PMC13240590",
+      "doi": "10.1002/ueg2.70190",
+      "title": "AEG-AESPANC-OPGE-SIED-SPG Ibero-Latin American Guidelines on Acute Pancreatitis (iLATAM-AP).",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "other",
+          "Systematic Review",
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "5",
+        "volume": "14",
+        "journalIssueId": 4203474,
+        "dateOfPublication": "2026 Jun",
+        "monthOfPublication": 6,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "United European Gastroenterol J",
+          "title": "United European gastroenterology journal",
+          "essn": "2050-6414",
+          "issn": "2050-6406",
+          "isoabbreviation": "United European Gastroenterol J",
+          "nlmid": "101606807"
+        },
+        "printPublicationDate": "2026-06-01"
+      }
+    },
+    {
+      "pmid": "40651900",
+      "doi": "10.1016/j.pan.2025.04.020",
+      "title": "International Association of Pancreatology Revised Guidelines on Acute Pancreatitis 2025: Supported and Endorsed by the American Pancreatic Association, European Pancreatic Club, Indian Pancreas Club, and Japan Pancreas Society.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "6",
+        "volume": "25",
+        "journalIssueId": 4021438,
+        "dateOfPublication": "2025 Sep",
+        "monthOfPublication": 9,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Pancreatology",
+          "title": "Pancreatology : official journal of the International Association of Pancreatology (IAP) ... [et al.]",
+          "essn": "1424-3911",
+          "issn": "1424-3903",
+          "isoabbreviation": "Pancreatology",
+          "nlmid": "100966936"
+        },
+        "printPublicationDate": "2025-09-01"
+      }
+    },
+    {
+      "pmid": "40132896",
+      "doi": "10.1111/den.15004",
+      "title": "Clinical Practice Guidelines for post-ERCP pancreatitis 2023.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "6",
+        "volume": "37",
+        "journalIssueId": 3960613,
+        "dateOfPublication": "2025 Jun",
+        "monthOfPublication": 6,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Dig Endosc",
+          "title": "Digestive endoscopy : official journal of the Japan Gastroenterological Endoscopy Society",
+          "essn": "1443-1661",
+          "issn": "0915-5635",
+          "isoabbreviation": "Dig Endosc",
+          "nlmid": "9101419"
+        },
+        "printPublicationDate": "2025-06-01"
+      }
+    },
+    {
+      "pmid": "41493264",
+      "doi": "10.1016/j.jacr.2025.12.014",
+      "title": "ACR Appropriateness Criteria® Chronic Pancreatitis.",
+      "pubYear": "2026",
+      "pubTypeList": {
+        "pubType": [
+          "Research Support, Non-U.S. Gov't",
+          "Practice Guideline",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "3",
+        "volume": "23",
+        "journalIssueId": 4141182,
+        "dateOfPublication": "2026 Mar",
+        "monthOfPublication": 3,
+        "yearOfPublication": 2026,
+        "journal": {
+          "medlineAbbreviation": "J Am Coll Radiol",
+          "title": "Journal of the American College of Radiology : JACR",
+          "essn": "1558-349X",
+          "issn": "1546-1440",
+          "isoabbreviation": "J Am Coll Radiol",
+          "nlmid": "101190326"
+        },
+        "printPublicationDate": "2026-03-01"
+      }
+    },
+    {
+      "pmid": "37751156",
+      "doi": "10.1097/ta.0000000000004144",
+      "title": "A core outcome set for appendicitis: A consensus approach utilizing modified Delphi methodology.",
+      "pubYear": "2024",
+      "pubTypeList": {
+        "pubType": [
+          "Research Support, Non-U.S. Gov't",
+          "Consensus Statement",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "3",
+        "volume": "96",
+        "journalIssueId": 3727536,
+        "dateOfPublication": "2024 Mar",
+        "monthOfPublication": 3,
+        "yearOfPublication": 2024,
+        "journal": {
+          "medlineAbbreviation": "J Trauma Acute Care Surg",
+          "title": "The journal of trauma and acute care surgery",
+          "essn": "2163-0763",
+          "issn": "2163-0755",
+          "nlmid": "101570622",
+          "isoabbreviation": "J Trauma Acute Care Surg"
+        },
+        "printPublicationDate": "2024-03-01"
+      }
+    },
+    {
+      "pmcid": "PMC13563383",
+      "title": "European Association of Endoscopic Surgery Clinical Practice Guideline Protocol: Evidence‐Informed Recommendations on the Management of Cholecystitis With ESAIC and ESR Participation",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "4",
+        "volume": "2",
+        "journalIssueId": 4262087,
+        "dateOfPublication": "2025 Sep",
+        "monthOfPublication": 9,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Clin Public Health Guidel",
+          "title": "Clinical and public health guidelines",
+          "essn": "2836-3973",
+          "isoabbreviation": "Clin Public Health Guidel",
+          "nlmid": "9918991790606676"
+        },
+        "printPublicationDate": "2025-09-01"
+      }
+    },
+    {
+      "pmid": "42740752",
+      "doi": "10.1002/gin2.70043",
+      "title": "European Association of Endoscopic Surgery Clinical Practice Guideline Protocol: Evidence-Informed Recommendations on the Management of Cholecystitis With ESAIC and ESR Participation.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "4",
+        "volume": "2",
+        "journalIssueId": 4262159,
+        "dateOfPublication": "2025 Oct",
+        "monthOfPublication": 10,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Clin Public Health Guidel",
+          "title": "Clinical and public health guidelines",
+          "essn": "2836-3973",
+          "isoabbreviation": "Clin Public Health Guidel",
+          "nlmid": "9918991790606676"
+        },
+        "printPublicationDate": "2025-10-01"
+      }
+    },
+    {
+      "pmid": "40679968",
+      "pmcid": "PMC12626513",
+      "doi": "10.1097/js9.0000000000003055",
+      "title": "Strengthening the clinical applicability and methodological rigor in the recommendations for the management of high-surgical risk patients with acute cholecystitis.",
+      "pubYear": "2025",
+      "pubTypeList": {
+        "pubType": [
+          "research-article",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "11",
+        "volume": "111",
+        "journalIssueId": 4067574,
+        "dateOfPublication": "2025 Nov",
+        "monthOfPublication": 11,
+        "yearOfPublication": 2025,
+        "journal": {
+          "medlineAbbreviation": "Int J Surg",
+          "title": "International journal of surgery (London, England)",
+          "essn": "1743-9159",
+          "issn": "1743-9191",
+          "isoabbreviation": "Int J Surg",
+          "nlmid": "101228232"
+        },
+        "printPublicationDate": "2025-11-01"
+      }
+    }
+  ]
+}

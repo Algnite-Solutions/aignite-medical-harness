@@ -21,6 +21,7 @@ where = ["src"]
 include = ["ama*"]
 
 [tool.setuptools.package-data]
+ama = ["guidelines.json"]
 "ama._vendor.automedbench_report" = ["LICENSE", "SOURCE.json"]
 
 [tool.pytest.ini_options]

@@ -61,6 +61,24 @@ Tools return text, JSON or `ToolResult(text="scan", images=["scan.jpg"])`.
 Calls execute sequentially with original IDs; all tool results precede image attachments.
 Tool errors go back to the model. API errors terminate the episode instead of prompting a repair.
 
+### Medical evidence retrieval
+
+Load `--tools src/ama/medical_tools.py` to expose exactly four functions:
+`pubmed_search`, `guideline_search`, `paper_fulltext`, and `clinical_trial_search`.
+They retrieve PubMed abstracts, guideline records, open-access article sections, and
+ClinicalTrials.gov registrations. No image analysis tool is loaded. The retrieval
+endpoints require no additional API key; the selected Agent model uses its own provider key.
+
+```bash
+ama chat datasets/symptom2disease_demo --episode s2d-000001 --model qwen36 --tools src/ama/medical_tools.py
+```
+
+Use an episode ID present in your dataset. See [tool parameters, limitations, and tests](docs/medical-search-tools.md).
+The bundled index contains KDIGO CKD metadata and four source-checked historical WSES references
+for appendicitis, cholecystitis, diverticulitis, and severe acute pancreatitis, including diagnostic section IDs.
+Online search is enabled by default. Results expose scope, classification, year, and full-text identifiers;
+they are not a guarantee of clinical applicability or the latest guideline version.
+
 ## Read in four steps
 
 1. [model.py](src/ama/model.py): registration, image encoding and one request.
