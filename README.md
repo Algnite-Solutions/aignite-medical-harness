@@ -61,6 +61,15 @@ Tools return text, JSON or `ToolResult(text="scan", images=["scan.jpg"])`.
 Calls execute sequentially with original IDs; all tool results precede image attachments.
 Tool errors go back to the model. API errors terminate the episode instead of prompting a repair.
 
+### Similar MIMIC-CXR image retrieval
+
+Use `--tools src/ama/image_search_tools.py` to enable `image_search(image_path, top_k=5)`.
+It sends a server-prepared JPEG relative path to the MedHEB retrieval API and returns
+paired training reports, provenance, cosine scores, and unique citeable evidence IDs.
+Configure `MEDHEB_SEARCH_URL` and `MEDHEB_SEARCH_KEY` (or `MEDHEB_SEARCH_KEY_FILE`);
+the tool does not upload local images or connect to Qdrant. See
+[connection, input-path and dummy-test instructions](docs/image-search-tools.md).
+
 ## Read in four steps
 
 1. [model.py](src/ama/model.py): registration, image encoding and one request.

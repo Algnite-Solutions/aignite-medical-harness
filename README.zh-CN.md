@@ -47,6 +47,14 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 默认没有工具，没有摘要或历史裁剪，没有自动重试或 JSON 纠错对话。
 `--max-calls 8` 是每条输入的模型调用上限；`--timeout 60` 是单次请求超时秒数。
 
+## 相似胸片检索工具
+
+通过 `--tools src/ama/image_search_tools.py` 启用 `image_search(image_path, top_k=5)`。
+工具把服务端预备清单中的 JPEG 相对路径发给 MedHEB API，返回相似训练病例的配对报告、
+来源、余弦相似度和去重的可引用证据 ID，不上传本地图片、不直接连接 Qdrant。
+配置 `MEDHEB_SEARCH_URL`、`MEDHEB_SEARCH_KEY`，或用 `MEDHEB_SEARCH_KEY_FILE` 指向受保护的密钥文件。
+连接方式、路径要求和 dummy 测试见[使用说明](docs/image-search-tools.md)。
+
 ## 阅读顺序
 
 按“模型请求 → 多轮历史 → 工具循环 → 数据与 CLI”阅读
