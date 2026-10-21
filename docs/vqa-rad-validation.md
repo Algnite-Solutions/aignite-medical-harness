@@ -71,3 +71,21 @@ runtime versions and dataset name, excluding `checksums.json` itself. Their
 canonicalization and reproduction conditions are specified in [the guide](vqa-rad.md).
 They are integrity records for this conversion, not clinical validation or model
 performance claims.
+
+## Experiment preparation, 2026-10-21
+
+After merging main, the offline suite passed 204 tests. Adding the fixed test-cohort
+experiment driver brings the suite to **211 passed**, including seven new synthetic
+tests for pilot reuse, resumability, invalid-answer freezing, input matching and
+evaluator isolation. A fixed 100-question test cohort contains 55 yes/no and 45 open
+questions. No real-model performance is established by these checks. See
+[the experiment protocol](vqa-rad-benchmark.md).
+
+## Real API experiment, 2026-10-21
+
+After explicit approval, all three PR #12 configurations completed the same locally
+sampled 100-question test cohort (84 image artifacts): 300 logical calls total.
+Native AMA evaluation and a byte-identical offline comparison reconstruction
+passed. The pilot responses were reused, and no received answer was regenerated.
+See [actual aggregate results and limitations](vqa-rad-benchmark-results.md);
+this is not an official designated AutoMedBench cohort or full workflow run.

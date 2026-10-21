@@ -70,7 +70,7 @@ raw output placeholder 检测。只实现确定性 heuristic，不实现官方�
 ## 本地复现与存储
 
 环境、下载、全量/子集导入和验证命令见[英文说明](vqa-rad.md#reproduce-locally)。
-需要安装 `.[dev,vqa-rad]`；测试显式排除 `api`，本轮没有真实模型调用。
+需要安装 `.[dev,vqa-rad]`；迁移验收测试显式排除 `api`；随后另行授权的真实模型实验见文末链接。
 
 - 全量：train 后接 test，各 split 内按 shard 文件名、Parquet 源行顺序。
 - smoke：独立目录，仅从 test 用
@@ -89,3 +89,8 @@ raw output placeholder 检测。只实现确定性 heuristic，不实现官方�
 已实际执行的验证见[验证记录](vqa-rad-validation.md)。FakeModel 端到端测试和
 真实数据 oracle sanity 检查只能证明管线工作，不能代替模型性能实验。
 本任务未修改 NAS、挂载、远端环境、SSH 授权或 tmux。
+
+固定 test100 的三模型评测协议及运行命令见[实验说明](vqa-rad-benchmark.md)。
+
+已完成同一自选 test100 队列的 GLM / Qwen / DeepSeek 真实 API 评测，
+[实际结果与限制](vqa-rad-benchmark-results.md)单独报告，不等同官方完整评测。

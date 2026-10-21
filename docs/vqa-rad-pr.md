@@ -1,78 +1,90 @@
 # Prepared PR
 
-No commit, push or pull request was created automatically.
+No automatic commit, push or PR edit was performed.
 
 Title:
 
 ```text
-feat: migrate VQA-RAD data and task from AutoMedBench into AMA
+Onboard AutoMedBench VQA-RAD task and fixed test100 comparison in AMA
 ```
 
 Description:
 
 ```markdown
-VQA-RAD can now be imported from a pinned Hugging Face snapshot into AMA's
-single-turn image/question episodes, preserving source train/test membership.
-Reference answers and answer-derived question types remain evaluator-only.
+## Summary
 
-The independent `ama import vqa-rad` command generates complete AMA datasets,
-bilingual cards, local provenance, reproducible full/smoke selections and file
-checksums. A deterministic scorer adapts the pinned AutoMedBench normalization
-and heuristic: strict normalized yes/no match; otherwise mean EM/token F1.
-Missing, invalid and failed answers remain in the denominator.
+Onboard AutoMedBench's VQA-RAD task in AMA and add a reproducible local test100
+comparison using the three model configurations from PR #12. Each QA row becomes
+one single-turn image/question episode; reference answers and answer-derived
+question types remain evaluator-only.
 
-The downloader verifies upstream checksums; the offline verifier compares source
-rows, answers, split/order and decoded pixels. Real data and run/provenance records
-stay under ignored `data/`. The committed demo is documentation only.
+- Pin and verify the HF source revision; preserve train/test membership.
+- Generate full AMA data, bilingual cards, local provenance and checksums.
+- Adapt the deterministic VQA heuristic, keeping missing/invalid answers in the denominator.
+- Freeze a locally sampled test100 cohort with source indices and file hashes;
+  persist native per-case runs, reuse pilots, resume transport failures and freeze received answers.
+- Verify identical actual input messages/image hashes, request settings, code versions,
+  cohort coverage and native evaluation before writing a comparison.
 
-Validation:
-- 137 offline tests passed, including 25 VQA-RAD tests and a synthetic FakeModel
-  run → eval test; API tests excluded.
-- Real snapshot: 2,244 QA episodes (train 1,793; test 451), plus a separately
-  generated fixed 8-row test smoke set. Both passed offline integrity checks.
-- 566 normalized-answer inputs and 5,094 metric pairs matched fixed official
-  reference functions. Oracle/empty scorer sanity checks were 1/0.
-- No paid model API calls or real-model performance experiment.
+## Validation
 
-Scope/limits:
-- No S1–S5, Docker, LLM judge or autonomous research workflow; no changes to
-  PathVQA or MIMIC-CXR.
-- Differences (stable source-row IDs, retained train split, evaluator-only type,
-  lossless PNGs, AMA answer contract and separately defined smoke selection) are
-  documented with pinned official source links.
-- Source train/test share 202 original image-byte hashes; this is a QA-row split,
-  not an image- or patient-independent benchmark.
-- Preserve the task branch's non-commercial research license notice separately
-  from the HF dataset card's CC0-1.0 declaration.
+- Full offline suite: **211 passed**, including 25 importer/scoring tests and seven experiment-driver tests.
+- Real conversion: train 1,793 / test 451 QA episodes; separate 8-record acceptance subset.
+- Source rows, answers, split/order, decoded pixels and generated checksums verified.
+- 566 normalization inputs and 5,094 metric pairs matched fixed official reference functions.
+- Three actual API batches completed 100 terminal records each. Saved-output evaluation
+  reproduced the comparison byte-for-byte without further model calls.
+- Pilot responses were reused; no received answers were regenerated. Raw data,
+  per-case outputs, provenance and credentials remain in ignored local storage.
 
-See docs/vqa-rad.md, docs/vqa-rad.zh-CN.md and docs/vqa-rad-validation.md.
+## Local test100 results
+
+**The 100 QA records are our seed-42 sample from the 451-record HF test split,
+not an official designated AutoMedBench cohort.** They comprise 55 yes/no and
+45 open questions with 84 distinct image artifacts.
+
+| Model | Valid answers | Heuristic ↑ | EM ↑ | Token F1 ↑ | Yes/no accuracy ↑ | Strict AMA | Reported tokens |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `glm-5.3-flash` | 97/100 | 0.6601 | 0.6200 | 0.7002 | 48/55 (0.8727) | 93% | 163,286 |
+| `qwen3.8-flash` | 99/100 | 0.6713 | 0.6300 | 0.7126 | 49/55 (0.8909) | 100% | 211,193 |
+| `deepseek-v4.1-flash-1017` | 100/100 | 0.5712 | 0.5300 | 0.6125 | 42/55 (0.7636) | 100% | 162,157 |
+
+All task means include all 100 expected records. GLM has three malformed
+Decisions without `answer` and four recovered answer-only outputs. Qwen's one
+explicit abstention is strictly compliant but scores zero, explaining 99 valid
+answers versus 100% strict format compliance. Logged transport retry events were
+GLM 0, Qwen 3 and DeepSeek 1.
+
+Shared controls: temperature 0, max_calls 1, timeout 180 seconds. GLM uses the
+Coding endpoint and no explicit output cap; Qwen/DeepSeek set max_tokens 8192.
+Provider thinking defaults are retained, so this is not fully matched decoding.
+
+## Scope
+
+This migrates the underlying VQA task, not the full S1–S5/Docker research-agent
+workflow or optional LLM judge. Scores are lexical heuristic results on one local
+cohort, not clinical correctness or official leaderboard results. Source
+train/test share 202 image-byte hashes; these are QA-row splits, not independent
+patient/image splits. The task branch's license notice is preserved separately
+from the HF data card's CC0-1.0 declaration.
+
+See docs/vqa-rad.md, docs/vqa-rad.zh-CN.md, docs/vqa-rad-validation.md,
+docs/vqa-rad-benchmark.md and docs/vqa-rad-benchmark-results.md.
 ```
 
 ## Manual commit and push
 
-Review the changes and ignored paths before executing these commands yourself.
-The data/processed outputs, source downloads and private validation records must
-not be force-added.
+Review and execute manually. Do not force-add local data or run records.
 
 ```bash
 cd /Users/bob/Projects/Research/aignite-medical-harness-vqa-rad
-git branch --show-current
-git diff --check
 git status --short
-
-git add .gitignore README.md README.zh-CN.md pyproject.toml \
-  src/ama/importers/__init__.py src/ama/importers/vqa_rad.py \
-  src/ama/importers/vqa_rad_scoring.py src/ama/scorer.py \
-  scripts/download_vqa_rad.py scripts/verify_vqa_rad.py tests/test_vqa_rad.py \
-  datasets/vqa_rad_demo/README.md \
+git diff --check
+git add scripts/vqa_rad_benchmark.py tests/test_vqa_rad_benchmark.py \
   docs/vqa-rad.md docs/vqa-rad.zh-CN.md docs/vqa-rad-validation.md \
-  docs/vqa-rad-pr.md docs/licenses/AutoMedBench-LICENSE.txt
-
+  docs/vqa-rad-benchmark.md docs/vqa-rad-benchmark-results.md docs/vqa-rad-pr.md
 git diff --cached --stat
 git -c user.name=Bob -c user.email=1004553126@qq.com commit \
-  -m "feat: migrate VQA-RAD data and task from AutoMedBench into AMA"
+  -m "Add fixed VQA-RAD test100 comparison with PR12 models"
 git push -u origin onboard-vqa-rad
 ```
-
-Open the PR manually against `main` with the title and description above. Do not
-target the separate MIMIC-CXR branch.

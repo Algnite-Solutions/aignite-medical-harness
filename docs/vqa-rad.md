@@ -169,8 +169,9 @@ downloaded filename and its SHA-256; download timestamps do not affect it.
 
 No model API is called by downloading, importing, verification or the synthetic
 tests. To evaluate an already-existing AMA run, use `ama eval RUN_DIR`; it loads
-the scorer from `eval.json`. Actual model inference is a separate experiment and
-was not performed for this migration. The FakeModel end-to-end test and real-data
+the scorer from `eval.json`. Initial migration acceptance did not call a model API. The subsequent separately
+authorized [three-model test100 experiment](vqa-rad-benchmark-results.md) reports
+actual inference results. The FakeModel end-to-end test and real-data
 oracle checks establish plumbing, not model accuracy.
 
 ## Failure modes and storage
@@ -194,3 +195,6 @@ No NAS mount, remote environment, SSH authorization or tmux session is modified.
 
 See [actual validation results](vqa-rad-validation.md) and
 [prepared PR text](vqa-rad-pr.md).
+
+The fixed-cohort experiment driver and restart/reproduction commands are in
+[the benchmark protocol](vqa-rad-benchmark.md).
