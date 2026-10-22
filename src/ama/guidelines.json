@@ -4,9 +4,233 @@
     "year": "2024",
     "title": "KDIGO 2024 Clinical Practice Guideline for the Evaluation and Management of Chronic Kidney Disease",
     "url": "https://kdigo.org/guidelines/ckd-evaluation-and-management/",
-    "keywords": ["CKD", "chronic kidney disease", "SGLT2", "慢性肾脏病"],
-    "key_points": ["Covers CKD classification, risk assessment, complications and medication stewardship."],
+    "keywords": [
+      "CKD",
+      "chronic kidney disease",
+      "SGLT2",
+      "慢性肾脏病"
+    ],
+    "key_points": [
+      "Covers CKD classification, risk assessment, complications and medication stewardship."
+    ],
     "abstract": "",
-    "pub_type": ["Practice Guideline"]
+    "pub_type": [
+      "Practice Guideline"
+    ],
+    "org_source": "https://kdigo.org/guidelines/ckd-evaluation-and-management/",
+    "reference_note": "Starter metadata; not a complete guideline or verified latest version."
+  },
+  {
+    "title": "2020 World Society of Emergency Surgery updated guidelines for the diagnosis and treatment of acute calculus cholecystitis.",
+    "pmid": "33153472",
+    "pmcid": "PMC7643471",
+    "doi": "10.1186/s13017-020-00336-x",
+    "year": "2020",
+    "journal": "World journal of emergency surgery : WJES",
+    "org": "World Society of Emergency Surgery",
+    "org_source": "https://www.wses.org.uk/scientific-resources/guidelines",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/33153472/",
+    "keywords": [
+      "cholecystitis"
+    ],
+    "abstract": "",
+    "pub_type": [
+      "Practice Guideline",
+      "review-article",
+      "Review",
+      "Journal Article"
+    ],
+    "population": [
+      "adult"
+    ],
+    "subtypes": [
+      "acute"
+    ],
+    "intents": [
+      "diagnosis",
+      "investigation",
+      "treatment"
+    ],
+    "diagnostic_sections": [
+      {
+        "id": "Sec3",
+        "title": "Section 1. Diagnosis of ACC",
+        "url": "https://europepmc.org/articles/PMC7643471#Sec3"
+      },
+      {
+        "id": "Sec4",
+        "title": "Section 2. Associated common bile duct stones: which tools to use for suspicion and diagnosis at presentation?",
+        "url": "https://europepmc.org/articles/PMC7643471#Sec4"
+      }
+    ],
+    "reference_note": "Source-checked historical reference (2019/2020), not expert clinical review or a claim of the latest version. Read population and severity scope in the source.",
+    "metadata_checked_at": "2026-10-21",
+    "scope_source": "https://europepmc.org/articles/PMC7643471"
+  },
+  {
+    "title": "2020 update of the WSES guidelines for the management of acute colonic diverticulitis in the emergency setting.",
+    "pmid": "32381121",
+    "pmcid": "PMC7206757",
+    "doi": "10.1186/s13017-020-00313-4",
+    "year": "2020",
+    "journal": "World journal of emergency surgery : WJES",
+    "org": "World Society of Emergency Surgery",
+    "org_source": "https://www.wses.org.uk/scientific-resources/guidelines",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/32381121/",
+    "keywords": [
+      "diverticulitis"
+    ],
+    "abstract": "",
+    "pub_type": [
+      "Practice Guideline",
+      "review-article",
+      "Review",
+      "Journal Article"
+    ],
+    "population": [
+      "adult"
+    ],
+    "subtypes": [
+      "acute"
+    ],
+    "intents": [
+      "diagnosis",
+      "investigation",
+      "treatment"
+    ],
+    "diagnostic_sections": [
+      {
+        "id": "Sec4",
+        "title": "What is the best way to make a diagnosis of ALCD?",
+        "url": "https://europepmc.org/articles/PMC7206757#Sec4"
+      },
+      {
+        "id": "Sec5",
+        "title": "What is the best imaging technique in patients with suspected ALCD? What is the role of ultrasound (US) in patients with ALCD?",
+        "url": "https://europepmc.org/articles/PMC7206757#Sec5"
+      }
+    ],
+    "reference_note": "Source-checked historical reference (2019/2020), not expert clinical review or a claim of the latest version. Read population and severity scope in the source.",
+    "metadata_checked_at": "2026-10-21",
+    "scope_source": "https://europepmc.org/articles/PMC7206757"
+  },
+  {
+    "title": "Diagnosis and treatment of acute appendicitis: 2020 update of the WSES Jerusalem guidelines.",
+    "pmid": "32295644",
+    "pmcid": "PMC7386163",
+    "doi": "10.1186/s13017-020-00306-3",
+    "year": "2020",
+    "journal": "World journal of emergency surgery : WJES",
+    "org": "World Society of Emergency Surgery",
+    "org_source": "https://www.wses.org.uk/scientific-resources/guidelines",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/32295644/",
+    "keywords": [
+      "appendicitis"
+    ],
+    "abstract": "",
+    "pub_type": [
+      "review-article",
+      "Review",
+      "Journal Article"
+    ],
+    "population": [
+      "adult",
+      "pediatric"
+    ],
+    "subtypes": [
+      "acute"
+    ],
+    "intents": [
+      "diagnosis",
+      "investigation",
+      "treatment"
+    ],
+    "diagnostic_sections": [
+      {
+        "id": "Sec4",
+        "title": "Topic 1: Diagnosis",
+        "url": "https://europepmc.org/articles/PMC7386163#Sec4"
+      },
+      {
+        "id": "Sec6",
+        "title": "Q.1.2: In pediatric patients with suspected acute appendicitis could the diagnosis be based only on clinical scores?",
+        "url": "https://europepmc.org/articles/PMC7386163#Sec6"
+      },
+      {
+        "id": "Sec9",
+        "title": "Q.1.5: What is the optimum pathway for imaging in adult patients with suspected acute appendicitis?",
+        "url": "https://europepmc.org/articles/PMC7386163#Sec9"
+      },
+      {
+        "id": "Sec10",
+        "title": "Q.1.6: What is the optimum pathway for imaging in pediatric patients with suspected acute appendicitis?",
+        "url": "https://europepmc.org/articles/PMC7386163#Sec10"
+      }
+    ],
+    "reference_note": "Source-checked historical reference (2019/2020), not expert clinical review or a claim of the latest version. Read population and severity scope in the source.",
+    "metadata_checked_at": "2026-10-21",
+    "scope_source": "https://europepmc.org/articles/PMC7386163"
+  },
+  {
+    "title": "2019 WSES guidelines for the management of severe acute pancreatitis.",
+    "pmid": "31210778",
+    "pmcid": "PMC6567462",
+    "doi": "10.1186/s13017-019-0247-0",
+    "year": "2019",
+    "journal": "World journal of emergency surgery : WJES",
+    "org": "World Society of Emergency Surgery",
+    "org_source": "https://www.wses.org.uk/scientific-resources/guidelines",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/31210778/",
+    "keywords": [
+      "pancreatitis"
+    ],
+    "abstract": "",
+    "pub_type": [
+      "review-article",
+      "Review",
+      "Consensus Statement",
+      "Journal Article"
+    ],
+    "population": [
+      "adult"
+    ],
+    "subtypes": [
+      "acute"
+    ],
+    "intents": [
+      "diagnosis",
+      "investigation",
+      "treatment"
+    ],
+    "diagnostic_sections": [
+      {
+        "id": "Sec4",
+        "title": "Diagnosis",
+        "url": "https://europepmc.org/articles/PMC6567462#Sec4"
+      },
+      {
+        "id": "Sec6",
+        "title": "Statements (imaging)",
+        "url": "https://europepmc.org/articles/PMC6567462#Sec6"
+      },
+      {
+        "id": "Sec7",
+        "title": "Statements (diagnostic laboratory parameters)",
+        "url": "https://europepmc.org/articles/PMC6567462#Sec7"
+      },
+      {
+        "id": "Sec8",
+        "title": "Statements (diagnostics in idiopathic pancreatitis)",
+        "url": "https://europepmc.org/articles/PMC6567462#Sec8"
+      },
+      {
+        "id": "Sec10",
+        "title": "Statements (follow-up imaging)",
+        "url": "https://europepmc.org/articles/PMC6567462#Sec10"
+      }
+    ],
+    "reference_note": "Source-checked historical reference (2019/2020), not expert clinical review or a claim of the latest version. Read population and severity scope in the source.",
+    "metadata_checked_at": "2026-10-21",
+    "scope_source": "https://europepmc.org/articles/PMC6567462"
   }
 ]

@@ -49,13 +49,14 @@ Qwen 纯文本工具及追问通过，但本次图像输出未满足 Decision �
 
 医学工具通过 `--tools src/ama/medical_tools.py` 启用，注册五个函数：
 
-- `pubmed_search(query, retmax=5, abstract=True)`：检索 PubMed，返回 PMID、标题、期刊、年份、摘要和链接；摘要读取失败时退回无摘要的元数据。
-- `guideline_search(query, max_results=5, live=True)`：合并本地精选索引与 Europe PMC 指南检索；联网结果按被引次数排序。`max_results` 只限制联网结果，本地匹配另计；`live=False` 完全离线。
-- `paper_fulltext(pmcid, section="", max_chars=20000)`：在线读取 Europe PMC 可获取的论文全文 XML，按章节返回。可按章节 ID 或标题选择；`max_chars` 限制总正文长度，结果注明是否截断并列出可选章节。
+- `pubmed_search(query, retmax=5, abstract=True)`：检索 PubMed，返回 PMID、标题、期刊、年份、摘要，以及来源提供的 PMCID、DOI 和全文链接；摘要读取失败时退回无摘要的元数据。
+- `guideline_search(query, max_results=5, live=True, population="", subtype="", intent="", year_to=None, search_expression="")`：合并五条经来源核对的本地索引与 Europe PMC 候选，按主题、文档类型和适用范围过滤排序；支持人群、疾病亚型、诊疗意图和年份上限。`max_results` 限制合并去重后的总数；`live=False` 完全离线。机构与期刊分开，摘要截断会标明，最新版本状态不作保证。
+- `paper_fulltext(pmcid="", section="", max_chars=20000, pmid="")`：在线读取 Europe PMC 可获取的论文全文 XML，按章节返回。PMCID 和 PMID 二选一；后者先精确解析 PMCID。支持嵌套章节 ID、标题及 diagnosis/investigation/treatment 意图匹配，返回章节来源链接；`max_chars` 限制总正文长度并注明截断。
 - `clinical_trial_search(condition, intervention="", status="", max_results=5)`：在线检索 ClinicalTrials.gov，返回 NCT 编号、标题、状态、阶段、更新时间、干预、摘要、入排标准和最多五个地点。状态可填 `RECRUITING`、`COMPLETED` 等，留空不过滤；摘要/入排标准限制为 1000/3000 字符并标明截断。
 - `analyze_images(query, image_ids)`：默认调用独立的 DeepSeek Flash 视觉专家读取当前轮次已释放的 PNG/JPG 图片，仅将文字分析返回主 Agent。支持多图比较；必要的临床背景需放入 query。
 
 新增的全文与试验检索使用免费公开接口，无需工具 API key，仍需遵守服务端请求限速。
+完整参数、检索限制及测试方式见 [医学检索工具说明](docs/medical-search-tools.md)。
 全文接口仅能读取其可提供的文章；试验匹配结果不代表个人已经满足入组条件。
 
 ```bash
@@ -98,8 +99,9 @@ python -X utf8 -m pytest -q tests/test_medical_tools_api.py
 Remove-Item Env:RUN_API_TESTS
 ```
 
-四个用例分别检查 DeepSeek 调用 PubMed、离线指南、论文全文与临床试验检索，并使用工具返回值回答。
+四个模型用例分别检查 DeepSeek 调用 PubMed、在线指南、论文全文与临床试验检索，并使用工具返回值回答。
 默认测试会跳过它们；显式启用会消耗模型 API 额度，在线工具还需访问对应数据源。
+仅验证免费检索接口时，设置 `RUN_MEDICAL_TOOLS_LIVE_TESTS=1` 并运行同一测试文件的 `-k 'not deepseek'` 用例；共 12 项，不调用模型。
 
 ## 阅读顺序
 

@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 from ama.tools import Tool
+from ama.guideline_retrieval import contains, expression, local_guidelines, rank_guidelines, topic_groups, INTENTS
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
@@ -107,6 +108,20 @@ def _xml_text(node) -> str:
     return " ".join("".join(node.itertext()).split()) if node is not None else ""
 
 
+def _identifiers(pmid: str = "", pmcid: str = "", doi: str = "", links=None) -> dict:
+    pmid, doi = str(pmid or ""), doi or ""
+    pmcid = pmcid or ""
+    pmcid = pmcid.upper() if re.fullmatch(r"PMC[1-9]\d*", pmcid, re.I) else ""
+    fulltext_url = f"https://europepmc.org/articles/{pmcid}" if pmcid else ""
+    fulltext_links = [dict(item) for item in (links or [])
+                      if item.get("availabilityCode") in {"OA", "F"} and item.get("url")]
+    if fulltext_url and not any(item["url"] == fulltext_url for item in fulltext_links):
+        fulltext_links.insert(0, {"url": fulltext_url, "documentStyle": "html", "site": "Europe_PMC"})
+    return {"pmid": str(pmid), "pmcid": pmcid, "doi": doi, "fulltext_url": fulltext_url,
+            "fulltext_links": fulltext_links,
+            "fulltext_status": "pmcid_available_unverified" if pmcid else "no_pmcid"}
+
+
 def _parse_articles(xml: str) -> list[dict]:
     result = []
     for record in ET.fromstring(xml).findall(".//PubmedArticle"):
@@ -123,9 +138,12 @@ def _parse_articles(xml: str) -> list[dict]:
         for section in article.findall("./Abstract/AbstractText"):
             label = section.get("Label")
             sections.append((f"{label}: " if label else "") + _xml_text(section))
-        result.append({"pmid": pmid, "title": _xml_text(article.find("ArticleTitle")),
+        ids = {item.get("IdType"): _xml_text(item) for item in record.findall("./PubmedData/ArticleIdList/ArticleId")}
+        result.append({**_identifiers(pmid, ids.get("pmc", ""), ids.get("doi", "")),
+                       "title": _xml_text(article.find("ArticleTitle")),
                        "journal": _xml_text(article.find("./Journal/Title")), "year": year,
-                       "abstract": " ".join(sections), "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"})
+                       "abstract": " ".join(sections), "abstract_truncated": False,
+                       "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"})
     return result
 
 
@@ -151,10 +169,16 @@ def pubmed_search(query: str, retmax: int = 5, abstract: bool = True):
             except (ValueError, ET.ParseError):
                 pass  # Fall back to metadata if abstract retrieval fails.
         summary = json.loads(_ncbi("esummary", id=",".join(ids), retmode="json"))["result"]
-        return [{"pmid": pmid, "title": _clean(summary[pmid].get("title", "")),
-                 "journal": summary[pmid].get("fulljournalname", summary[pmid].get("source", "")),
-                 "year": summary[pmid].get("pubdate", "")[:4], "abstract": "",
-                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"} for pmid in ids]
+        results = []
+        for pmid in ids:
+            row = summary[pmid]
+            identifiers = {item.get("idtype"): item.get("value", "") for item in row.get("articleids", [])}
+            results.append({**_identifiers(pmid, identifiers.get("pmc", ""), identifiers.get("doi", "")),
+                            "title": _clean(row.get("title", "")),
+                            "journal": row.get("fulljournalname", row.get("source", "")),
+                            "year": row.get("pubdate", "")[:4], "abstract": "", "abstract_truncated": False,
+                            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"})
+        return results
     except (ValueError, KeyError, TypeError):
         return {"error": "PubMed retrieval failed; no reliable results are available"}
 
@@ -162,55 +186,72 @@ def pubmed_search(query: str, retmax: int = 5, abstract: bool = True):
 def _local_guidelines(query: str) -> list[dict]:
     configured = os.environ.get("AMA_GUIDELINES_PATH")
     path = Path(configured) if configured else Path(__file__).with_name("guidelines.json")
-    entries = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(entries, list) or not all(
-            isinstance(entry, dict) and isinstance(entry.get("title"), str)
-            and isinstance(entry.get("url"), str) for entry in entries):
-        raise ValueError("Guideline index must be a JSON list with title and url fields")
-    terms = set(re.findall(r"\w+", query.casefold())) - {"and", "or", "the", "guideline", "guidelines"}
-    ranked = []
-    for entry in entries:
-        searchable = json.dumps(entry, ensure_ascii=False).casefold()
-        score = sum(bool(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", searchable)) for term in terms)
-        if score:
-            ranked.append((score, dict(entry, source="local_index")))
-    return [entry for _, entry in sorted(ranked, key=lambda row: row[0], reverse=True)]
+    return local_guidelines(query, path)
 
 
-def guideline_search(query: str, max_results: int = 5, live: bool = True):
+def guideline_search(query: str, max_results: int = 5, live: bool = True, *,
+                     population: str = "", subtype: str = "", intent: str = "",
+                     year_to: int | None = None, search_expression: str = ""):
     query = _query(query)
     _count(max_results, "max_results", 50)
     if type(live) is not bool:
         raise ValueError("live must be a boolean")
-    results = []
-    errors = []
+    if not isinstance(population, str) or population not in {"", "adult", "pediatric", "older_adult"}:
+        raise ValueError("population must be adult, pediatric, older_adult or empty")
+    if not isinstance(subtype, str) or subtype not in {"", "acute", "chronic", "autoimmune"}:
+        raise ValueError("subtype must be acute, chronic, autoimmune or empty")
+    if not isinstance(intent, str) or intent not in {"", *INTENTS}:
+        raise ValueError("intent must be diagnosis, investigation, treatment or empty")
+    if year_to is not None and (type(year_to) is not int or not 1000 <= year_to <= 9999):
+        raise ValueError("year_to must be an integer between 1000 and 9999")
+    if not isinstance(search_expression, str):
+        raise ValueError("search_expression must be a string")
+    if not subtype:
+        for name, aliases in {"autoimmune": ["autoimmune", "自身免疫性"], "chronic": ["chronic", "慢性"],
+                              "acute": ["acute", "急性"]}.items():
+            if any(contains(query, alias) for alias in aliases):
+                subtype = name
+                break
+    topic_groups(query)  # Validate topic before reading files or contacting a service.
+    results, errors = [], []
     try:
         results = _local_guidelines(query)
     except (OSError, ValueError, TypeError):
         errors.append("Could not read the local guideline index")
     if live:
         try:
-            params = urlencode({"query": f'({query}) AND (PUB_TYPE:"guideline")',
-                                "format": "json", "pageSize": max_results,
-                                "resultType": "core", "sort": "CITED desc"})
+            # Fetch a bounded candidate pool, then filter/rank before applying max_results.
+            params = urlencode({"query": expression(query, search_expression, year_to),
+                                "format": "json", "pageSize": min(100, max(20, max_results * 4)),
+                                "resultType": "core"})
             data = json.loads(_get(f"{EPMC}?{params}"))
-            articles = data["resultList"]["result"]
-            for article in articles:
-                journal = article.get("journalInfo", {}).get("journal", {}).get("title", "")
-                pmid, doi = article.get("pmid"), article.get("doi")
+            for article in data["resultList"]["result"]:
+                pmid, doi = article.get("pmid", ""), article.get("doi", "")
+                pmcid = article.get("pmcid") or (article.get("id", "") if article.get("source") == "PMC" else "")
                 url = (f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else
                        f"https://doi.org/{doi}" if doi else
                        f"https://europepmc.org/article/{article['source']}/{article['id']}")
-                results.append({"source": "europepmc", "org": journal, "year": article.get("pubYear", ""),
+                results.append({**_identifiers(pmid, pmcid, doi,
+                                article.get("fullTextUrlList", {}).get("fullTextUrl", [])),
+                                "source": "europepmc", "org": "", "org_source": "",
+                                "journal": article.get("journalInfo", {}).get("journal", {}).get("title", ""),
+                                "year": article.get("pubYear", ""),
                                 "title": _clean(article.get("title", "")), "url": url,
                                 "pub_type": article.get("pubTypeList", {}).get("pubType", []),
-                                "abstract": _clean(article.get("abstractText", ""))[:800]})
-        except (ValueError, KeyError, TypeError):
+                                "abstract": _clean(article.get("abstractText", ""))})
+        except (ValueError, KeyError, TypeError, AttributeError):
             errors.append("Europe PMC retrieval failed")
-    unique = {}
+    results = rank_guidelines(results, query, population=population, subtype=subtype,
+                              intent=intent, year_to=year_to, max_results=max_results)
     for row in results:
-        unique.setdefault(row["url"].rstrip("/"), row)
-    results = list(unique.values())
+        # Relevance/applicability checks see the complete abstract, not a truncated prefix.
+        abstract = row.get("abstract", "")
+        row["abstract_truncated"] = len(abstract) > 800
+        row["abstract"] = abstract[:800]
+        row.update(_identifiers(row.get("pmid", ""), row.get("pmcid", ""), row.get("doi", ""),
+                                row.get("fulltext_links", [])))
+        row.setdefault("journal", "")
+        row.setdefault("org", "")
     return {"error": "; ".join(errors), "results": results} if errors else results
 
 
@@ -230,12 +271,28 @@ def _article_text(node) -> str:
     return "\n".join(line for raw in render(node).splitlines() if (line := " ".join(raw.split())))
 
 
-def paper_fulltext(pmcid: str, section: str = "", max_chars: int = 20000):
-    if not isinstance(pmcid, str) or not re.fullmatch(r"PMC[1-9]\d*", pmcid.strip(), re.I):
+def paper_fulltext(pmcid: str = "", section: str = "", max_chars: int = 20000, *, pmid: str = ""):
+    if not isinstance(pmcid, str) or not isinstance(pmid, str) or bool(pmcid) == bool(pmid):
+        raise ValueError("Supply exactly one pmcid (PMC identifier) or pmid (PubMed identifier)")
+    if pmcid and not re.fullmatch(r"PMC[1-9]\d*", pmcid.strip(), re.I):
         raise ValueError("pmcid must be a PMC identifier, e.g. PMC7092803")
+    if pmid and not re.fullmatch(r"[1-9]\d*", pmid.strip()):
+        raise ValueError("pmid must be a numeric PubMed identifier")
     if not isinstance(section, str):
         raise ValueError("section must be a string")
     _count(max_chars, "max_chars", 50000)
+    if pmid:
+        pmid = pmid.strip()
+        try:
+            params = urlencode({"query": f"EXT_ID:{pmid} AND SRC:MED", "format": "json", "resultType": "core"})
+            records = json.loads(_get(f"{EPMC}?{params}"))["resultList"]["result"]
+            pmcid = next((r.get("pmcid", "") for r in records if str(r.get("pmid", "")) == pmid
+                          and re.fullmatch(r"PMC[1-9]\d*", r.get("pmcid") or "", re.I)), "")
+        except (ValueError, KeyError, TypeError):
+            return {"error": "PMID to PMCID resolution failed; do not guess a PMCID", "pmid": pmid}
+        if not pmcid:
+            return {"error": "No PMCID available for this PMID; accessible full-text XML could not be established",
+                    "pmid": pmid, "pmcid": "", "fulltext_status": "no_pmcid"}
     pmcid = pmcid.strip().upper()
     url = f"https://europepmc.org/articles/{pmcid}"
     try:
@@ -262,11 +319,24 @@ def paper_fulltext(pmcid: str, section: str = "", max_chars: int = 20000):
             sections.append({"id": "body", "title": "Body", "text": _article_text(body)})
         if not any(item["text"] for item in sections):
             raise ValueError("Article contains no readable section text")
-        available = [{"id": item["id"], "title": item["title"]} for item in sections]
+        # Include nested sections for targeted diagnosis/investigation reads. Default
+        # whole-article output still uses top-level sections to avoid duplicate text.
+        selectable = list(sections)
+        known = {id(node) for node in top_sections}
+        for index, node in enumerate(body.iter("sec"), 1):
+            if id(node) not in known:
+                selectable.append({"id": node.get("id") or f"nested-section-{index}",
+                                   "title": _xml_text(node.find("title")) or node.get("sec-type") or f"Section {index}",
+                                   "text": _article_text(node)})
+        available = [{"id": item["id"], "title": item["title"]} for item in selectable]
         if section.strip():
             requested = section.strip().casefold()
-            exact = [item for item in sections if item["id"].casefold() == requested]
-            sections = exact or [item for item in sections if requested in item["title"].casefold()]
+            exact = [item for item in selectable if item["id"].casefold() == requested]
+            terms = INTENTS.get(requested, [requested])
+            matches = [item for item in selectable if any(term in item["title"].casefold() for term in terms)]
+            # A matched parent includes its descendants; do not return them twice.
+            sections = exact or [item for item in matches if not any(
+                len(other["text"]) > len(item["text"]) and item["text"] in other["text"] for other in matches)]
             if not sections:
                 return {"error": "No matching section; choose an available section ID or title",
                         "pmcid": pmcid, "url": url, "available_sections": available}
@@ -277,14 +347,16 @@ def paper_fulltext(pmcid: str, section: str = "", max_chars: int = 20000):
             if remaining <= 0:
                 break
             text = item["text"][:remaining]
-            returned.append(dict(item, text=text, truncated=len(text) < len(item["text"])))
+            anchors = {node.get("id") for node in body.iter("sec")}
+            returned.append(dict(item, text=text, truncated=len(text) < len(item["text"]),
+                                 source_url=f"{url}#{item['id']}" if item["id"] in anchors else url))
             remaining -= len(text)
-        return {"pmcid": pmcid, "title": _xml_text(article.find("./front/article-meta/title-group/article-title")),
+        return {"pmcid": pmcid, "pmid": pmid, "title": _xml_text(article.find("./front/article-meta/title-group/article-title")),
                 "url": url, "available_sections": available, "sections": returned,
                 "truncated": total_chars > max_chars}
     except (ValueError, ET.ParseError) as exc:
         return {"error": f"Full text retrieval failed: {exc}. Full text may not be openly available.",
-                "pmcid": pmcid, "url": url}
+                "pmcid": pmcid, "pmid": pmid, "url": url, "fulltext_status": "xml_unavailable"}
 
 
 _TRIAL_STATUSES = ["NOT_YET_RECRUITING", "RECRUITING", "ENROLLING_BY_INVITATION", "ACTIVE_NOT_RECRUITING",
@@ -340,37 +412,49 @@ def clinical_trial_search(condition: str, intervention: str = "", status: str = 
         return {"error": "ClinicalTrials.gov retrieval failed; no reliable results are available"}
 
 
-def _schema(properties: dict, required: list[str]) -> dict:
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+def _schema(properties: dict, required: list[str], **constraints) -> dict:
+    return {"type": "object", "properties": properties, "required": required,
+            "additionalProperties": False, **constraints}
 
 
 TOOLS = [
     Tool("pubmed_search",
          "Search PubMed (NCBI E-utilities) for biomedical literature. Returns PMIDs, titles, journals, "
-         "years, abstracts and URLs. Use for evidence-based medicine questions. Failures return an error object.",
+         "years, abstracts, PMCIDs/DOIs when supplied by PubMed, and full-text links/status. "
+         "Use returned PMCID or PMID with paper_fulltext; do not invent IDs. Failures return an error object.",
          _schema({"query": {"type": "string", "description": "PubMed query; supports PubMed search syntax."},
                   "retmax": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
                   "abstract": {"type": "boolean", "default": True}}, ["query"]), pubmed_search),
     Tool("guideline_search",
-         "Search clinical practice guidelines using a curated local index and live Europe PMC results "
-         "filtered to guideline publication type, ordered by citations (not a guarantee of quality or recency). "
-         "Matches can include reporting guidelines; verify clinical scope and publication date. "
-         "Returns titles, sources, years, URLs and abstracts. Set live=false for offline search. "
+         "Find topic-matched clinical guidelines and consensus statements in a source-checked local index "
+         "and Europe PMC. Filters reporting guidelines/lab protocols using transparent lexical rules. "
+         "Returns classification/applicability evidence, publication year (latest version not verified), "
+         "PMID/PMCID/DOI, full-text links and abstract truncation flags. Unknown organizations stay empty. "
+         "Use population/subtype/intent/year_to to restrict scope; unspecified metadata cannot meet explicit filters. "
+         "Use paper_fulltext for diagnostic criteria, not the abstract alone. Set live=false for offline search. "
          "Partial failures return an error object with available results.",
-         _schema({"query": {"type": "string", "description": "Guideline topic, e.g. chronic kidney disease SGLT2."},
+         _schema({"query": {"type": "string", "description": "Disease/topic in plain language; English/Chinese aliases for the indexed diseases are supported. Put raw syntax in search_expression."},
                   "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5,
-                                  "description": "Maximum live results; local matches are additional."},
-                  "live": {"type": "boolean", "default": True}}, ["query"]), guideline_search),
+                                  "description": "Maximum combined ranked results, including local records."},
+                  "live": {"type": "boolean", "default": True},
+                  "population": {"type": "string", "enum": ["", "adult", "pediatric", "older_adult"], "default": ""},
+                  "subtype": {"type": "string", "enum": ["", "acute", "chronic", "autoimmune"], "default": ""},
+                  "intent": {"type": "string", "enum": ["", "diagnosis", "investigation", "treatment"], "default": ""},
+                  "year_to": {"type": "integer", "minimum": 1000, "maximum": 9999,
+                              "description": "Optional inclusive publication-year cutoff, applied locally and online."},
+                  "search_expression": {"type": "string", "default": "", "description": "Additional raw Europe PMC expression; applies online only and never substitutes for the disease/topic filter."}}, ["query"]), guideline_search),
     Tool("paper_fulltext",
-         "Fetch an openly available article's full-text XML from Europe PMC using its PMCID. "
-         "Returns title, source URL, available section IDs/titles, and section text. "
-         "Use section to select an exact section ID or match a heading (e.g. Methods, Results, Discussion). "
+         "Fetch accessible full-text XML from Europe PMC. Supply exactly one PMCID or PMID; "
+         "PMID is resolved to PMCID online and missing mappings return an explicit error. "
+         "Returns title, source/section URLs, nested section IDs/titles, and section text. "
+         "Use section for an exact ID, heading substring, or diagnosis/investigation/treatment. "
          "max_chars limits total returned section text; inspect truncated and request specific sections as needed. "
          "Not every PubMed article has accessible full text. Failures return an error object.",
-         _schema({"pmcid": {"type": "string", "description": "PMC identifier, e.g. PMC7092803; not a PMID or DOI."},
+         _schema({"pmcid": {"type": "string", "minLength": 1, "description": "PMC identifier, e.g. PMC7386163. Supply this or pmid."},
+                  "pmid": {"type": "string", "minLength": 1, "description": "Numeric PubMed identifier; resolves to PMCID. Supply this or pmcid."},
                   "section": {"type": "string", "default": "", "description": "Optional section ID or heading; empty returns sections in order."},
                   "max_chars": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 20000}},
-                 ["pmcid"]), paper_fulltext),
+                 [], oneOf=[{"required": ["pmcid"]}, {"required": ["pmid"]}]), paper_fulltext),
     Tool("clinical_trial_search",
          "Search ClinicalTrials.gov online for registered studies by condition, optional intervention and recruitment status. "
          "Returns NCT IDs, titles, source URLs, status, phase, last update, summaries, eligibility and up to five locations. "

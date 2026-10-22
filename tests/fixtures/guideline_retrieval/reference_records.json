@@ -1,0 +1,131 @@
+{
+  "description": "Public Europe PMC metadata checked 2026-10-21. Historical references, not a comprehensive relevance benchmark or clinical validation. Abstracts omitted.",
+  "records": [
+    {
+      "pmid": "33153472",
+      "pmcid": "PMC7643471",
+      "doi": "10.1186/s13017-020-00336-x",
+      "title": "2020 World Society of Emergency Surgery updated guidelines for the diagnosis and treatment of acute calculus cholecystitis.",
+      "pubYear": "2020",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "review-article",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "1",
+        "volume": "15",
+        "journalIssueId": 3049316,
+        "dateOfPublication": "2020 Nov",
+        "monthOfPublication": 11,
+        "yearOfPublication": 2020,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "isoabbreviation": "World J Emerg Surg",
+          "nlmid": "101266603"
+        },
+        "printPublicationDate": "2020-11-01"
+      }
+    },
+    {
+      "pmid": "32381121",
+      "pmcid": "PMC7206757",
+      "doi": "10.1186/s13017-020-00313-4",
+      "title": "2020 update of the WSES guidelines for the management of acute colonic diverticulitis in the emergency setting.",
+      "pubYear": "2020",
+      "pubTypeList": {
+        "pubType": [
+          "Practice Guideline",
+          "review-article",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "1",
+        "volume": "15",
+        "journalIssueId": 2949234,
+        "dateOfPublication": "2020 May",
+        "monthOfPublication": 5,
+        "yearOfPublication": 2020,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "isoabbreviation": "World J Emerg Surg",
+          "nlmid": "101266603"
+        },
+        "printPublicationDate": "2020-05-01"
+      }
+    },
+    {
+      "pmid": "32295644",
+      "pmcid": "PMC7386163",
+      "doi": "10.1186/s13017-020-00306-3",
+      "title": "Diagnosis and treatment of acute appendicitis: 2020 update of the WSES Jerusalem guidelines.",
+      "pubYear": "2020",
+      "pubTypeList": {
+        "pubType": [
+          "review-article",
+          "Review",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "issue": "1",
+        "volume": "15",
+        "journalIssueId": 2935255,
+        "dateOfPublication": "2020 Apr",
+        "monthOfPublication": 4,
+        "yearOfPublication": 2020,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "nlmid": "101266603",
+          "isoabbreviation": "World J Emerg Surg"
+        },
+        "printPublicationDate": "2020-04-01"
+      }
+    },
+    {
+      "pmid": "31210778",
+      "pmcid": "PMC6567462",
+      "doi": "10.1186/s13017-019-0247-0",
+      "title": "2019 WSES guidelines for the management of severe acute pancreatitis.",
+      "pubYear": "2019",
+      "pubTypeList": {
+        "pubType": [
+          "review-article",
+          "Review",
+          "Consensus Statement",
+          "Journal Article"
+        ]
+      },
+      "journalInfo": {
+        "volume": "14",
+        "journalIssueId": 2770922,
+        "dateOfPublication": "2019 ",
+        "monthOfPublication": 0,
+        "yearOfPublication": 2019,
+        "journal": {
+          "medlineAbbreviation": "World J Emerg Surg",
+          "title": "World journal of emergency surgery : WJES",
+          "essn": "1749-7922",
+          "issn": "1749-7922",
+          "isoabbreviation": "World J Emerg Surg",
+          "nlmid": "101266603"
+        },
+        "printPublicationDate": "2019-01-01"
+      }
+    }
+  ]
+}

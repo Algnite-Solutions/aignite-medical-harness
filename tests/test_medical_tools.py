@@ -46,8 +46,10 @@ def test_pubmed_query_escaping_abstracts_and_caller_identity(monkeypatch):
     monkeypatch.setenv("NCBI_API_KEY", "test-key")
     query = 'kidney AND ("2020"[dp] : "2026"[dp]) & SGLT2'
     result = medical.pubmed_search(query, retmax=2)
-    assert result == [{"pmid": "123", "title": "Kidney disease & care", "journal": "Test Journal",
+    assert result == [{"pmid": "123", "pmcid": "", "doi": "", "fulltext_url": "", "fulltext_links": [],
+                       "fulltext_status": "no_pmcid", "title": "Kidney disease & care", "journal": "Test Journal",
                        "year": "2024", "abstract": "METHODS: A trial. RESULTS: Improved outcomes.",
+                       "abstract_truncated": False,
                        "url": "https://pubmed.ncbi.nlm.nih.gov/123/"}]
     params = parse_qs(urlsplit(requests[0]).query)
     assert params["term"] == [query]
@@ -108,17 +110,19 @@ def test_guideline_live_mapping_and_query(monkeypatch, tmp_path):
     def get(url):
         urls.append(url)
         return json.dumps({"resultList": {"result": [
-            {"pmid": "123", "title": "A <i>guideline</i>", "pubYear": "2024",
+            {"pmid": "123", "title": "Chronic kidney disease SGLT2 <i>guideline</i>", "pubYear": "2024",
              "journalInfo": {"journal": {"title": "Journal"}}, "pubTypeList": {"pubType": ["Guideline"]},
              "abstractText": "<p>Evidence &amp; care</p>"},
-            {"source": "PMC", "id": "PMC999", "doi": "10.1/test", "title": "Another guideline"}]}})
+            {"source": "PMC", "id": "PMC999", "doi": "10.1/test", "title": "Another chronic kidney disease SGLT2 guideline"}]}})
 
     monkeypatch.setattr(medical, "_get", get)
     result = medical.guideline_search("chronic kidney disease SGLT2", max_results=3)
     params = parse_qs(urlsplit(urls[0]).query)
-    assert params["query"] == ['(chronic kidney disease SGLT2) AND (PUB_TYPE:"guideline")']
-    assert params["resultType"] == ["core"] and params["sort"] == ["CITED desc"]
-    assert result[0]["abstract"] == "Evidence & care" and result[0]["org"] == "Journal"
+    assert 'TITLE_ABS:"chronic kidney disease"' in params["query"][0]
+    assert 'TITLE_ABS:"sglt2"' in params["query"][0]
+    assert params["resultType"] == ["core"] and "sort" not in params
+    assert result[0]["abstract"] == "Evidence & care" and result[0]["org"] == ""
+    assert result[0]["journal"] == "Journal"
     assert result[1]["url"] == "https://doi.org/10.1/test"
 
 
@@ -130,13 +134,13 @@ def test_guideline_partial_failure_preserves_local_results(monkeypatch):
 
 
 def test_guideline_deduplication_preserves_local_metadata_and_order(monkeypatch):
-    local = [{"title": "Curated", "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
+    local = [{"title": "Curated kidney guideline", "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
               "source": "local_index", "key_points": ["curated detail"]}]
     monkeypatch.setattr(medical, "_local_guidelines", lambda query: local)
     monkeypatch.setattr(medical, "_get", lambda url: json.dumps({"resultList": {"result": [
-        {"pmid": "999", "title": "Other"}, {"pmid": "123", "title": "Duplicate"}]}}))
+        {"pmid": "999", "title": "Other kidney guideline"}, {"pmid": "123", "title": "Duplicate kidney guideline"}]}}))
     result = medical.guideline_search("kidney")
-    assert [row["title"] for row in result] == ["Curated", "Other"]
+    assert [row["title"] for row in result] == ["Curated kidney guideline", "Other kidney guideline"]
     assert result[0]["key_points"] == ["curated detail"]
 
 
@@ -247,7 +251,8 @@ def test_fulltext_heading_selection_and_total_character_budget(monkeypatch):
 def test_fulltext_unstructured_body_and_missing_section_ids(monkeypatch):
     monkeypatch.setattr(medical, "_get", lambda url: "<article><body><p>Unstructured text.</p></body></article>")
     assert medical.paper_fulltext("PMC123")["sections"] == [
-        {"id": "body", "title": "Body", "text": "Unstructured text.", "truncated": False}]
+        {"id": "body", "title": "Body", "text": "Unstructured text.", "truncated": False,
+         "source_url": "https://europepmc.org/articles/PMC123"}]
     monkeypatch.setattr(medical, "_get", lambda url: '<article><body><sec sec-type="methods"><p>Text</p></sec></body></article>')
     assert medical.paper_fulltext("PMC123")["available_sections"] == [{"id": "section-1", "title": "methods"}]
 
@@ -328,3 +333,46 @@ def test_trials_validates_arguments(monkeypatch, arguments):
     monkeypatch.setattr(medical, "_get", lambda url: pytest.fail("invalid arguments made a request"))
     with pytest.raises(ValueError):
         medical.clinical_trial_search(**arguments)
+
+
+@pytest.mark.parametrize("arguments", [
+    {"query": ""}, {"query": "CKD", "max_results": 0},
+    {"query": "CKD", "max_results": True}, {"query": "CKD", "live": "false"},
+])
+def test_guidelines_validate_before_network(monkeypatch, arguments):
+    monkeypatch.setattr(medical, "_get", lambda url: pytest.fail("invalid arguments made a request"))
+    with pytest.raises(ValueError):
+        medical.guideline_search(**arguments)
+
+
+@pytest.mark.parametrize("name,arguments,field", [
+    ("pubmed_search", {"query": "kidney", "retmax": 1}, "pmid"),
+    ("guideline_search", {"query": "kidney", "max_results": 1}, "title"),
+    ("paper_fulltext", {"pmcid": "PMC123", "section": "methods"}, "sections"),
+    ("clinical_trial_search", {"condition": "psoriasis", "max_results": 1}, "nct_id"),
+])
+def test_each_tool_round_trip_through_agent(monkeypatch, tmp_path, name, arguments, field):
+    ncbi_responses(monkeypatch)
+    index = tmp_path / "guidelines.json"
+    index.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("AMA_GUIDELINES_PATH", str(index))
+    if name == "guideline_search":
+        monkeypatch.setattr(medical, "_get", lambda url: json.dumps({"resultList": {"result": [
+            {"pmid": "123", "title": "Kidney clinical guideline"}]}}))
+    elif name == "paper_fulltext":
+        monkeypatch.setattr(medical, "_get", lambda url: FULLTEXT)
+    elif name == "clinical_trial_search":
+        monkeypatch.setattr(medical, "_get", lambda url: json.dumps({"studies": [{
+            "protocolSection": {"identificationModule": {"nctId": "NCT12345678"}}}]}))
+
+    model = FakeModel(calls(call(name, json.dumps(arguments), id="retrieval-1")), "done")
+    agent = Agent(model, tools=medical.make_tools())
+    assert agent.chat("Retrieve evidence") == "done"
+    observation = next(message for message in agent.history if message["role"] == "tool")
+    assert observation["tool_call_id"] == "retrieval-1"
+    result = json.loads(observation["content"])
+    assert field in (result[0] if isinstance(result, list) else result)
+    assert len(model.requests) == 2
+    assert observation in model.requests[1][0]
+    assert {tool["function"]["name"] for tool in model.requests[0][1]} == {
+        "pubmed_search", "guideline_search", "paper_fulltext", "clinical_trial_search", "analyze_images"}

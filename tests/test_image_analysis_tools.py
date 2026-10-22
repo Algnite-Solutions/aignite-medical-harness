@@ -119,9 +119,10 @@ def test_long_analysis_is_bounded(tmp_path):
     assert len(result["analysis"]) == 6000 and result["truncated"]
 
 
-def test_factory_binds_fresh_image_state_per_episode(tmp_path):
-    first = load_tools("src/ama/image_analysis_tools.py", episode_id="first")[0]
-    second = load_tools("src/ama/image_analysis_tools.py", episode_id="second")[0]
+@pytest.mark.parametrize("tools_path", ["src/ama/image_analysis_tools.py", "src/ama/medical_tools.py"])
+def test_factory_binds_fresh_image_state_per_episode(tmp_path, tools_path):
+    first = next(t for t in load_tools(tools_path, episode_id="first") if t.name == "analyze_images")
+    second = next(t for t in load_tools(tools_path, episode_id="second") if t.name == "analyze_images")
     first.on_images(files(tmp_path))
     with pytest.raises(ValueError, match="not been released"):
         payload(second)

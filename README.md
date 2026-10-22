@@ -69,16 +69,20 @@ ama chat datasets/rocov2_demo --episode ROCOv2_2023_test_000001 --model qwen36 -
 ```
 
 This registers five tools: `pubmed_search(query, retmax=5, abstract=True)`,
-`guideline_search(query, max_results=5, live=True)`,
-`paper_fulltext(pmcid, section="", max_chars=20000)` and
+`guideline_search(query, max_results=5, live=True, population="", subtype="", intent="", year_to=None, search_expression="")`,
+`paper_fulltext(pmcid="", section="", max_chars=20000, pmid="")`,
 `clinical_trial_search(condition, intervention="", status="", max_results=5)` and
 `analyze_images(query, image_ids)`.
-PubMed uses ESearch then EFetch, falling back to ESummary without abstracts. Guideline search
-combines a small bundled KDIGO index with live Europe PMC guideline results, sorted by citations;
-`max_results` limits live results, while local matches are additional. Set `live=False` for offline search.
-Publication-type matches can include reporting guidelines; check scope and date before using results.
+PubMed uses ESearch then EFetch, falling back to ESummary without abstracts; PMCID/DOI and
+full-text links are preserved. Guideline search combines five source-checked index records
+with Europe PMC candidates, filters topic and document type, then ranks by relevance and scope.
+`max_results` caps the combined deduplicated list. Set `live=False` for offline search.
+Optional population/subtype/intent/year filters restrict scope; latest guideline versions are not verified.
+Organizations and journals are separate fields, and abstract truncation is explicit.
 `paper_fulltext` fetches available full-text XML from Europe PMC and returns a title, source URL,
-section IDs/headings and text. Select a section by ID or heading; `max_chars` caps total section text.
+section IDs/headings and text. Supply exactly one PMCID or PMID; PMID lookup resolves a PMCID
+without guessing. Select nested sections by ID or heading, or use diagnosis/investigation/treatment
+intent aliases; `max_chars` caps total section text. Section source URLs support follow-up reading.
 The response reports truncation and available sections so callers can request another section.
 Some PMC articles are unavailable through this endpoint; it cannot retrieve arbitrary paywalled papers.
 `clinical_trial_search` queries the public ClinicalTrials.gov v2 API for NCT IDs, status, phase,
@@ -90,6 +94,7 @@ See the [ClinicalTrials.gov API](https://clinicaltrials.gov/data-api/api).
 Successful searches return lists; full-text retrieval returns an object. Failures return `{"error": ...}` and partial guideline searches
 also include `results`. Requests time out after 20 seconds and downloads are limited to 4 MiB.
 These tools add no third-party dependencies. Retrieval tools do not release dataset evidence IDs.
+See [retrieval behavior and tests](docs/medical-search-tools.md) for scope and limitations.
 
 `analyze_images` uses an isolated DeepSeek Flash visual request by default. When it is loaded,
 the runner sends an image evidence-ID catalog to the main Agent and releases the actual image
@@ -131,9 +136,11 @@ and [Europe PMC API documentation](https://europepmc.org/RestfulWebService).
 
 For a real DeepSeek tool-call smoke test, set `DEEPSEEK_API_KEY` in the environment or local
 `.env`, then run `RUN_API_TESTS=1 python -m pytest -q tests/test_medical_tools_api.py`.
-The four cases check PubMed search, offline guideline search, full-text reading and clinical-trial search, including use of the returned
+The four model cases check PubMed search, online guideline search, full-text reading and clinical-trial search, including use of the returned
 value in the final answer. They are skipped by default; opting in consumes model API credits
 and the online tools also require access to their respective data sources.
+To test the 12 public retrieval cases without model calls, use
+`RUN_MEDICAL_TOOLS_LIVE_TESTS=1 python -m pytest -q tests/test_medical_tools_api.py -k 'not deepseek'`.
 
 To combine retrieval with MIMIC case tools, pass a trusted Python file exporting this factory:
 
