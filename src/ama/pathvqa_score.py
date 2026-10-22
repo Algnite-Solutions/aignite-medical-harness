@@ -46,8 +46,8 @@ def score_pathvqa(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) 
                 raise ValueError(f"empty PathVQA reference: {ep.id}/{row['turn_id']}")
             decision = row.get("decision") or {}
             raw_answer = decision.get("answer") if isinstance(decision, dict) else None
-            valid = isinstance(raw_answer, str) and bool(raw_answer.strip())
-            answer = normalize_answer(raw_answer) if valid else ""
+            answer = normalize_answer(raw_answer)
+            valid = bool(answer)
             exact = int(bool(answer) and answer == reference)
             counts["total"] += 1
             counts["submitted"] += int(row.get("decision") is not None)

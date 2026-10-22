@@ -1,0 +1,79 @@
+{
+  "schema": "ama-pathvqa-results-v1",
+  "cohort_sha256": "0c2d8a676a1c1a1844c02854b7d21e933aae5537bcffe410d0cc98693d718d82",
+  "source_repository": "flaviagiammarino/path-vqa",
+  "source_revision": "7568940e604f3e911441b1f6c7aedb5f1c2866bd",
+  "source_split": "automedbench_test_500",
+  "frozen_pool_size": 500,
+  "cohort_size": 100,
+  "question_types": {
+    "binary": 49,
+    "open": 51
+  },
+  "scorer": "pathvqa_v1",
+  "official_automedbench_score": false,
+  "runs": [
+    {
+      "run_id": "20261021T083141-fb7fa028",
+      "alias": "qwen36",
+      "request_config": {
+        "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+        "model": "Qwen3.6-27B",
+        "api_key_env": "MEDAI_API_KEY",
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "timeout": 90.0,
+      "max_calls": 1,
+      "terminations": {
+        "completed": 90,
+        "api_error": 10
+      },
+      "api_error_statuses": {
+        "other": 10
+      },
+      "aggregate": {
+        "n_expected": 100,
+        "completion_rate": 0.9,
+        "valid_answer_rate": 0.89,
+        "binary_valid_choice_rate": 0.8775510204081632,
+        "binary_accuracy": 0.6122448979591837,
+        "binary_count": 49,
+        "open_exact_match": 0.0,
+        "open_token_f1": 0.04569221628045158,
+        "open_count": 51,
+        "output_quality": {
+          "contract_version": 2,
+          "recoverable_answer": {
+            "num": 90,
+            "den": 100,
+            "value": 0.9
+          },
+          "strict_output_compliance": {
+            "num": 0,
+            "den": 100,
+            "value": 0.0
+          },
+          "valid_citations": {
+            "num": 89,
+            "den": 100,
+            "value": 0.89
+          },
+          "summary_present": {
+            "num": 90,
+            "den": 100,
+            "value": 0.9
+          }
+        }
+      },
+      "files": {
+        "manifest.json": "c9ca98010728fe054820f8b2e79386d624b07beb20a7c7db07a6713700d5f586",
+        "decisions.jsonl": "f84cc05b310c7fbe207509ba8aa0d5be812313d7aa2fe4451e2bad342c84966a",
+        "messages.json": "b4ab92c08fd0ac24e38853c847a3e99d33e8f92faf467e121d1ed69fe4c883c3",
+        "metrics.json": "7ce9722e8904187d14f4ddae2264f928722132ab1fd5e3cc5bc5e988e5877951"
+      }
+    }
+  ]
+}

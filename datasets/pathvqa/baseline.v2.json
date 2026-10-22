@@ -1,0 +1,228 @@
+{
+  "schema": "ama-pathvqa-results-v2",
+  "cohort_lock_sha256": "fd3b1d17b5df3e4a7be8836750320677601b2e509d81898796c9b331305346df",
+  "official_automedbench_score": false,
+  "runs": [
+    {
+      "alias": "qwen36-nothink",
+      "model_config": {
+        "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+        "model": "Qwen3.6-27B",
+        "api_key_env": "MEDAI_API_KEY",
+        "temperature": 0,
+        "max_tokens": 8192,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "code_sha256": "64b2b513e3dfe150a3ef7f50c17568877c7152c3cb4126262ac7853f1b384c90",
+      "code_revisions": [],
+      "timeout": 300,
+      "n_attempts": 103,
+      "n_retries": 3,
+      "termination_counts": {
+        "completed": 99,
+        "invalid_decision": 1
+      },
+      "api_error_statuses": {
+        "transport_or_other": 3
+      },
+      "elapsed_wall_seconds": 1693.195,
+      "duration_ms": 687708,
+      "reported_usage": {
+        "prompt_tokens": 66108,
+        "completion_tokens": 25063,
+        "total_tokens": 91171
+      },
+      "aggregate": {
+        "n_expected": 100,
+        "completion_rate": 0.99,
+        "valid_answer_rate": 0.98,
+        "binary_valid_choice_rate": 0.9795918367346939,
+        "binary_accuracy": 0.6122448979591837,
+        "binary_count": 49,
+        "open_exact_match": 0.0,
+        "open_token_f1": 0.0318082788671024,
+        "open_count": 51,
+        "output_quality": {
+          "contract_version": 2,
+          "recoverable_answer": {
+            "num": 99,
+            "den": 100,
+            "value": 0.99
+          },
+          "strict_output_compliance": {
+            "num": 21,
+            "den": 100,
+            "value": 0.21
+          },
+          "valid_citations": {
+            "num": 98,
+            "den": 100,
+            "value": 0.98
+          },
+          "summary_present": {
+            "num": 99,
+            "den": 100,
+            "value": 0.99
+          }
+        }
+      },
+      "files": {
+        "manifest.json": "e37b78ebca2e4f4e707f54ced35e5666de5097c0d6920520639c3d6e85fb87d2",
+        "messages.json": "16c36f0cca030444393364d9fed37234cf9b8d4d138132bc5dc9657f71cfc6b1",
+        "decisions.jsonl": "7f553a84cc4f2f288524dc6153a7970f2cf7d28e16ba32ae665ccd7efc6fc2ac",
+        "diagnostics.jsonl": "e3f10a3d9007ac0111fabbd501212e8d25bafe12d3868f266be0bffcc78133de",
+        "attempts.jsonl": "1cc092b688a107f7e4afe6b53f787b37556acd5172ac2ef7b15fa70c57699544",
+        "metrics.json": "9769862b713cde69f3ff716ee377710625b311543e8631d9f3c2182d02bb6a13"
+      }
+    },
+    {
+      "alias": "qwen36-thinking",
+      "model_config": {
+        "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+        "model": "Qwen3.6-27B",
+        "api_key_env": "MEDAI_API_KEY",
+        "temperature": 0,
+        "max_tokens": 8192,
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
+      "code_sha256": "0081d0c7461dd2ed6158b5f19fad775506fc95377b8baf2ee106510b234344d4",
+      "code_revisions": [],
+      "timeout": 300,
+      "n_attempts": 101,
+      "n_retries": 1,
+      "termination_counts": {
+        "completed": 88,
+        "invalid_decision": 12
+      },
+      "api_error_statuses": {
+        "transport_or_other": 1
+      },
+      "elapsed_wall_seconds": 3888.82,
+      "duration_ms": 3521699,
+      "reported_usage": {
+        "prompt_tokens": 65334,
+        "completion_tokens": 261199,
+        "total_tokens": 326533
+      },
+      "aggregate": {
+        "n_expected": 100,
+        "completion_rate": 0.88,
+        "valid_answer_rate": 0.87,
+        "binary_valid_choice_rate": 0.9387755102040817,
+        "binary_accuracy": 0.6326530612244898,
+        "binary_count": 49,
+        "open_exact_match": 0.0,
+        "open_token_f1": 0.06339869281045751,
+        "open_count": 51,
+        "output_quality": {
+          "contract_version": 2,
+          "recoverable_answer": {
+            "num": 88,
+            "den": 100,
+            "value": 0.88
+          },
+          "strict_output_compliance": {
+            "num": 0,
+            "den": 100,
+            "value": 0.0
+          },
+          "valid_citations": {
+            "num": 87,
+            "den": 100,
+            "value": 0.87
+          },
+          "summary_present": {
+            "num": 88,
+            "den": 100,
+            "value": 0.88
+          }
+        }
+      },
+      "files": {
+        "manifest.json": "9f9462e6f0dc8eea5bd9f5ddb835db442cf982d2119a236faef440517d233236",
+        "messages.json": "8699112f56ce7a1f81a721e8ee95755ea5324cdd5d0122edfc7f4cac26f1dddc",
+        "decisions.jsonl": "530f5d20b1729b88f7a7f2018d8c3f53fc2fc89544e05cc627b143f73e141a42",
+        "diagnostics.jsonl": "1823a2c3393c5e8c5b5f21a03dc1fc0cba369a1d51472418624b46ff63525b63",
+        "attempts.jsonl": "7f55e5fce53478589c6290bfb1a9bd2ca2f5f3cd2d2938a0daadb611064ba192",
+        "metrics.json": "7fe301546cd1ee9661a55c5a514094417da68baade265d65807f1d22d401b4b4"
+      }
+    },
+    {
+      "alias": "glm-5.3-flash",
+      "model_config": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-5.3-flash",
+        "api_key_env": "GLM_API_KEY",
+        "temperature": 0,
+        "max_tokens": 8192
+      },
+      "code_sha256": "64b2b513e3dfe150a3ef7f50c17568877c7152c3cb4126262ac7853f1b384c90",
+      "code_revisions": [
+        "f00838a6471289cc2d0739cdb6a1252bf9b1f83eced2dfe0d11fdb0811b6d0e4"
+      ],
+      "timeout": 300,
+      "n_attempts": 100,
+      "n_retries": 0,
+      "termination_counts": {
+        "completed": 96,
+        "api_error": 4
+      },
+      "api_error_statuses": {
+        "400": 4
+      },
+      "elapsed_wall_seconds": 1389.558,
+      "duration_ms": 1169898,
+      "reported_usage": {
+        "prompt_tokens": 75521,
+        "completion_tokens": 52728,
+        "total_tokens": 128249
+      },
+      "aggregate": {
+        "n_expected": 100,
+        "completion_rate": 0.96,
+        "valid_answer_rate": 0.94,
+        "binary_valid_choice_rate": 0.9183673469387755,
+        "binary_accuracy": 0.7346938775510204,
+        "binary_count": 49,
+        "open_exact_match": 0.0196078431372549,
+        "open_token_f1": 0.1008987969795704,
+        "open_count": 51,
+        "output_quality": {
+          "contract_version": 2,
+          "recoverable_answer": {
+            "num": 96,
+            "den": 100,
+            "value": 0.96
+          },
+          "strict_output_compliance": {
+            "num": 95,
+            "den": 100,
+            "value": 0.95
+          },
+          "valid_citations": {
+            "num": 94,
+            "den": 100,
+            "value": 0.94
+          },
+          "summary_present": {
+            "num": 96,
+            "den": 100,
+            "value": 0.96
+          }
+        }
+      },
+      "files": {
+        "manifest.json": "a8f0462c93497745246e7fd89e34694f86ba61c8a35a77519b94efe1179a0906",
+        "messages.json": "27628402adecf8636cc174d400da1cf4e09cb3bb6b1e4f3e6d7c350151a9504c",
+        "decisions.jsonl": "8ebc40d3a69ee7896ecf3c8874d3728317e8b96f9e8a697982993af386608378",
+        "diagnostics.jsonl": "802a7313573c0ee3ff4cff00bd5c63a75fc4ed96b0c643e4e3dd57a9661b7cea",
+        "attempts.jsonl": "149138af3d190f73c404b7af201761614b83199df80f5657fe63489b1f099305",
+        "metrics.json": "dc9ebac2cebcef16ff94e5aed55ca9c6a2e8182e55cdd1e1cd43955b6522db1b"
+      }
+    }
+  ]
+}

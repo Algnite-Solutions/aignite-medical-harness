@@ -23,6 +23,7 @@ include = ["ama*"]
 
 [tool.setuptools.package-data]
 "ama._vendor.automedbench_report" = ["LICENSE", "SOURCE.json"]
+"ama.importers" = ["pathvqa-source.lock.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -5,12 +5,15 @@ import argparse
 import hashlib
 import json
 import random
+import re
 from collections import Counter
 from pathlib import Path
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Hash JSON text consistently across Windows CRLF and Linux LF checkouts.
+    canonical = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def prepare(dataset: Path, out: Path, size: int = 100, seed: int = 42) -> dict:
@@ -92,19 +95,29 @@ def summarize(dataset: Path, cohort_path: Path, run_paths: list[Path], out: Path
         if manifest["termination"] == "running" or manifest["max_calls"] != 1 or \
                 Path(manifest["dataset_dir"]).resolve() != dataset.resolve():
             raise ValueError(f"run protocol differs or is incomplete: {path}")
+        events = [json.loads(line) for line in (path / "diagnostics.jsonl").read_text(encoding="utf-8").splitlines()]
         _eval_run(path, "pathvqa_v1")
         metrics = json.loads((path / "metrics.json").read_text(encoding="utf-8"))
         config = manifest["model_config"]
+        api_error_statuses = Counter()
+        for event in events:
+            if event.get("kind") == "error":
+                match = re.search(r"HTTP (\d+)", event.get("error", ""))
+                api_error_statuses[match.group(1) if match else "other"] += 1
         # Export an explicit allowlist rather than arbitrary provider configuration.
         safe_config = {key: config[key] for key in ("base_url", "model", "api_key_env", "temperature", "max_tokens",
                       "chat_template_kwargs") if key in config}
         summaries.append({"run_id": manifest["run_id"], "alias": manifest["model"],
                           "request_config": safe_config, "timeout": manifest["timeout"], "max_calls": 1,
                           "terminations": dict(Counter(row["termination"] for row in rows)),
+                          "api_error_statuses": dict(api_error_statuses),
                           "aggregate": metrics["scored"]["aggregate"],
                           "files": {name: sha256(path / name) for name in
                                     ("manifest.json", "decisions.jsonl", "messages.json", "metrics.json")}})
     summary = {"schema": "ama-pathvqa-results-v1", "cohort_sha256": sha256(cohort_path),
+               "source_repository": cohort["source_repository"],
+               "source_revision": cohort["source_revision"],
+               "source_split": "automedbench_test_500", "frozen_pool_size": 500,
                "cohort_size": cohort["size"], "question_types": cohort["question_types"],
                "scorer": "pathvqa_v1", "official_automedbench_score": False, "runs": summaries}
     out.parent.mkdir(parents=True, exist_ok=True)

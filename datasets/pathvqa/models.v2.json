@@ -1,0 +1,27 @@
+{
+  "models": {
+    "qwen36-thinking": {
+      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+      "model": "Qwen3.6-27B",
+      "api_key_env": "MEDAI_API_KEY",
+      "temperature": 0,
+      "max_tokens": 8192,
+      "chat_template_kwargs": {"enable_thinking": true}
+    },
+    "qwen36-nothink": {
+      "base_url": "https://medaimodel.medicalaibase.cn:30000/v1",
+      "model": "Qwen3.6-27B",
+      "api_key_env": "MEDAI_API_KEY",
+      "temperature": 0,
+      "max_tokens": 8192,
+      "chat_template_kwargs": {"enable_thinking": false}
+    },
+    "glm-5.3-flash": {
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-5.3-flash",
+      "api_key_env": "GLM_API_KEY",
+      "temperature": 0,
+      "max_tokens": 8192
+    }
+  }
+}

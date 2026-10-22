@@ -18,6 +18,7 @@ from ..dataset_card import write_dataset_cards
 
 REPOSITORY = "flaviagiammarino/path-vqa"
 REVISION = "7568940e604f3e911441b1f6c7aedb5f1c2866bd"
+SOURCE_LOCK = Path(__file__).with_name("pathvqa-source.lock.json")
 SPLITS = ("train", "validation", "test")
 INSTRUCTIONS = (
     "Answer each pathology visual question in concise English using the supplied image.\n"
@@ -38,7 +39,7 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _snapshot(source: Path, verify_checksum: bool) -> tuple[str, dict[str, list[tuple[Path, str]]]]:
+def _snapshot(source: Path, source_lock: Path) -> tuple[str, dict[str, list[tuple[Path, str]]]]:
     manifest_path = source / "snapshot_manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"missing snapshot manifest: {manifest_path}")
@@ -46,11 +47,27 @@ def _snapshot(source: Path, verify_checksum: bool) -> tuple[str, dict[str, list[
     revision = manifest.get("resolved_revision")
     if manifest.get("repository") != REPOSITORY or revision != REVISION:
         raise ValueError("PathVQA source repository or revision differs from the pinned release")
+    lock = json.loads(source_lock.read_text(encoding="utf-8"))
+    if lock.get("repository") != REPOSITORY or lock.get("revision") != REVISION:
+        raise ValueError("invalid committed PathVQA source lock")
+    locked = {item["path"]: item for item in lock["files"] if item["path"].endswith(".parquet")}
+    if len(locked) != sum(item["path"].endswith(".parquet") for item in lock["files"]):
+        raise ValueError("duplicate source lock entries")
     entries: dict[str, list[tuple[Path, str]]] = {split: [] for split in SPLITS}
+    seen: set[str] = set()
     for item in manifest.get("files", []):
         relative = item.get("path", "")
-        if not isinstance(relative, str) or not relative.startswith("data/") or not relative.endswith(".parquet"):
+        if not isinstance(relative, str):
+            raise ValueError("invalid source manifest path")
+        if not relative.endswith(".parquet"):
             continue
+        if not relative.startswith("data/"):
+            raise ValueError(f"unexpected Parquet path: {relative}")
+        if relative in seen:
+            raise ValueError(f"duplicate source manifest entry: {relative}")
+        seen.add(relative)
+        if relative not in locked or item.get("sha256") != locked[relative].get("sha256"):
+            raise ValueError(f"source manifest differs from committed lock: {relative}")
         path = (source / relative).resolve()
         if source.resolve() not in path.parents or not path.is_file():
             raise ValueError(f"missing or unsafe source file: {relative}")
@@ -60,18 +77,21 @@ def _snapshot(source: Path, verify_checksum: bool) -> tuple[str, dict[str, list[
         expected = item.get("sha256")
         if not isinstance(expected, str) or len(expected) != 64:
             raise ValueError(f"missing SHA-256 for {relative}")
-        if verify_checksum and _sha_file(path) != expected:
+        if path.stat().st_size != locked[relative]["size"]:
+            raise ValueError(f"source size mismatch: {relative}")
+        if _sha_file(path) != expected:
             raise ValueError(f"source checksum mismatch: {relative}")
         entries[split].append((path, relative))
-    if any(not entries[split] for split in SPLITS):
-        raise ValueError("source snapshot is missing a split")
+    if seen != set(locked) or any(not entries[split] for split in SPLITS):
+        raise ValueError("source snapshot does not contain exactly the locked Parquet shards")
     for split in SPLITS:
         entries[split].sort(key=lambda item: item[1])
     return revision, entries
 
 
 def import_pathvqa(source: Path, out: Path, *, limit_per_split: int | None = None,
-                   verify_checksum: bool = True, benchmark_count: int = 500) -> dict[str, Any]:
+                   benchmark_count: int = 500,
+                   source_lock: Path = SOURCE_LOCK) -> dict[str, Any]:
     """Build a self-contained dataset; never overwrite an existing destination."""
     try:
         import pyarrow.parquet as pq
@@ -86,7 +106,7 @@ def import_pathvqa(source: Path, out: Path, *, limit_per_split: int | None = Non
         raise ValueError("limit_per_split must be positive")
     if benchmark_count < 0:
         raise ValueError("benchmark_count must be nonnegative")
-    revision, files = _snapshot(source, verify_checksum)
+    revision, files = _snapshot(source, source_lock)
     test_count = sum(pq.ParquetFile(path).metadata.num_rows for path, _ in files["test"])
     if limit_per_split is not None:
         test_count = min(test_count, limit_per_split)
@@ -212,10 +232,8 @@ def import_pathvqa(source: Path, out: Path, *, limit_per_split: int | None = Non
 def configure_cli(parser: ArgumentParser) -> None:
     parser.add_argument("--limit-per-split", type=int, help="smoke import only")
     parser.add_argument("--benchmark-count", type=int, default=500)
-    parser.add_argument("--skip-source-checksum", action="store_true")
 
 
 def import_from_cli(args: Namespace) -> dict[str, Any]:
     return import_pathvqa(args.source, args.out, limit_per_split=args.limit_per_split,
-                          verify_checksum=not args.skip_source_checksum,
                           benchmark_count=args.benchmark_count)
