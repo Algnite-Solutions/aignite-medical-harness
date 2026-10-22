@@ -104,4 +104,5 @@ API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后
 ### VQA-RAD 离线迁移
 
 固定版本 VQA-RAD 导入、AutoMedBench 确定性 heuristic 评分与离线验收流程见
-[迁移说明](docs/vqa-rad.zh-CN.md)。真实数据位于忽略的 `data/`，验收不调用模型 API。
+[迁移说明](docs/vqa-rad.md)。全量与固定100条数据包已存放在实验室 NAS
+`/mnt/nas/data/processed/VQA-rad`（需内部访问权限）。真实数据与运行记录不提交 Git，离线验收不调用模型 API。
