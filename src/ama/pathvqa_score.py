@@ -84,3 +84,4 @@ def score_pathvqa(dataset: Dataset, decisions: dict[str, list[dict[str, Any]]]) 
         "open_token_f1": rate(open_f1, counts["open_total"]),
         "open_count": counts["open_total"],
     }}
+

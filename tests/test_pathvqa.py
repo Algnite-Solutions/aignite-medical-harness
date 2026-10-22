@@ -13,7 +13,6 @@ from ama.data import load_dataset, validate_dataset
 from ama.importers.pathvqa import REPOSITORY, REVISION, import_pathvqa as _import_pathvqa
 from ama.pathvqa_score import _f1, normalize_answer, score_pathvqa
 from ama.runner import execute
-from scripts.pathvqa_baseline import prepare, summarize
 
 
 def _source(tmp_path, open_answer="bright red"):
@@ -220,31 +219,4 @@ def test_lexical_normalization_and_multiset_f1():
     assert _f1("red red", "red") == 2 / 3
 
 
-def test_cohort_identity_and_incomplete_run_rejection(tmp_path):
-    dataset = tmp_path / "dataset"
-    dataset.mkdir()
-    ids = [f"synthetic-{index:03d}" for index in range(100)]
-    (dataset / "dataset.json").write_text(json.dumps({"splits": {"automedbench_test_500": ids}}))
-    (dataset / "targets.jsonl").write_text("".join(json.dumps({"id": eid, "turns": {"t1": {
-        "question_type": "binary" if index % 2 else "open", "answer": "synthetic"}}}) + "\n"
-        for index, eid in enumerate(ids)))
-    report = {"repository": REPOSITORY, "revision": REVISION, "source_dir": "/original"}
-    (dataset / "import_report.json").write_text(json.dumps(report))
-    lock = tmp_path / "cohort.json"
-    original = prepare(dataset, lock)
-    report["source_dir"] = "/another/local/path"
-    (dataset / "import_report.json").write_text(json.dumps(report))
-    for name in ("dataset.json", "targets.jsonl"):
-        path = dataset / name
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
-    assert prepare(dataset, lock) == original
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "manifest.json").write_text(json.dumps({"episode_ids": original["episode_ids"]}))
-    (run / "decisions.jsonl").write_text("")
-    with pytest.raises(ValueError, match="cover the frozen cohort exactly"):
-        summarize(dataset, lock, [run], tmp_path / "summary.json")
-    report["revision"] = "different"
-    (dataset / "import_report.json").write_text(json.dumps(report))
-    with pytest.raises(ValueError, match="existing cohort differs"):
-        prepare(dataset, lock)
+

@@ -150,3 +150,4 @@ REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored,
             SYMPTOM2DISEASE_SCORER: score_symptom2disease,
             CXR_REPORT_SCORER: score_mimic_cxr_report,
             "pathvqa_v1": score_pathvqa}
+

@@ -237,3 +237,4 @@ def configure_cli(parser: ArgumentParser) -> None:
 def import_from_cli(args: Namespace) -> dict[str, Any]:
     return import_pathvqa(args.source, args.out, limit_per_split=args.limit_per_split,
                           benchmark_count=args.benchmark_count)
+

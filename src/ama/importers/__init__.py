@@ -32,3 +32,4 @@ def register_importers(subparsers: Any) -> None:
         parser.add_argument("--out", type=Path, required=True)
         command.configure(parser)
         parser.set_defaults(import_handler=command.run)
+

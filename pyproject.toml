@@ -30,3 +30,4 @@ testpaths = ["tests"]
 markers = [
     "api: real-API integration test (opt-in: RUN_API_TESTS=1 plus provider key env; never run by default)",
 ]
+

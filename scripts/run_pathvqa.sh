@@ -15,16 +15,16 @@ case "$COMMAND" in
     ;;
   prepare|verify|run|eval|compare)
     DATASET=${DATASET:?Set DATASET to the imported PathVQA AMA dataset}
-    "$PYTHON_BIN" -m scripts.pathvqa_v2 "$COMMAND" --dataset "$DATASET" --root "$RUN_ROOT" "$@"
+    "$PYTHON_BIN" -m scripts.pathvqa "$COMMAND" --dataset "$DATASET" --root "$RUN_ROOT" "$@"
     ;;
   smoke)
     DATASET=${DATASET:?Set DATASET to the imported PathVQA AMA dataset}
-    "$PYTHON_BIN" -m scripts.pathvqa_v2 smoke --dataset "$DATASET" --root "$RUN_ROOT" "$@"
+    "$PYTHON_BIN" -m scripts.pathvqa smoke --dataset "$DATASET" --root "$RUN_ROOT" "$@"
     ;;
   all)
     DATASET=${DATASET:?Set DATASET to the imported PathVQA AMA dataset}
-    "$PYTHON_BIN" -m scripts.pathvqa_v2 verify --dataset "$DATASET" --root "$RUN_ROOT"
-    "$PYTHON_BIN" -m scripts.pathvqa_v2 compare --dataset "$DATASET" --root "$RUN_ROOT" \
+    "$PYTHON_BIN" -m scripts.pathvqa verify --dataset "$DATASET" --root "$RUN_ROOT"
+    "$PYTHON_BIN" -m scripts.pathvqa compare --dataset "$DATASET" --root "$RUN_ROOT" \
       --alias qwen36-thinking --alias qwen36-nothink --alias glm-5.3-flash "$@"
     ;;
   *)
@@ -32,3 +32,4 @@ case "$COMMAND" in
     exit 2
     ;;
 esac
+

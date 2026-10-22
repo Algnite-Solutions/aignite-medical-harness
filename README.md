@@ -164,3 +164,4 @@ AntAngelMed2 endpoints without a server tool parser can opt into
 `<tool_call>` / `<arg_key>` / `<arg_value>` output into standard tool calls. Raw assistant content
 is retained. It adds no prompts or model calls and does not alter final answers. This is an explicit
 endpoint compatibility mode, not a general fallback for providers that honor `none` by disabling tools.
+
