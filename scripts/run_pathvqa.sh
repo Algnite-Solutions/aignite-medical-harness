@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # DATASET and RUN_ROOT point at controlled storage; only code and aggregates enter Git.
-RUN_ROOT=${RUN_ROOT:-runs/pathvqa-pr100-v2}
+RUN_ROOT=${RUN_ROOT:-runs/pathvqa-pr100}
 PYTHON_BIN=${PYTHON_BIN:-python3}
 COMMAND=${1:-help}
 shift || true
