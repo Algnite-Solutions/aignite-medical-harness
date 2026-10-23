@@ -54,7 +54,7 @@ scope 字段：`dataset`、`lock`；CXR sample 另需 `manifest`。配置副本�
 
 远端契约由阶段二交付：info、sessions、evidence、calls、delete；token 仅环境变量；连接/请求超时分开；状态性调用不自动重试；调用ID、病例隔离、受限图像内容传输、TTL和清理是必须项。
 
-当前本机 SSH 配置没有明确 Spark 目标；未获得 Spark 服务进程、端口、认证、模型不可变版本及 ARM64 依赖兼容性的实际证据。以上部署形式为实施默认，不能写成已部署。
+用户提供连接信息后已完成 Spark 只读核验，详见 `spark-runtime-audit.zh-CN.md`。模型服务已有 Docker 部署；工具服务的 wheel/venv 方案仍为待确认默认，不能写成已部署。
 
 ## CI/CD 决策与流程
 
@@ -80,7 +80,7 @@ runner 清单 API 本轮返回 HTTP401，不能确认 runner 已注册或有权�
 
 ## 后续步骤与门槛
 
-1. **阶段一收口**：定位 MIMIC-CDM open100；明确 full 数据范围及锁；获取 Spark 非敏感连接信息及 mini runner 清单权限。更新数据就绪清单，核实部署默认适配性。
+1. **阶段一收口**：定位 MIMIC-CDM open100；明确 full 数据范围及锁；获取 cohort 目录读取权限及 mini runner 清单权限。更新数据就绪清单，核实部署默认适配性。
 2. **阶段二**：实现注册与站点配置校验、ama regression list/check、版本化API/客户端；部署方提供候选服务。先合成数据和单病例接通，失败状态、图像可见性和隔离测试通过。
 3. **阶段三**：编排标准 run→eval，三个任务各100；提供full。验证超时取消、错误不能被最终回答掩盖、重跑独立记录和指纹比较。完成真实服务及全集验收后记录预算。
 4. **阶段四**：新增 mini workflow，验证内部PR/main自动触发及正确SHA关联；脱敏报告、内网保留与串行执行生效后启用自动回归。
