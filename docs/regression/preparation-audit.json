@@ -1,0 +1,36 @@
+{
+  "schema": "ama-regression-preparation-audit-v1",
+  "suite": "sample",
+  "acceptance": "not_run",
+  "benchmarks": [
+    {
+      "benchmark": "mimic-cdm",
+      "status": "blocked",
+      "category": "scope_not_configured"
+    },
+    {
+      "benchmark": "mimic-cxr",
+      "status": "verified",
+      "category": "preparation_only",
+      "episodes": 100,
+      "turns": 100,
+      "images": 164
+    },
+    {
+      "benchmark": "pathvqa",
+      "status": "verified",
+      "category": "preparation_only",
+      "episodes": 100,
+      "turns": 100,
+      "images": 100
+    },
+    {
+      "benchmark": "rocov2",
+      "status": "disabled"
+    },
+    {
+      "benchmark": "symptom2disease",
+      "status": "disabled"
+    }
+  ]
+}

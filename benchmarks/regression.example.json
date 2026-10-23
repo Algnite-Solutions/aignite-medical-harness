@@ -1,0 +1,11 @@
+{
+  "schema": "ama-regression-site-draft-v1",
+  "suite": "sample",
+  "benchmarks": {
+    "mimic-cdm": {"enabled": true, "view": "interactive", "sample_size": 100, "sample": null, "full": null},
+    "mimic-cxr": {"enabled": true, "sample_size": 100, "sample": null, "full": null},
+    "pathvqa": {"enabled": true, "sample_size": 100, "sample": null, "full": null},
+    "rocov2": {"enabled": false},
+    "symptom2disease": {"enabled": false}
+  }
+}
