@@ -143,8 +143,11 @@ from .importers.mimic_cdm import score_mimic_cdm
 from .importers.mimic_cdm_benchmark import score_mimic_cdm_open
 from .importers.symptom2disease import SCORER as SYMPTOM2DISEASE_SCORER, score_symptom2disease
 from .cxr_report import SCORER as CXR_REPORT_SCORER, score_mimic_cxr_report
+from .pathvqa_score import score_pathvqa
 
 REGISTRY = {"rocov2": score_rocov2, "unscored": score_unscored,
             "mimic_cdm": score_mimic_cdm, "mimic_cdm_open": score_mimic_cdm_open,
             SYMPTOM2DISEASE_SCORER: score_symptom2disease,
-            CXR_REPORT_SCORER: score_mimic_cxr_report}
+            CXR_REPORT_SCORER: score_mimic_cxr_report,
+            "pathvqa_v1": score_pathvqa}
+

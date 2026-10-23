@@ -16,11 +16,12 @@ class ImportCommand(NamedTuple):
 
 def register_importers(subparsers: Any) -> None:
     """Register each importer's arguments and handler in one explicit catalog."""
-    from . import mimic_cxr_cli, rocov2_cli, symptom2disease
+    from . import mimic_cxr_cli, pathvqa, rocov2_cli, symptom2disease
 
     commands = (
         ImportCommand("mimic-cxr", mimic_cxr_cli.configure_cli,
                       mimic_cxr_cli.import_from_cli),
+        ImportCommand("pathvqa", pathvqa.configure_cli, pathvqa.import_from_cli),
         ImportCommand("rocov2", rocov2_cli.configure_cli, rocov2_cli.import_from_cli),
         ImportCommand("symptom2disease", symptom2disease.configure_cli,
                       symptom2disease.import_from_cli),
@@ -31,3 +32,4 @@ def register_importers(subparsers: Any) -> None:
         parser.add_argument("--out", type=Path, required=True)
         command.configure(parser)
         parser.set_defaults(import_handler=command.run)
+

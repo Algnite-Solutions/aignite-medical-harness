@@ -84,6 +84,9 @@ AutoMedBench findings-only 任务适配、已配置的 API 模型和轻量报告
 通过 `bash scripts/run_mimic_cxr.sh --help` 查看 import/run/eval 脚本用法。
 真实胸片、报告、导入生成的数据集文件和运行记录均保存在被忽略的 `local_data/`，不随代码分发。
 
+[PathVQA 数据卡](datasets/pathvqa/README.zh-CN.md) 说明固定的 Parquet 来源、图像问答导入、
+二元/开放答案的简单评分，以及固定 100 例的 AMA 基线。真实图像、答案和逐题记录留在受控存储。
+
 运行目录保存实际提示、模型配置、数据哈希、预期轮次、逐条消息来源、原始回复、
 工具调用 ID/结果和终止原因。图像只记录路径，不把 base64 写进日志。
 普通追问和数据集材料在日志里分别为 human / dataset，发给模型时都是 user。
@@ -100,3 +103,4 @@ API 错误或调用上限终止当前样本，继续下一例；Ctrl-C 保存后
 
 模型原文保留在 `decisions.jsonl`，参考原文在数据集的 `targets.jsonl`，按样本和轮次 ID 对照。
 词重合与 CUI 重合不是临床正确率。
+
