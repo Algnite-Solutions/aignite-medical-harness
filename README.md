@@ -165,3 +165,10 @@ AntAngelMed2 endpoints without a server tool parser can opt into
 is retained. It adds no prompts or model calls and does not alter final answers. This is an explicit
 endpoint compatibility mode, not a general fallback for providers that honor `none` by disabling tools.
 
+### VQA-RAD offline migration
+
+A pinned VQA-RAD importer, deterministic AutoMedBench heuristic scorer, and offline
+acceptance workflow are documented in [the migration guide](docs/vqa-rad.md).
+Prepared full and test100 packages are stored on the lab NAS at
+`/mnt/nas/data/processed/VQA-rad` (internal access required). Real data and run records
+are excluded from Git; offline validation needs no model API.

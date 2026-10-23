@@ -11,6 +11,7 @@ dependencies = ["pydantic>=2.7"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "Pillow>=10", "pyarrow>=17"]
+vqa-rad = ["pyarrow>=17", "Pillow>=10"]
 mimic-cxr = ["Pillow>=10"]
 pathvqa = ["pyarrow>=17", "Pillow>=10"]
 
@@ -30,4 +31,3 @@ testpaths = ["tests"]
 markers = [
     "api: real-API integration test (opt-in: RUN_API_TESTS=1 plus provider key env; never run by default)",
 ]
-
