@@ -10,9 +10,10 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2.7"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "Pillow>=10"]
+dev = ["pytest>=8", "Pillow>=10", "pyarrow>=17"]
 vqa-rad = ["pyarrow>=17", "Pillow>=10"]
 mimic-cxr = ["Pillow>=10"]
+pathvqa = ["pyarrow>=17", "Pillow>=10"]
 
 [project.scripts]
 ama = "ama.cli:main"
@@ -23,6 +24,7 @@ include = ["ama*"]
 
 [tool.setuptools.package-data]
 "ama._vendor.automedbench_report" = ["LICENSE", "SOURCE.json"]
+"ama.importers" = ["pathvqa-source.lock.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

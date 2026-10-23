@@ -173,7 +173,8 @@ image hashes, terminal coverage and all-case denominators before writing results
 
 ## Verification evidence
 
-- Offline suite: **213 passed**, including synthetic import/scoring, answer
+- Offline suite after merging PathVQA main: **232 passed**, with no skips,
+  including synthetic import/scoring, answer
   isolation, split/sampling, retry/resume, crash recovery and portable export tests.
 - Real full conversion: all2,244 source QA records/pixels checked;314 artifacts.
   Full and test100 file hashes, native structure and target isolation passed.

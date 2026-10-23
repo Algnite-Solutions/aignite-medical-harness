@@ -92,6 +92,11 @@ and lightweight report scoring. Use `bash scripts/run_mimic_cxr.sh --help` for
 the import/run/eval wrapper. Real images, reports, generated dataset files and
 run records stay in ignored `local_data/`; no MIMIC-CXR cases are distributed here.
 
+The [PathVQA data card](datasets/pathvqa/README.md) documents the pinned Parquet
+snapshot, image-question import, simple binary/open-answer scoring, and fixed
+100-case AMA baseline. Images, answers, converted datasets and per-case runs stay
+on controlled storage.
+
 ### Credentialed MIMIC-CDM import
 
 The MIMIC-IV-Ext Clinical Decision Making v1.1 importer is run separately so the core CLI and
